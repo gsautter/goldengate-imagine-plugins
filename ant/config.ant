@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!-- the project global configuration for the build system.
+ 
+ Please: be very careful when modifing this, as this file lives in GIT and you can easily break
+ other peoples system when commiting changes to this file. -->
+
+<project name="config">
+	
+	<!-- =================================================================== -->
+	<!-- DIRECTORY CONFIGURATION -->
+	
+	<!-- root directory of the common source tree -->
+	<property name="src.home" value="src" />
+	
+	<!-- directory that contains all libraries that are required in the .war -->
+	<property name="lib.home" value="lib" />
+	
+	<!-- build directory that will contain all the .jars and what else is required for a .war -->
+	<property name="build.home" value="build" />
+	
+	<!-- build directory that contains all files to include in the .zips except for the .jars -->
+	<property name="file.home" value="files" />
+	
+	<!-- directory that contains packed archives, such as the .war -->
+	<property name="dist.home" value="dist" />
+	
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.annotations" value="${dist.home}/Plugins/AnnotationActionProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.attributes" value="${dist.home}/Plugins/AttributeToolProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.basicimageedit" value="${dist.home}/Plugins/BasicImageEditProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.regions" value="${dist.home}/Plugins/RegionActionProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.text" value="${dist.home}/Plugins/TextActionProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.textblocks" value="${dist.home}/Plugins/TextBlockActionProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.textstreams" value="${dist.home}/Plugins/TextStreamActionProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.docmeatdata" value="${dist.home}/Plugins/DocumentMetaDataEditor.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.docstructure" value="${dist.home}/Plugins/DocumentStructureDetector.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.fonts" value="${dist.home}/Plugins/FontEditor.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.urldroplinker" value="${dist.home}/Plugins/UrlDropLinker.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.tables" value="${dist.home}/Plugins/TableActionProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.dpimtools" value="${dist.home}/Plugins/DocumentProcessorImTools.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.annotationlist" value="${dist.home}/Plugins/AnnotationListProvider.jar" />
+</project>

@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!--
+	Does all the packing. That is, creates the files that live in dist
+-->
+
+<project name="dist">
+	<target name="plugins" depends="annotationsjar,attributesjar,basicimageeditjar,regionsjar,textjar,textblocksjar,textstreamsjar,docmeatdatajar,docstructurejar,fontsjar,urldroplinkerjar,tablesjar,annotationlistjar,dpimtoolsjar">
+		<!-- proxy target only -->
+	</target>
+	
+	<target name="annotationsjar">
+		<delete file="${jar.annotations}" />
+		<jar destfile="${jar.annotations}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/basic/AnnotationActionProvider.class" />
+				<include name="**/imagine/plugins/basic/AnnotationActionProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/basic/AnnotationActionProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="attributesjar">
+		<delete file="${jar.attributes}" />
+		<jar destfile="${jar.attributes}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/basic/AttributeToolProvider.class" />
+				<include name="**/imagine/plugins/basic/AttributeToolProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/basic/AttributeToolProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="basicimageeditjar">
+		<delete file="${jar.basicimageedit}" />
+		<jar destfile="${jar.basicimageedit}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/basic/BasicImageEditProvider.class" />
+				<include name="**/imagine/plugins/basic/BasicImageEditProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/basic/BasicImageEditProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="regionsjar">
+		<delete file="${jar.regions}" />
+		<jar destfile="${jar.regions}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/basic/RegionActionProvider.class" />
+				<include name="**/imagine/plugins/basic/RegionActionProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/basic/RegionActionProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="textjar">
+		<delete file="${jar.text}" />
+		<jar destfile="${jar.text}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/basic/TextActionProvider.class" />
+				<include name="**/imagine/plugins/basic/TextActionProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/basic/TextActionProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="textblocksjar">
+		<delete file="${jar.textblocks}" />
+		<jar destfile="${jar.textblocks}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/basic/TextBlockActionProvider.class" />
+				<include name="**/imagine/plugins/basic/TextBlockActionProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/basic/TextBlockActionProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="textstreamsjar">
+		<delete file="${jar.textstreams}" />
+		<jar destfile="${jar.textstreams}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/basic/TextStreamActionProvider.class" />
+				<include name="**/imagine/plugins/basic/TextStreamActionProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/basic/TextStreamActionProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="docmeatdatajar">
+		<delete file="${jar.docmeatdata}" />
+		<jar destfile="${jar.docmeatdata}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/doc/DocumentMetaDataEditorProvider.class" />
+				<include name="**/imagine/plugins/doc/DocumentMetaDataEditorProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/doc/DocumentMetaDataEditorProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="docstructurejar">
+		<delete file="${jar.docstructure}" />
+		<jar destfile="${jar.docstructure}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/doc/DocumentStructureDetectorProvider.class" />
+				<include name="**/imagine/plugins/doc/DocumentStructureDetectorProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/doc/DocumentStructureDetectorProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="fontsjar">
+		<delete file="${jar.fonts}" />
+		<jar destfile="${jar.fonts}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/fonts/FontEditorProvider.class" />
+				<include name="**/imagine/plugins/fonts/FontEditorProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/fonts/FontEditorProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="urldroplinkerjar">
+		<delete file="${jar.urldroplinker}" />
+		<jar destfile="${jar.urldroplinker}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/link/UrlDropHandler.class" />
+				<include name="**/imagine/plugins/link/UrlDropHandler$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/link/UrlDropHandler.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="tablesjar">
+		<delete file="${jar.tables}" />
+		<jar destfile="${jar.tables}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/tables/TableActionProvider.class" />
+				<include name="**/imagine/plugins/tables/TableActionProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/tables/TableActionProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="annotationlistjar">
+		<delete file="${jar.annotationlist}" />
+		<jar destfile="${jar.annotationlist}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/tools/AnnotationListProvider.class" />
+				<include name="**/imagine/plugins/tools/AnnotationListProvider$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/tools/AnnotationListProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="dpimtoolsjar">
+		<delete file="${jar.dpimtools}" />
+		<jar destfile="${jar.dpimtools}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/tools/ImageMarkupToolManager.class" />
+				<include name="**/imagine/plugins/tools/ImageMarkupToolManager$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/tools/ImageMarkupToolManager.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+</project>
