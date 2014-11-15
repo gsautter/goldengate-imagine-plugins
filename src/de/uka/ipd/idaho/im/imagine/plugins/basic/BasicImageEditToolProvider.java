@@ -63,6 +63,10 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 	private ImImageEditTool pen1 = new PenX("Pen 1", "1");
 	private ImImageEditTool pen3 = new PenX("Pen 3", "111\n111\n111");
 	private ImImageEditTool pen5 = new PenX("Pen 5", "01110\n11111\n11111\n11111\n01110");
+	private ImImageEditTool eraserBar = new Eraser("Eraser |", "111\n111\n111\n111\n111\n111\n111\n111\n111\n111\n111\n111\n111\n111\n111");
+	private ImImageEditTool eraserDash = new Eraser("Eraser -", "111111111111111\n111111111111111\n111111111111111");
+	private ImImageEditTool eraserSlash = new Eraser("Eraser /", "00000000011\n00000000111\n00000001110\n00000011100\n00000111000\n00001110000\n00011100000\n00111000000\n01110000000\n11100000000\n11000000000");
+	private ImImageEditTool eraserBackslash = new Eraser("Eraser \\", "11000000000\n11100000000\n01110000000\n00111000000\n00011100000\n00001110000\n00000111000\n00000011100\n00000001110\n00000000111\n00000000011");
 	private ImImageEditTool eraserFlex = new EraserFlex();
 	private ImImageEditTool wordRemover = new WordRemover();
 	private ImImageEditTool wordMarker = new WordMarker();
@@ -71,8 +75,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 	public BasicImageEditToolProvider() {}
 	
 	//	TODO load pattern based edit tools from config files, maybe even make them GG resources
-	
-	//	TODO add configuration panel for pattern based tools
+	//	format: "Label" <HexColor> <Pattern (line break as \)>
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#getPluginName()
@@ -89,6 +92,10 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			this.pen1,
 			this.pen3,
 			this.pen5,
+			this.eraserBar,
+			this.eraserDash,
+			this.eraserSlash,
+			this.eraserBackslash,
 			this.eraserFlex,
 			this.wordRemover,
 			this.wordMarker,
@@ -126,7 +133,13 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 	
 	private class PenX extends PatternOverpaintImageEditTool {
 		PenX(String label, String pattern) {
-			super(label, null, null, pattern, Color.BLACK);
+			super(label, null, pattern, Color.BLACK);
+		}
+	}
+	
+	private class Eraser extends PatternOverpaintImageEditTool {
+		Eraser(String label, String pattern) {
+			super(label, null, pattern, Color.WHITE);
 		}
 	}
 	

@@ -202,6 +202,28 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider {
 						invoker.endAtomicAction();
 					}
 				});
+			else if (start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId)) {
+				boolean singleLine = true;
+				for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+					if ((imw.centerY < start.bounds.top) || (start.bounds.bottom < imw.centerY)) {
+						singleLine = false;
+						break;
+					}
+					if (imw == end)
+						break;
+				}
+				if (singleLine)
+					actions.add(new SelectionAction("Merge Words", "Merge selected words into one.") {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+								if (imw == end)
+									break;
+								imw.setNextRelation(ImWord.NEXT_RELATION_CONTINUE);
+							}
+							return true;
+						}
+					});
+			}
 			
 			//	merge paragraphs
 			if (paragraphsToMerge)
@@ -432,6 +454,30 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider {
 					return true;
 				}
 			});
+		}
+		
+		//	multiple words, same stream
+		else if (start.pageId == end.pageId) {
+			boolean singleLine = true;
+			for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+				if ((imw.centerY < start.bounds.top) || (start.bounds.bottom < imw.centerY)) {
+					singleLine = false;
+					break;
+				}
+				if (imw == end)
+					break;
+			}
+			if (singleLine)
+				actions.add(new SelectionAction("Merge Words", "Merge selected words into one.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+							if (imw == end)
+								break;
+							imw.setNextRelation(ImWord.NEXT_RELATION_CONTINUE);
+						}
+						return true;
+					}
+				});
 		}
 		
 		//	merge paragraphs
