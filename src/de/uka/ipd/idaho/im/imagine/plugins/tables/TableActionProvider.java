@@ -45,7 +45,6 @@ import java.util.LinkedList;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 
-import de.uka.ipd.idaho.gamta.util.constants.TableConstants;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.PageImage;
 import de.uka.ipd.idaho.im.ImPage;
@@ -65,17 +64,13 @@ import de.uka.ipd.idaho.im.util.ImUtils;
  * 
  * @author sautter
  */
-public class TableActionProvider extends AbstractSelectionActionProvider implements TableConstants {
+public class TableActionProvider extends AbstractSelectionActionProvider {
 	
 	//	example with multi-line cells (in-cell line margin about 5 pixels, row margin about 15 pixels): zt00904.pdf, page 6
 	
 	//	example without multi-line cells, very tight row margin (2 pixels): Milleretal2014Anthracotheres.pdf, page 4
 	
 	//	example without multi-line cells, normal row margin: zt00619.o.pdf, page 3
-	
-	private static final String TABLE_ROW_TYPE = "tableRow";
-	private static final String TABLE_COL_TYPE = "tableCol";
-	private static final String TABLE_CELL_TYPE = "tableCell";
 	
 	/** public zero-argument constructor for class loading */
 	public TableActionProvider() {}
@@ -121,7 +116,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		LinkedList actions = new LinkedList();
 		
 		//	get selected table
-		final ImRegion[] tables = this.getRegionsIncluding(page, wordsBox, TABLE_ANNOTATION_TYPE, true);
+		final ImRegion[] tables = this.getRegionsIncluding(page, wordsBox, ImRegion.TABLE_TYPE, true);
 		
 		//	no table selected, offer marking selected words as a table and analyze table structure
 		if ((tables.length == 0) && (words.length != 0))
@@ -135,18 +130,18 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		else if (tables.length == 1) {
 			
 			//	working on table rows
-			if (idmp.areRegionsPainted(TABLE_ROW_TYPE) && (words.length != 0)) {
-				final ImRegion[] selectedRows = this.getRegionsInside(page, wordsBox, TABLE_ROW_TYPE, true);
-				final ImRegion[] partSelectedRows = this.getRegionsIncluding(page, wordsBox, TABLE_ROW_TYPE, true);
+			if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && (words.length != 0)) {
+				final ImRegion[] selectedRows = this.getRegionsInside(page, wordsBox, ImRegion.TABLE_ROW_TYPE, true);
+				final ImRegion[] partSelectedRows = this.getRegionsIncluding(page, wordsBox, ImRegion.TABLE_ROW_TYPE, true);
 				
 				//	if multiple table row regions selected, offer merging them, and cells along the way
 				if (selectedRows.length > 1)
 					actions.add(new SelectionAction("Merge Table Rows", "Merge selected table rows.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							new ImRegion(page, wordsBox, TABLE_ROW_TYPE);
+							new ImRegion(page, wordsBox, ImRegion.TABLE_ROW_TYPE);
 							for (int r = 0; r < selectedRows.length; r++)
 								page.removeRegion(selectedRows[r]);
-							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, TABLE_COL_TYPE, false));
+							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_COL_TYPE, false));
 							orderTableWords(tableCells);
 							return true;
 						}
@@ -187,7 +182,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 								for (Iterator wit = above.iterator(); wit.hasNext();)
 									arBottom = Math.max(arBottom, ((ImWord) wit.next()).bounds.bottom);
 								BoundingBox arBox = new BoundingBox(tables[0].bounds.left, tables[0].bounds.right, partSelectedRows[0].bounds.top, arBottom);
-								new ImRegion(page, arBox, TABLE_ROW_TYPE);
+								new ImRegion(page, arBox, ImRegion.TABLE_ROW_TYPE);
 							}
 							if (inside.size() != 0) {
 								int irTop = partSelectedRows[0].bounds.bottom;
@@ -198,21 +193,21 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 									irBottom = Math.max(irBottom, imw.bounds.bottom);
 								}
 								BoundingBox irBox = new BoundingBox(tables[0].bounds.left, tables[0].bounds.right, irTop, irBottom);
-								new ImRegion(page, irBox, TABLE_ROW_TYPE);
+								new ImRegion(page, irBox, ImRegion.TABLE_ROW_TYPE);
 							}
 							if (below.size() != 0) {
 								int brTop = partSelectedRows[0].bounds.bottom;
 								for (Iterator wit = below.iterator(); wit.hasNext();)
 									brTop = Math.min(brTop, ((ImWord) wit.next()).bounds.top);
 								BoundingBox brBox = new BoundingBox(tables[0].bounds.left, tables[0].bounds.right, brTop, partSelectedRows[0].bounds.bottom);
-								new ImRegion(page, brBox, TABLE_ROW_TYPE);
+								new ImRegion(page, brBox, ImRegion.TABLE_ROW_TYPE);
 							}
 							
 							//	remove selected row
 							page.removeRegion(partSelectedRows[0]);
 							
 							//	clean up table structure
-							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, TABLE_COL_TYPE, false));
+							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_COL_TYPE, false));
 							orderTableWords(tableCells);
 							return true;
 						}
@@ -220,18 +215,18 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			}
 			
 			//	working on table columns
-			if (idmp.areRegionsPainted(TABLE_COL_TYPE) && (words.length != 0)) {
-				final ImRegion[] selectedCols = this.getRegionsInside(page, wordsBox, TABLE_COL_TYPE, true);
-				final ImRegion[] partSelectedCols = this.getRegionsIncluding(page, wordsBox, TABLE_COL_TYPE, true);
+			if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && (words.length != 0)) {
+				final ImRegion[] selectedCols = this.getRegionsInside(page, wordsBox, ImRegion.TABLE_COL_TYPE, true);
+				final ImRegion[] partSelectedCols = this.getRegionsIncluding(page, wordsBox, ImRegion.TABLE_COL_TYPE, true);
 				
 				//	if multiple table column regions selected, offer merging them, and cells along the way
 				if (selectedCols.length > 1)
 					actions.add(new SelectionAction("Merge Table Columns", "Merge selected table columns.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							new ImRegion(page, wordsBox, TABLE_COL_TYPE);
+							new ImRegion(page, wordsBox, ImRegion.TABLE_COL_TYPE);
 							for (int c = 0; c < selectedCols.length; c++)
 								page.removeRegion(selectedCols[c]);
-							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, TABLE_COL_TYPE, false));
+							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_COL_TYPE, false));
 							orderTableWords(tableCells);
 							return true;
 						}
@@ -272,7 +267,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 								for (Iterator wit = left.iterator(); wit.hasNext();)
 									lcRight = Math.max(lcRight, ((ImWord) wit.next()).bounds.right);
 								BoundingBox lcBox = new BoundingBox(partSelectedCols[0].bounds.left, lcRight, tables[0].bounds.top, tables[0].bounds.bottom);
-								new ImRegion(page, lcBox, TABLE_COL_TYPE);
+								new ImRegion(page, lcBox, ImRegion.TABLE_COL_TYPE);
 							}
 							if (inside.size() != 0) {
 								int icLeft = partSelectedCols[0].bounds.right;
@@ -283,21 +278,21 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 									icRight = Math.max(icRight, imw.bounds.right);
 								}
 								BoundingBox icBox = new BoundingBox(icLeft, icRight, tables[0].bounds.top, tables[0].bounds.bottom);
-								new ImRegion(page, icBox, TABLE_COL_TYPE);
+								new ImRegion(page, icBox, ImRegion.TABLE_COL_TYPE);
 							}
 							if (right.size() != 0) {
 								int rcLeft = partSelectedCols[0].bounds.right;
 								for (Iterator wit = right.iterator(); wit.hasNext();)
 									rcLeft = Math.min(rcLeft, ((ImWord) wit.next()).bounds.left);
 								BoundingBox rcBox = new BoundingBox(rcLeft, partSelectedCols[0].bounds.right, tables[0].bounds.top, tables[0].bounds.bottom);
-								new ImRegion(page, rcBox, TABLE_COL_TYPE);
+								new ImRegion(page, rcBox, ImRegion.TABLE_COL_TYPE);
 							}
 							
 							//	remove selected column
 							page.removeRegion(partSelectedCols[0]);
 							
 							//	clean up table structure
-							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, TABLE_COL_TYPE, false));
+							ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_COL_TYPE, false));
 							orderTableWords(tableCells);
 							return true;
 						}
@@ -307,7 +302,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			//	update table structure after manual modifications
 			actions.add(new SelectionAction("Update Table", "Update table to reflect manual modifications.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, TABLE_COL_TYPE, false));
+					ImRegion[][] tableCells = markTableCells(page, tables[0], getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_ROW_TYPE, false), getRegionsInside(page, tables[0].bounds, ImRegion.TABLE_COL_TYPE, false));
 					orderTableWords(tableCells);
 					return true;
 				}
@@ -367,7 +362,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		}
 		
 		//	wrap region around words
-		ImRegion tableRegion = new ImRegion(words[0].getDocument(), words[0].pageId, tableBox, TABLE_ANNOTATION_TYPE);
+		ImRegion tableRegion = new ImRegion(words[0].getDocument(), words[0].pageId, tableBox, ImRegion.TABLE_TYPE);
 		PageImage tableImage = null;
 		
 		//	synthesize region image with words as black boxes
@@ -375,7 +370,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		ImagePartRectangle tableWordImageBox = null;
 		
 		//	get rows
-		ImRegion[] tableRows = this.getRegionsInside(page, tableBox, TABLE_ROW_TYPE, false);
+		ImRegion[] tableRows = this.getRegionsInside(page, tableBox, ImRegion.TABLE_ROW_TYPE, false);
 		if (tableRows.length == 0) {
 			if (tableWordImage == null) {
 				tableImage = tableRegion.getImage();
@@ -395,11 +390,11 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				return false;
 			tableRows = new ImRegion[maxScoreRows.length];
 			for (int r = 0; r < maxScoreRows.length; r++)
-				tableRows[r] = new ImRegion(words[0].getDocument(), words[0].pageId, new BoundingBox((maxScoreRows[r].getLeftCol() + tableBox.left), (maxScoreRows[r].getRightCol() + tableBox.left), (maxScoreRows[r].getTopRow() + tableBox.top), (maxScoreRows[r].getBottomRow() + tableBox.top)), TABLE_ROW_TYPE);
+				tableRows[r] = new ImRegion(words[0].getDocument(), words[0].pageId, new BoundingBox((maxScoreRows[r].getLeftCol() + tableBox.left), (maxScoreRows[r].getRightCol() + tableBox.left), (maxScoreRows[r].getTopRow() + tableBox.top), (maxScoreRows[r].getBottomRow() + tableBox.top)), ImRegion.TABLE_ROW_TYPE);
 		}
 		
 		//	get columns
-		ImRegion[] tableCols = this.getRegionsInside(page, tableBox, TABLE_COL_TYPE, false);
+		ImRegion[] tableCols = this.getRegionsInside(page, tableBox, ImRegion.TABLE_COL_TYPE, false);
 		if (tableCols.length == 0) {
 			if (tableWordImage == null) {
 				tableImage = tableRegion.getImage();
@@ -419,7 +414,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				return false;
 			tableCols = new ImRegion[maxScoreCols.length];
 			for (int c = 0; c < maxScoreCols.length; c++)
-				tableCols[c] = new ImRegion(words[0].getDocument(), words[0].pageId, new BoundingBox((maxScoreCols[c].getLeftCol() + tableBox.left), (maxScoreCols[c].getRightCol() + tableBox.left), (maxScoreCols[c].getTopRow() + tableBox.top), (maxScoreCols[c].getBottomRow() + tableBox.top)), TABLE_COL_TYPE);
+				tableCols[c] = new ImRegion(words[0].getDocument(), words[0].pageId, new BoundingBox((maxScoreCols[c].getLeftCol() + tableBox.left), (maxScoreCols[c].getRightCol() + tableBox.left), (maxScoreCols[c].getTopRow() + tableBox.top), (maxScoreCols[c].getBottomRow() + tableBox.top)), ImRegion.TABLE_COL_TYPE);
 		}
 		
 		//	add regions to page so users can correct
@@ -436,10 +431,10 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		this.orderTableWords(tableCells);
 		
 		//	show regions in invoker
-		idmp.setRegionsPainted(TABLE_ANNOTATION_TYPE, true);
-		idmp.setRegionsPainted(TABLE_ROW_TYPE, true);
-		idmp.setRegionsPainted(TABLE_COL_TYPE, true);
-		idmp.setRegionsPainted(TABLE_CELL_TYPE, true);
+		idmp.setRegionsPainted(ImRegion.TABLE_TYPE, true);
+		idmp.setRegionsPainted(ImRegion.TABLE_ROW_TYPE, true);
+		idmp.setRegionsPainted(ImRegion.TABLE_COL_TYPE, true);
+		idmp.setRegionsPainted(ImRegion.TABLE_CELL_TYPE, true);
 		
 		//	finally ...
 		return true;
@@ -471,7 +466,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		});
 		
 		//	get and index existing cells
-		ImRegion[] existingCells = table.getRegions(TABLE_CELL_TYPE);
+		ImRegion[] existingCells = table.getRegions(ImRegion.TABLE_CELL_TYPE);
 		HashMap cellsByBounds = new HashMap();
 		for (int c = 0; c < existingCells.length; c++)
 			cellsByBounds.put(existingCells[c].bounds.toString(), existingCells[c]);
@@ -497,7 +492,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				}
 				cells[r][c] = ((ImRegion) cellsByBounds.remove(cellBounds.toString()));
 				if (cells[r][c] == null)
-					cells[r][c] = new ImRegion(page, cellBounds, TABLE_CELL_TYPE);
+					cells[r][c] = new ImRegion(page, cellBounds, ImRegion.TABLE_CELL_TYPE);
 			}
 		
 		//	remove spurious cells
@@ -547,13 +542,13 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	private void copyTableData(ImRegion table, char separator) {
 		
 		//	get rows and columns
-		ImRegion[] rows = this.getRegionsInside(table.getPage(), table.bounds, TABLE_ROW_TYPE, false);
+		ImRegion[] rows = this.getRegionsInside(table.getPage(), table.bounds, ImRegion.TABLE_ROW_TYPE, false);
 		Arrays.sort(rows, new Comparator() {
 			public int compare(Object obj1, Object obj2) {
 				return (((ImRegion) obj1).bounds.top - ((ImRegion) obj2).bounds.top);
 			}
 		});
-		ImRegion[] cols = this.getRegionsInside(table.getPage(), table.bounds, TABLE_COL_TYPE, false);
+		ImRegion[] cols = this.getRegionsInside(table.getPage(), table.bounds, ImRegion.TABLE_COL_TYPE, false);
 		Arrays.sort(cols, new Comparator() {
 			public int compare(Object obj1, Object obj2) {
 				return (((ImRegion) obj1).bounds.left - ((ImRegion) obj2).bounds.left);

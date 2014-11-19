@@ -36,6 +36,7 @@ import java.util.TreeSet;
 
 import javax.swing.JOptionPane;
 
+import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.DocumentRoot;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
@@ -138,40 +139,60 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 			return null; // for now ...
 		}
 		public void process(final ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
-			
-			//	get annotation and region types
-			String[] types = getObjectTypes(idmp);
-			if (types.length == 0) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
-				return;
-			}
-			
-			//	set up cache (we don't want to collect objects or attribute names more than once)
-			final HashMap cache = new HashMap();
+			renameAttribute(doc, null);
+		}
+	}
+	
+	/**
+	 * Rename an attribute of some objects in an Image Markup document. If the
+	 * argument array of target objects is null, the target objects are selected
+	 * by type. Otherwise, the argument document may be null.
+	 * @param doc the document to perform the attribute renaming in
+	 * @param targetObjects the target objects of the renaming
+	 * @return true if any object was actually modified, false otherwise
+	 */
+	public boolean renameAttribute(final ImDocument doc, Attributed[] targetObjects) {
+		
+		//	set up cache (we don't want to collect objects or attribute names more than once)
+		final HashMap cache = new HashMap();
+		
+		//	get attribute names
+		String[] attributeNames;
+		if (targetObjects == null) {
 			
 			//	get all objects
-			ImObject[] objects = getObjects(doc, null, ALL_OBJECTS);
+			ImObject[] objects = this.getObjects(doc, null, ALL_OBJECTS);
 			cache.put(ALL_OBJECTS, objects);
-			
-			//	get attribute names
-			String[] attributeNames = getAttributeNames(objects);
+			attributeNames = this.getAttributeNames(objects);
 			cache.put((ALL_OBJECTS + "@"), attributeNames);
-			
-			//	build input panel
-			StringSelectorPanel ssp = new StringSelectorPanel("Rename Attribute");
-			
-			//	add type selector
-			final StringSelectorLine typeSsl = ssp.addSelector("Object type", types, null, false);
+		}
+		else attributeNames = this.getAttributeNames(targetObjects);
+		
+		//	build input panel
+		StringSelectorPanel ssp = new StringSelectorPanel("Rename Attribute");
+		
+		//	add type selector
+		final StringSelectorLine typeSsl;
+		if (targetObjects == null) {
+			String[] types = this.getObjectTypes(doc);
+			if (types.length == 0) {
+				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
+				return false;
+			}
+			typeSsl = ssp.addSelector("Object type", types, null, false);
 			typeSsl.selector.insertItemAt(ALL_OBJECTS, 0);
 			typeSsl.selector.insertItemAt(ALL_ANNOTATIONS, 1);
 			typeSsl.selector.insertItemAt(ALL_REGIONS, 2);
 			typeSsl.selector.setSelectedIndex(0);
-			
-			//	add attribute selectors
-			final StringSelectorLine oldNameSsl = ssp.addSelector("Attribute to rename", attributeNames, null, false);
-			final StringSelectorLine newNameSsl = ssp.addSelector("New attribute name", attributeNames, null, true);
-			
-			//	change attribute list when object type changes
+		}
+		else typeSsl = null;
+		
+		//	add attribute selectors
+		final StringSelectorLine oldNameSsl = ssp.addSelector("Attribute to rename", attributeNames, null, false);
+		final StringSelectorLine newNameSsl = ssp.addSelector("New attribute name", attributeNames, null, true);
+		
+		//	change attribute list when object type changes
+		if (typeSsl != null)
 			typeSsl.selector.addItemListener(new ItemListener() {
 				public void itemStateChanged(ItemEvent ie) {
 					String type = typeSsl.getSelectedString();
@@ -189,28 +210,35 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 					newNameSsl.setSelectableStrings(typeAttributeNames, null, true);
 				}
 			});
-			
-			//	prompt user
-			if (ssp.prompt(DialogFactory.getTopWindow()) != JOptionPane.OK_OPTION)
-				return;
-			
-			//	get data
+		
+		//	prompt user
+		if (ssp.prompt(DialogFactory.getTopWindow()) != JOptionPane.OK_OPTION)
+			return false;
+		
+		//	get data
+		String oldName = oldNameSsl.getSelectedString();
+		String newName = newNameSsl.getSelectedTypeOrName(true);
+		if (newName == null)
+			return false;
+		
+		//	get target objects
+		if (targetObjects == null) {
 			String type = typeSsl.getSelectedString();
-			String oldName = oldNameSsl.getSelectedString();
-			String newName = newNameSsl.getSelectedTypeOrName(true);
-			if (newName == null)
-				return;
-			
-			//	do the renaming, finally
-			ImObject[] typeObjects = ((ImObject[]) cache.get(type));
-			if (typeObjects == null)
-				typeObjects = getObjects(doc, (type.startsWith("<") ? null : type.substring(0, type.indexOf(" ("))), (type.startsWith("<") ? type : (type.endsWith(ANNOTATIONS_TYPE_SUFFIX) ? ALL_ANNOTATIONS : ALL_REGIONS)));
-			for (int o = 0; o < typeObjects.length; o++) {
-				Object value = typeObjects[o].removeAttribute(oldName);
-				if (value != null)
-					typeObjects[o].setAttribute(newName, value);
+			targetObjects = ((ImObject[]) cache.get(type));
+			if (targetObjects == null)
+				targetObjects = this.getObjects(doc, (type.startsWith("<") ? null : type.substring(0, type.indexOf(" ("))), (type.startsWith("<") ? type : (type.endsWith(ANNOTATIONS_TYPE_SUFFIX) ? ALL_ANNOTATIONS : ALL_REGIONS)));
+		}
+		
+		//	do the renaming, finally
+		boolean modified = false;
+		for (int o = 0; o < targetObjects.length; o++) {
+			Object value = targetObjects[o].removeAttribute(oldName);
+			if (value != null) {
+				targetObjects[o].setAttribute(newName, value);
+				modified = true;
 			}
 		}
+		return modified;
 	}
 	
 	private class AttributeChanger implements ImageMarkupTool {
@@ -224,45 +252,72 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 			return null; // for now ...
 		}
 		public void process(final ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
-			
-			//	get annotation and region types
-			String[] types = getObjectTypes(idmp);
-			if (types.length == 0) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
-				return;
-			}
-			
-			//	set up cache (we don't want to collect objects, attribute names, or existing attribute values more than once)
-			final HashMap cache = new HashMap();
+			modifyAttribute(doc, null);
+		}
+	}
+	
+	/**
+	 * Modify the value of an attribute of some objects in an Image Markup
+	 * document. If the argument array of target objects is null, the target
+	 * objects are selected by type. Otherwise, the argument document may be
+	 * null.
+	 * @param doc the document to perform the attribute modification in
+	 * @param targetObjects the target objects of the modification
+	 * @return true if any object was actually modified, false otherwise
+	 */
+	public boolean modifyAttribute(final ImDocument doc, Attributed[] targetObjects) {
+		
+		//	set up cache (we don't want to collect objects, attribute names, or existing attribute values more than once)
+		final HashMap cache = new HashMap();
+		
+		//	get attribute names and values
+		String[] attributeNames;
+		if (targetObjects == null) {
 			
 			//	get all objects
-			ImObject[] objects = getObjects(doc, null, ALL_OBJECTS);
+			ImObject[] objects = this.getObjects(doc, null, ALL_OBJECTS);
 			cache.put(ALL_OBJECTS, objects);
-			
-			//	get attribute names
-			String[] attributeNames = getAttributeNames(objects);
+			attributeNames = this.getAttributeNames(objects);
 			cache.put((ALL_OBJECTS + "@"), attributeNames);
 			
 			//	get attribute values
 			for (int n = 0; n < attributeNames.length; n++) {
-				String[] attributeValues = getAttributeValues(objects, attributeNames[n]);
+				String[] attributeValues = this.getAttributeValues(objects, attributeNames[n]);
 				cache.put((ALL_OBJECTS + "@" + attributeNames[n]), attributeValues);
 			}
-			
-			//	build input panel
-			StringSelectorPanel ssp = new StringSelectorPanel("Modify Attribute Value");
-			
-			//	add type selector
-			final StringSelectorLine typeSsl = ssp.addSelector("Object type", types, null, false);
+		}
+		else {
+			attributeNames = this.getAttributeNames(targetObjects);
+			for (int n = 0; n < attributeNames.length; n++) {
+				String[] attributeValues = this.getAttributeValues(targetObjects, attributeNames[n]);
+				cache.put(("@" + attributeNames[n]), attributeValues);
+			}
+		}
+		
+		//	build input panel
+		StringSelectorPanel ssp = new StringSelectorPanel("Modify Attribute Value");
+		
+		//	add type selector
+		final StringSelectorLine typeSsl;
+		if (targetObjects == null) {
+			String[] types = this.getObjectTypes(doc);
+			if (types.length == 0) {
+				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
+				return false;
+			}
+			typeSsl = ssp.addSelector("Object type", types, null, false);
 			typeSsl.selector.insertItemAt(ALL_OBJECTS, 0);
 			typeSsl.selector.insertItemAt(ALL_ANNOTATIONS, 1);
 			typeSsl.selector.insertItemAt(ALL_REGIONS, 2);
 			typeSsl.selector.setSelectedIndex(0);
-			
-			//	add attribute selectors
-			final StringSelectorLine nameSsl = ssp.addSelector("Attribute name", attributeNames, null, true);
-			
-			//	change attribute list when object type changes
+		}
+		else typeSsl = null;
+		
+		//	add attribute selectors
+		final StringSelectorLine nameSsl = ssp.addSelector("Attribute name", attributeNames, null, true);
+		
+		//	change attribute list when object type changes
+		if (typeSsl != null)
 			typeSsl.selector.addItemListener(new ItemListener() {
 				public void itemStateChanged(ItemEvent ie) {
 					String type = typeSsl.getSelectedString();
@@ -279,91 +334,105 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 					nameSsl.setSelectableStrings(typeAttributeNames, null, true);
 				}
 			});
-			
-			//	add existing value selector
-			final StringSelectorLine oldValueSsl = ssp.addSelector("Attribute value to change", new String[0], null, false);
-			oldValueSsl.selector.insertItemAt(ALL_VALUES, 0);
-			oldValueSsl.selector.setSelectedIndex(0);
-			
-			//	add new value selector
-			final StringSelectorLine newValueSsl = ssp.addSelector("New attribute value", attributeNames, null, true);
-			
-			//	change value selection if attribute name changes
-			nameSsl.selector.addItemListener(new ItemListener() {
-				public void itemStateChanged(ItemEvent ie) {
+		
+		//	add existing value selector
+		final StringSelectorLine oldValueSsl = ssp.addSelector("Attribute value to change", new String[0], null, false);
+		oldValueSsl.selector.insertItemAt(ALL_VALUES, 0);
+		oldValueSsl.selector.setSelectedIndex(0);
+		
+		//	add new value selector
+		final StringSelectorLine newValueSsl = ssp.addSelector("New attribute value", attributeNames, null, true);
+		
+		//	change value selection if attribute name changes
+		nameSsl.selector.addItemListener(new ItemListener() {
+			public void itemStateChanged(ItemEvent ie) {
+				String name = nameSsl.getSelectedString();
+				String[] nameValues;
+				if (typeSsl == null)
+					nameValues = ((String[]) cache.get("@" + name));					
+				else {
 					String type = typeSsl.getSelectedString();
-					String name = nameSsl.getSelectedString();
-					String[] typeNameValues = ((String[]) cache.get(type + "@" + name));
-					if (typeNameValues == null) {
+					nameValues = ((String[]) cache.get(type + "@" + name));					
+					if (nameValues == null) {
 						ImObject[] typeObjects = ((ImObject[]) cache.get(type));
 						if (typeObjects == null) {
 							typeObjects = getObjects(doc, (type.startsWith("<") ? null : type.substring(0, type.indexOf(" ("))), (type.startsWith("<") ? type : (type.endsWith(ANNOTATIONS_TYPE_SUFFIX) ? ALL_ANNOTATIONS : ALL_REGIONS)));
 							cache.put(type, typeObjects);
 						}
-						typeNameValues = getAttributeValues(typeObjects, name);
-						cache.put((type + "@" + name), typeNameValues);
+						nameValues = getAttributeValues(typeObjects, name);
+						cache.put((type + "@" + name), nameValues);
 					}
-					oldValueSsl.setSelectableStrings(typeNameValues, null, false);
-					oldValueSsl.selector.insertItemAt(ALL_VALUES, 0);
-					newValueSsl.setSelectableStrings(typeNameValues, null, true);
 				}
-			});
-			
-			//	change new value input if old value changes
-			oldValueSsl.selector.addItemListener(new ItemListener() {
-				public void itemStateChanged(ItemEvent ie) {
-					String oldValue = oldValueSsl.getSelectedString();
-					if (!ALL_VALUES.equals(oldValue))
-						newValueSsl.selector.setSelectedItem(oldValue);
-				}
-			});
-			
-			//	add mode selector
-			final StringSelectorLine modeSsl = ssp.addSelector("How to change attribute", new String[0], null, false);
-			modeSsl.selector.insertItemAt(ADD_MODE, 0);
-			modeSsl.selector.insertItemAt(REPLACE_MODE, 1);
-			modeSsl.selector.insertItemAt(SET_MODE, 2);
-			modeSsl.selector.setSelectedIndex(0);
-			
-			//	prompt user
-			if (ssp.prompt(DialogFactory.getTopWindow()) != JOptionPane.OK_OPTION)
-				return;
-			
-			//	get object type and attribute name
+				oldValueSsl.setSelectableStrings(nameValues, null, false);
+				oldValueSsl.selector.insertItemAt(ALL_VALUES, 0);
+				newValueSsl.setSelectableStrings(nameValues, null, true);
+			}
+		});
+		
+		//	change new value input if old value changes
+		oldValueSsl.selector.addItemListener(new ItemListener() {
+			public void itemStateChanged(ItemEvent ie) {
+				String oldValue = oldValueSsl.getSelectedString();
+				if (!ALL_VALUES.equals(oldValue))
+					newValueSsl.selector.setSelectedItem(oldValue);
+			}
+		});
+		
+		//	add mode selector
+		final StringSelectorLine modeSsl = ssp.addSelector("How to change attribute", new String[0], null, false);
+		modeSsl.selector.insertItemAt(ADD_MODE, 0);
+		modeSsl.selector.insertItemAt(REPLACE_MODE, 1);
+		modeSsl.selector.insertItemAt(SET_MODE, 2);
+		modeSsl.selector.setSelectedIndex(0);
+		
+		//	prompt user
+		if (ssp.prompt(DialogFactory.getTopWindow()) != JOptionPane.OK_OPTION)
+			return false;
+		
+		//	get object type and attribute name
+		String name = nameSsl.getSelectedTypeOrName(true);
+		if (name == null)
+			return false;
+		
+		//	get old and new values
+		String oldValue = oldValueSsl.getSelectedString();
+		if (ALL_VALUES.equals(oldValue))
+			oldValue = null;
+		String newValue = newValueSsl.getSelectedString();
+		
+		//	get mode
+		String mode = modeSsl.getSelectedString();
+		
+		//	get target objects
+		if (targetObjects == null) {
 			String type = typeSsl.getSelectedString();
-			String name = nameSsl.getSelectedTypeOrName(true);
-			if (name == null)
-				return;
-			
-			//	get old and new values
-			String oldValue = oldValueSsl.getSelectedString();
-			if (ALL_VALUES.equals(oldValue))
-				oldValue = null;
-			String newValue = newValueSsl.getSelectedString();
-			
-			//	get mode
-			String mode = modeSsl.getSelectedString();
-			
-			//	do the change, finally
-			ImObject[] typeObjects = ((ImObject[]) cache.get(type));
-			if (typeObjects == null)
-				typeObjects = getObjects(doc, (type.startsWith("<") ? null : type.substring(0, type.indexOf(" ("))), (type.startsWith("<") ? type : (type.endsWith(ANNOTATIONS_TYPE_SUFFIX) ? ALL_ANNOTATIONS : ALL_REGIONS)));
-			for (int o = 0; o < typeObjects.length; o++) {
-				Object value = typeObjects[o].getAttribute(name);
-				if (ADD_MODE.equals(mode) && (value == null) && (newValue != null))
-					typeObjects[o].setAttribute(name, newValue);
-				else if (REPLACE_MODE.equals(mode) && ((oldValue == null) || oldValue.equals(value))) {
-					if (newValue == null)
-						typeObjects[o].removeAttribute(name);
-					else typeObjects[o].setAttribute(name, newValue);
-				}
-				else if (SET_MODE.equals(mode)) {
-					if (newValue == null)
-						typeObjects[o].removeAttribute(name);
-					else typeObjects[o].setAttribute(name, newValue);
-				}
+			targetObjects = ((ImObject[]) cache.get(type));
+			if (targetObjects == null)
+				targetObjects = this.getObjects(doc, (type.startsWith("<") ? null : type.substring(0, type.indexOf(" ("))), (type.startsWith("<") ? type : (type.endsWith(ANNOTATIONS_TYPE_SUFFIX) ? ALL_ANNOTATIONS : ALL_REGIONS)));
+		}
+		
+		//	do the change, finally
+		boolean modified = false;
+		for (int o = 0; o < targetObjects.length; o++) {
+			Object value = targetObjects[o].getAttribute(name);
+			if (ADD_MODE.equals(mode) && (value == null) && (newValue != null)) {
+				targetObjects[o].setAttribute(name, newValue);
+				modified = true;
+			}
+			else if (REPLACE_MODE.equals(mode) && ((oldValue == null) || oldValue.equals(value))) {
+				if (newValue == null)
+					targetObjects[o].removeAttribute(name);
+				else targetObjects[o].setAttribute(name, newValue);
+				modified = true;
+			}
+			else if (SET_MODE.equals(mode)) {
+				if (newValue == null)
+					targetObjects[o].removeAttribute(name);
+				else targetObjects[o].setAttribute(name, newValue);
+				modified = true;
 			}
 		}
+		return modified;
 	}
 	
 	private class AttributeRemover implements ImageMarkupTool {
@@ -377,39 +446,59 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 			return null; // for now ...
 		}
 		public void process(final ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
-			
-			//	get annotation and region types
-			String[] types = getObjectTypes(idmp);
-			if (types.length == 0) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
-				return;
-			}
-			
-			//	set up cache (we don't want to collect objects or attribute names more than once)
-			final HashMap cache = new HashMap();
+			removeAttribute(doc, null);
+		}
+	}
+	
+	/**
+	 * Remove an attribute from some objects in an Image Markup document. If
+	 * the argument array of target objects is null, the target objects are
+	 * selected by type. Otherwise, the argument document may be null.
+	 * @param doc the document to perform the attribute removal in
+	 * @param targetObjects the target objects of the removal
+	 * @return true if any object was actually modified, false otherwise
+	 */
+	public boolean removeAttribute(final ImDocument doc, Attributed[] targetObjects) {
+		
+		//	set up cache (we don't want to collect objects or attribute names more than once)
+		final HashMap cache = new HashMap();
+		
+		//	get attribute names
+		String[] attributeNames;
+		if (targetObjects == null) {
 			
 			//	get all objects
-			ImObject[] objects = getObjects(doc, null, ALL_OBJECTS);
+			ImObject[] objects = this.getObjects(doc, null, ALL_OBJECTS);
 			cache.put(ALL_OBJECTS, objects);
-			
-			//	get attribute names
-			String[] attributeNames = getAttributeNames(objects);
+			attributeNames = this.getAttributeNames(objects);
 			cache.put((ALL_OBJECTS + "@"), attributeNames);
-			
-			//	build input panel
-			StringSelectorPanel ssp = new StringSelectorPanel("Rename Attribute");
-			
-			//	add type selector
-			final StringSelectorLine typeSsl = ssp.addSelector("Object type", types, null, false);
+		}
+		else attributeNames = this.getAttributeNames(targetObjects);
+		
+		//	build input panel
+		StringSelectorPanel ssp = new StringSelectorPanel("Remove Attribute");
+		
+		//	add type selector
+		final StringSelectorLine typeSsl;
+		if (targetObjects == null) {
+			String[] types = this.getObjectTypes(doc);
+			if (types.length == 0) {
+				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
+				return false;
+			}
+			typeSsl = ssp.addSelector("Object type", types, null, false);
 			typeSsl.selector.insertItemAt(ALL_OBJECTS, 0);
 			typeSsl.selector.insertItemAt(ALL_ANNOTATIONS, 1);
 			typeSsl.selector.insertItemAt(ALL_REGIONS, 2);
 			typeSsl.selector.setSelectedIndex(0);
-			
-			//	add attribute selectors
-			final StringSelectorLine nameSsl = ssp.addSelector("Attribute to remove", attributeNames, null, false);
-			
-			//	change attribute list when object type changes
+		}
+		else typeSsl = null;
+		
+		//	add attribute selectors
+		final StringSelectorLine nameSsl = ssp.addSelector("Attribute to remove", attributeNames, null, false);
+		
+		//	change attribute list when object type changes
+		if (typeSsl != null)
 			typeSsl.selector.addItemListener(new ItemListener() {
 				public void itemStateChanged(ItemEvent ie) {
 					String type = typeSsl.getSelectedString();
@@ -426,30 +515,35 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 					nameSsl.setSelectableStrings(typeAttributeNames, null, false);
 				}
 			});
-			
-			//	prompt user
-			if (ssp.prompt(DialogFactory.getTopWindow()) != JOptionPane.OK_OPTION)
-				return;
-			
-			//	get data
+		
+		//	prompt user
+		if (ssp.prompt(DialogFactory.getTopWindow()) != JOptionPane.OK_OPTION)
+			return false;
+		
+		//	get data
+		String name = nameSsl.getSelectedString();
+		
+		//	get target objects
+		if (targetObjects == null) {
 			String type = typeSsl.getSelectedString();
-			String name = nameSsl.getSelectedString();
-			
-			//	do the removal, finally
-			ImObject[] typeObjects = ((ImObject[]) cache.get(type));
-			if (typeObjects == null)
-				typeObjects = getObjects(doc, (type.startsWith("<") ? null : type.substring(0, type.indexOf(" ("))), (type.startsWith("<") ? type : (type.endsWith(ANNOTATIONS_TYPE_SUFFIX) ? ALL_ANNOTATIONS : ALL_REGIONS)));
-			for (int o = 0; o < typeObjects.length; o++)
-				typeObjects[o].removeAttribute(name);
+			targetObjects = ((ImObject[]) cache.get(type));
+			if (targetObjects == null)
+				targetObjects = this.getObjects(doc, (type.startsWith("<") ? null : type.substring(0, type.indexOf(" ("))), (type.startsWith("<") ? type : (type.endsWith(ANNOTATIONS_TYPE_SUFFIX) ? ALL_ANNOTATIONS : ALL_REGIONS)));
 		}
+		
+		//	do the removal, finally
+		boolean modified = false;
+		for (int o = 0; o < targetObjects.length; o++)
+			modified = (modified | (targetObjects[o].removeAttribute(name) != null));
+		return modified;
 	}
 	
-	private String[] getObjectTypes(ImDocumentMarkupPanel idmp) {
+	private String[] getObjectTypes(ImDocument doc) {
 		TreeSet types = new TreeSet();
-		String[] annotTypes = idmp.document.getAnnotationTypes();
+		String[] annotTypes = doc.getAnnotationTypes();
 		for (int t = 0; t < annotTypes.length; t++)
 			types.add(annotTypes[t] + ANNOTATIONS_TYPE_SUFFIX);
-		ImPage[] pages = idmp.document.getPages();
+		ImPage[] pages = doc.getPages();
 		for (int p = 0; p < pages.length; p++) {
 			String[] regionTypes = pages[p].getRegionTypes();
 			for (int t = 0; t < regionTypes.length; t++)
@@ -470,14 +564,14 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 		return ((ImObject[]) objects.toArray(new ImObject[objects.size()]));
 	}
 	
-	private String[] getAttributeNames(ImObject[] objects) {
+	private String[] getAttributeNames(Attributed[] objects) {
 		TreeSet names = new TreeSet();
 		for (int o = 0; o < objects.length; o++)
 			names.addAll(Arrays.asList(objects[o].getAttributeNames()));
 		return ((String[]) names.toArray(new String[names.size()]));
 	}
 	
-	private String[] getAttributeValues(ImObject[] objects, String name) {
+	private String[] getAttributeValues(Attributed[] objects, String name) {
 		TreeSet values = new TreeSet();
 		for (int o = 0; o < objects.length; o++) {
 			Object valueObj = objects[o].getAttribute(name);

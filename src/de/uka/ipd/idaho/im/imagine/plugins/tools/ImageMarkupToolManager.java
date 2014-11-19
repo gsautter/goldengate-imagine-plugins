@@ -124,8 +124,6 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 	
 	private static final String FILE_EXTENSION = ".imTool";
 	
-//	private GoldenGateImagine goldenGateImagine;
-//	
 	private DpImageMarkupTool[] toolsMenuTools;
 	private DpImageMarkupTool[] contextMenuTools;
 	
@@ -149,10 +147,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImaginePlugin#setImagineParent(de.uka.ipd.idaho.im.imagine.GoldenGateImagine)
 	 */
-	public void setImagineParent(GoldenGateImagine ggImagine) {
-//		we just don't seem to need this one here
-//		this.goldenGateImagine = ggImagine;
-	}
+	public void setImagineParent(GoldenGateImagine ggImagine) { /* we don't seem to need this one here */ }
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImaginePlugin#initImagine()

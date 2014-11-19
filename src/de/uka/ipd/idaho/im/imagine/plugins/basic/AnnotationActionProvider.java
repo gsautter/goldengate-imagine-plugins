@@ -241,14 +241,6 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 				continue;
 			if (ImUtils.textStreamOrder.compare(allOverlappingAnnots[a].getLastWord(), end) < 0)
 				continue;
-//			if (start.pageId < allOverlappingAnnots[a].getFirstWord().pageId)
-//				continue;
-//			if ((start.pageId == allOverlappingAnnots[a].getFirstWord().pageId) && (start.getTextStreamPos() < allOverlappingAnnots[a].getFirstWord().getTextStreamPos()))
-//				continue;
-//			if (allOverlappingAnnots[a].getLastWord().pageId < end.pageId)
-//				continue;
-//			if ((allOverlappingAnnots[a].getLastWord().pageId == end.pageId) && (allOverlappingAnnots[a].getLastWord().getTextStreamPos() < end.getTextStreamPos()))
-//				continue;
 			spanningAnnotList.add(allOverlappingAnnots[a]);
 		}
 		final ImAnnotation[] spanningAnnots = ((ImAnnotation[]) spanningAnnotList.toArray(new ImAnnotation[spanningAnnotList.size()]));
@@ -393,6 +385,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 				}
 			});
 		}
+		
+		//	single word selection (offer editing word attributes above same for other annotations)
+		if (start == end)
+			actions.add(new SelectionAction(("Edit Word Attributes"), ("Edit attributes of '" + start.getString() + "'.")) {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					idmp.editAttributes(start, start.getType(), start.getString());
+					return true;
+				}
+			});
 		
 		//	single annotation selected
 		if (spanningAnnots.length == 1) {

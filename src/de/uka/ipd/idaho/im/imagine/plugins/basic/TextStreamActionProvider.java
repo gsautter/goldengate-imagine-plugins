@@ -202,7 +202,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider {
 						invoker.endAtomicAction();
 					}
 				});
-			else if (start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId)) {
+			else if (start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId) && (start.bounds.top < end.centerY) && (end.centerY < start.bounds.bottom) && (end.getTextStreamPos() <= (start.getTextStreamPos() + 20))) {
 				boolean singleLine = true;
 				for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
 					if ((imw.centerY < start.bounds.top) || (start.bounds.bottom < imw.centerY)) {
@@ -457,7 +457,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider {
 		}
 		
 		//	multiple words, same stream
-		else if (start.pageId == end.pageId) {
+		else if (start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId) && (start.bounds.top < end.centerY) && (end.centerY < start.bounds.bottom) && (end.getTextStreamPos() <= (start.getTextStreamPos() + 20))) {
 			boolean singleLine = true;
 			for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
 				if ((imw.centerY < start.bounds.top) || (start.bounds.bottom < imw.centerY)) {

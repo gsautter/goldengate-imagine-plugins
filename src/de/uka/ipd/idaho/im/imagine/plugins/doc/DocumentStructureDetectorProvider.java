@@ -234,7 +234,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
 			if (annot == null)
 				detectDocumentStructure(doc, idmp.documentBornDigital, pm);
-			else System.out.println("Cannot detect document structure on single annotation");
+			else pm.setStep("Cannot detect document structure on single annotation");
 		}
 	}
 	
@@ -252,37 +252,38 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	get pages
 		ImPage[] pages = doc.getPages();
-		System.out.println("Detecting document structure from " + pages.length + " pages");
+		pm.setStep("Detecting document structure from " + pages.length + " pages");
 		
 		//	compute average resolution
 		int pageImageDpiSum = 0;
 		for (int p = 0; p < pages.length; p++)
 			pageImageDpiSum += pages[p].getPageImage().currentDpi;
 		int pageImageDpi = ((pageImageDpiSum + (pages.length / 2)) / pages.length);
-		System.out.println(" - resolution is " + pageImageDpi);
+		pm.setInfo(" - resolution is " + pageImageDpi);
 		
 		//	collect blocks adjacent to page edge (top or bottom) from each page
+		pm.setStep(" - gathering data");
 		PageData[] pageData = new PageData[pages.length];
 		for (int p = 0; p < pages.length; p++) {
 			pageData[p] = new PageData(pages[p]);
 			
 			//	get regions
 			ImRegion[] regions = pages[p].getRegions();
-			System.out.println(" - got " + regions.length + " regions in page " + p);
+			pm.setInfo(" - got " + regions.length + " regions in page " + p);
 			
 			//	collect regions of interest
 			for (int r = 0; r < regions.length; r++) {
-				System.out.println(" - assessing region " + regions[r].getType() + "@" + regions[r].bounds.toString());
+				pm.setInfo(" - assessing region " + regions[r].getType() + "@" + regions[r].bounds.toString());
 				
 				//	lines are not of interest here, as we are out for standalone blocks
 				if (LINE_ANNOTATION_TYPE.equals(regions[r].getType())) {
-					System.out.println(" --> ignoring line");
+					pm.setInfo(" --> ignoring line");
 					continue;
 				}
 				
 				//	this one's too large (higher than an inch, wider than three inches) to be a page header (would just waste too much space)
 				if (((regions[r].bounds.bottom - regions[r].bounds.top) > pageImageDpi) && ((regions[r].bounds.right - regions[r].bounds.left) > (pageImageDpi * 3))) {
-					System.out.println(" --> too large");
+					pm.setInfo(" --> too large");
 					continue;
 				}
 				
@@ -294,7 +295,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				
 				//	too many words for a page header
 				if (regionWords.length > 30) {
-					System.out.println(" --> too many words (" + regionWords.length + ")");
+					pm.setInfo(" --> too many words (" + regionWords.length + ")");
 					continue;
 				}
 				
@@ -329,11 +330,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				//	remember region of interest
 				if (!regionsAbove && (regions[r].bounds.bottom < (pages[p].bounds.bottom / 2))) {
 					pageData[p].topRegions.add(regions[r]);
-					System.out.println(" --> found top region");
+					pm.setInfo(" --> found top region");
 				}
 				if (!regionsBelow && (regions[r].bounds.top > (pages[p].bounds.bottom / 2))) {
 					pageData[p].bottomRegions.add(regions[r]);
-					System.out.println(" --> found bottom region");
+					pm.setInfo(" --> found bottom region");
 				}
 			}
 		}
@@ -392,36 +393,36 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			//	build candidate page numbers from collected parts
 			Collections.sort(pageNumberParts, ImUtils.leftRightTopDownOrder);
 			if (documentBornDigital) {
-				System.out.println(" - got " + pageNumberParts.size() + " possible page numbers for page " + p + ":");
+				pm.setInfo(" - got " + pageNumberParts.size() + " possible page numbers for page " + p + ":");
 				for (int w = 0; w < pageNumberParts.size(); w++) {
 					pageData[p].pageNumberCandidates.add(new PageNumber((ImWord) pageNumberParts.get(w)));
-					System.out.println("   - " + ((ImWord) pageNumberParts.get(w)).getString());
+					pm.setInfo("   - " + ((ImWord) pageNumberParts.get(w)).getString());
 				}
 			}
 			else {
-				System.out.println(" - got " + pageNumberParts.size() + " parts of possible page numbers:");
+				pm.setInfo(" - got " + pageNumberParts.size() + " parts of possible page numbers:");
 				HashSet pageNumberPartIDs = new HashSet();
 				for (int w = 0; w < pageNumberParts.size(); w++)
 					pageNumberPartIDs.add(((ImWord) pageNumberParts.get(w)).getLocalID());
 				for (int w = 0; w < pageNumberParts.size(); w++) {
-					System.out.println("   - " + ((ImWord) pageNumberParts.get(w)).getString());
-					addPageNumberCandidates(pageData[p].pageNumberCandidates, ((ImWord) pageNumberParts.get(w)), pageNumberPartIDs, pageImageDpi);
+					pm.setInfo("   - " + ((ImWord) pageNumberParts.get(w)).getString());
+					addPageNumberCandidates(pageData[p].pageNumberCandidates, ((ImWord) pageNumberParts.get(w)), pageNumberPartIDs, pageImageDpi, pm);
 					Collections.sort(pageData[p].pageNumberCandidates, pageNumberValueOrder);
 				}
 			}
 		}
 		
 		//	score and select page numbers for each page
-		System.out.println(" - scoring page numbers:");
-		this.scoreAndSelectPageNumbers(pageData);
+		pm.setStep(" - scoring page numbers:");
+		this.scoreAndSelectPageNumbers(pageData, pm);
 		
 		//	check page number sequence
-		System.out.println(" - checking page number sequence:");
-		this.checkPageNumberSequence(pageData);
+		pm.setStep(" - checking page number sequence:");
+		this.checkPageNumberSequence(pageData, pm);
 		
 		//	fill in missing page numbers
-		System.out.println(" - filling in missing page numbers:");
-		this.fillInMissingPageNumbers(pageData);
+		pm.setStep(" - filling in missing page numbers:");
+		this.fillInMissingPageNumbers(pageData, pm);
 		
 		//	annotate page numbers, collecting page number words
 		HashSet pageNumberWordIDs = new HashSet();
@@ -429,6 +430,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			this.annotatePageNumbers(pageData[p], pageNumberWordIDs);
 		
 		//	judge on page headers based on frequent words and on page numbers
+		pm.setStep(" - detectinr page headers");
 		for (int p = 0; p < pageData.length; p++) {
 			for (int r = 0; r < pageData[p].topRegions.size(); r++) {
 				ImRegion topRegion = ((ImRegion) pageData[p].topRegions.get(r));
@@ -455,6 +457,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 		
 		//	detect caption paragraphs
+		pm.setStep(" - detecting captions");
 		for (int p = 0; p < pages.length; p++) {
 			ImRegion[] paragraphRegions = pages[p].getRegions(PARAGRAPH_TYPE);
 			for (int r = 0; r < paragraphRegions.length; r++) {
@@ -472,6 +475,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 		
 		//	detect footnote paragraphs
+		pm.setStep(" - detecting footnotes");
 		for (int p = 0; p < pages.length; p++) {
 			ImRegion[] paragraphRegions = pages[p].getRegions(PARAGRAPH_TYPE);
 			boolean newFootnoteFound;
@@ -504,7 +508,6 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					if (nonFootnoteBelow)
 						continue;
 					if (this.isFootnote(paragraphRegions[r], regionWords)) {
-						System.out.println("Footnote: " + ImUtils.getString(regionWords[0], regionWords[regionWords.length-1], true));
 						ImUtils.makeStream(regionWords, ImWord.TEXT_STREAM_TYPE_FOOTNOTE, FOOTNOTE_TYPE);
 						ImUtils.orderStream(regionWords, ImUtils.leftRightTopDownOrder);
 						newFootnoteFound = true;
@@ -522,7 +525,6 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	concatenate first ten or so words
 		String paragraphStart = ImUtils.getString(paragraphWords[0], paragraphWords[(paragraphWords.length < 10) ? (paragraphWords.length - 1) : 9], true);
-		System.out.println("Checking for footnote: " + paragraphStart);
 		
 		//	test paragraph start against detector patterns
 		for (int p = 0; p < this.footnoteStartPatterns.length; p++) {
@@ -586,9 +588,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return ((capCharCount * 2) > charCount);
 	}
 	
-	private void addPageNumberCandidates(List pageNumberCandidates, ImWord pageNumberStartPart, HashSet pageNumberPartIDs, int dpi) {
+	private void addPageNumberCandidates(List pageNumberCandidates, ImWord pageNumberStartPart, HashSet pageNumberPartIDs, int dpi, ProgressMonitor pm) {
 		String pageNumberString = pageNumberStartPart.getString();
-		this.addPageNumberCandidates(pageNumberCandidates, pageNumberStartPart, pageNumberStartPart, pageNumberString);
+		this.addPageNumberCandidates(pageNumberCandidates, pageNumberStartPart, pageNumberStartPart, pageNumberString, pm);
 		for (ImWord imw = pageNumberStartPart.getNextWord(); imw != null; imw = imw.getNextWord()) {
 			if (imw.pageId != pageNumberStartPart.pageId)
 				break; // off page
@@ -601,13 +603,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (!pageNumberPartIDs.contains(imw.getLocalID()))
 				break;
 			pageNumberString += imw.getString();
-			boolean newPageNumbers = this.addPageNumberCandidates(pageNumberCandidates, pageNumberStartPart, imw, pageNumberString);
+			boolean newPageNumbers = this.addPageNumberCandidates(pageNumberCandidates, pageNumberStartPart, imw, pageNumberString, pm);
 			if (!newPageNumbers)
 				break; // no matches found
 		}
 	}
 	
-	private boolean addPageNumberCandidates(List pageNumberCandidates, ImWord firstWord, ImWord lastWord, String pageNumberString) {
+	private boolean addPageNumberCandidates(List pageNumberCandidates, ImWord firstWord, ImWord lastWord, String pageNumberString, ProgressMonitor pm) {
 		
 		//	page numbers with six or more digits are rather improbable ...
 		if (pageNumberString.length() > 5)
@@ -632,12 +634,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		TreeSet values = this.getAllPossibleValues(pageNumberDigits);
 		if (values.size() == 0)
 			return false;
-		System.out.println("   - got " + values.size() + " possible values");
+		pm.setInfo("   - got " + values.size() + " possible values");
 		
 		//	compute fuzzyness for each value
 		for (Iterator vit = values.iterator(); vit.hasNext();) {
 			String pageNumberValue = ((String) vit.next());
-			System.out.println("     - " + pageNumberValue);
+			pm.setInfo("     - " + pageNumberValue);
 			int fuzzyness = 0;
 			for (int d = 0; d < pageNumberValue.length(); d++) {
 				if (pageNumberValue.charAt(d) != pageNumberString.charAt(d))
@@ -673,7 +675,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return valueString.toString();
 	}
 	
-	private void scoreAndSelectPageNumbers(PageData[] pageData) {
+	private void scoreAndSelectPageNumbers(PageData[] pageData, ProgressMonitor pm) {
 		
 		//	work page by page
 		for (int p = 0; p < pageData.length; p++) {
@@ -728,7 +730,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				//	penalize fuzzyness
 				pn.score /= (pn.fuzzyness+1);
 				
-				System.out.println("   - " + pn.valueStr + " (as " + pn.value + ", fuzzyness " + pn.fuzzyness + ", ambiguity " + pn.ambiguity + ") on page " + p + " ==> " + pn.score);
+				pm.setInfo("   - " + pn.valueStr + " (as " + pn.value + ", fuzzyness " + pn.fuzzyness + ", ambiguity " + pn.ambiguity + ") on page " + p + " ==> " + pn.score);
 			}
 			
 			//	select page number
@@ -740,12 +742,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					pageData[p].pageNumber = pn;
 			}
 			if (pageData[p].pageNumber == null)
-				System.out.println(" --> could not determine page number of page " + p + ".");
-			else System.out.println(" --> page number of " + p + " identified as " + pageData[p].pageNumber.value + " (score " + pageData[p].pageNumber.score + ")");
+				pm.setInfo(" --> could not determine page number of page " + p + ".");
+			else pm.setInfo(" --> page number of " + p + " identified as " + pageData[p].pageNumber.value + " (score " + pageData[p].pageNumber.score + ")");
 		}
 	}
 	
-	private void checkPageNumberSequence(PageData[] pageData) {
+	private void checkPageNumberSequence(PageData[] pageData, ProgressMonitor pm) {
 		for (int p = 0; p < pageData.length; p++) {
 			if (pageData[p].pageNumber == null)
 				continue;
@@ -762,13 +764,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			
 			//	correct that one oddjob in the middle
 			if ((bpn != null) && (fpn != null) && bpn.isConsistentWith(fpn)) {
-				System.out.println("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " for sequence inconsistency.");
+				pm.setInfo("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " for sequence inconsistency.");
 				pageData[p].pageNumber = null;
 				for (int n = 0; n < pageData[p].pageNumberCandidates.size(); n++) {
 					PageNumber pn = ((PageNumber) pageData[p].pageNumberCandidates.get(n));
 					if (pn.isConsistentWith(bpn) && pn.isConsistentWith(fpn)) {
 						pageData[p].pageNumber = pn;
-						System.out.println("   --> re-assigned to " + pageData[p].pageNumber.value);
+						pm.setInfo("   --> re-assigned to " + pageData[p].pageNumber.value);
 						break;
 					}
 				}
@@ -777,19 +779,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			
 			//	one side not set, other inconsistent and far more secure
 			if ((bpn == null) && !fpn.isConsistentWith(pageData[p].pageNumber) && ((pageData[p].pageNumber.score * 2) < fpn.score)) {
-				System.out.println("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " for sequence front edge inconsistency.");
+				pm.setInfo("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " for sequence front edge inconsistency.");
 				pageData[p].pageNumber = null;
 				continue;
 			}
 			else if ((fpn == null) && !bpn.isConsistentWith(pageData[p].pageNumber) && ((pageData[p].pageNumber.score * 2) < bpn.score)) {
-				System.out.println("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " for sequence back edge inconsistency.");
+				pm.setInfo("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " for sequence back edge inconsistency.");
 				pageData[p].pageNumber = null;
 				continue;
 			}
 		}
 	}
 	
-	private void fillInMissingPageNumbers(PageData[] pageData) {
+	private void fillInMissingPageNumbers(PageData[] pageData, ProgressMonitor pm) {
 		
 		//	make sure not to extrapolate to page numbers that are already taken
 		HashSet existingPageNumbers = new HashSet();
@@ -812,9 +814,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				pageData[p].pageNumber = ePageNumber;
 				pageData[p].page.setAttribute(PAGE_NUMBER_ATTRIBUTE, ("" + ePageNumber.value));
 				bPageNumber = ePageNumber;
-				System.out.println(" --> backward-extrapolated page number of page " + p + " to " + pageData[p].pageNumber.value);
+				pm.setInfo(" --> backward-extrapolated page number of page " + p + " to " + pageData[p].pageNumber.value);
 			}
-			else System.out.println(" --> could not backward-extrapolated page number of page " + p + ", page number " + ePageNumber.value + " already assigned");
+			else pm.setInfo(" --> could not backward-extrapolated page number of page " + p + ", page number " + ePageNumber.value + " already assigned");
 		}
 		
 		//	do forward sequence extrapolation
@@ -831,9 +833,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				pageData[p].pageNumber = ePageNumber;
 				pageData[p].page.setAttribute(PAGE_NUMBER_ATTRIBUTE, ("" + ePageNumber.value));
 				fPageNumber = ePageNumber;
-				System.out.println(" --> forward-extrapolated page number of page " + p + " to " + pageData[p].pageNumber.value);
+				pm.setInfo(" --> forward-extrapolated page number of page " + p + " to " + pageData[p].pageNumber.value);
 			}
-			else System.out.println(" --> could not forward-extrapolated page number of page " + p + ", page number " + ePageNumber.value + " already assigned");
+			else pm.setInfo(" --> could not forward-extrapolated page number of page " + p + ", page number " + ePageNumber.value + " already assigned");
 		}
 	}
 	
