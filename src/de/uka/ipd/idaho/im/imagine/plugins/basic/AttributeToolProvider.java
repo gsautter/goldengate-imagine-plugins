@@ -44,6 +44,7 @@ import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImObject;
 import de.uka.ipd.idaho.im.ImPage;
+import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
@@ -341,15 +342,18 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 		oldValueSsl.selector.setSelectedIndex(0);
 		
 		//	add new value selector
-		final StringSelectorLine newValueSsl = ssp.addSelector("New attribute value", attributeNames, null, true);
+		final StringSelectorLine newValueSsl = ssp.addSelector("New attribute value", new String[0], null, true);
 		
 		//	change value selection if attribute name changes
 		nameSsl.selector.addItemListener(new ItemListener() {
 			public void itemStateChanged(ItemEvent ie) {
 				String name = nameSsl.getSelectedString();
 				String[] nameValues;
-				if (typeSsl == null)
-					nameValues = ((String[]) cache.get("@" + name));					
+				if (typeSsl == null) {
+					nameValues = ((String[]) cache.get("@" + name));
+					if (nameValues == null)
+						nameValues = new String[0];
+				}
 				else {
 					String type = typeSsl.getSelectedString();
 					nameValues = ((String[]) cache.get(type + "@" + name));					
@@ -549,6 +553,7 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 			for (int t = 0; t < regionTypes.length; t++)
 				types.add(regionTypes[t] + REGIONS_TYPE_SUFFIX);
 		}
+		types.add(ImRegion.WORD_ANNOTATION_TYPE + REGIONS_TYPE_SUFFIX);
 		return ((String[]) types.toArray(new String[types.size()]));
 	}
 	
@@ -556,8 +561,11 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 		LinkedList objects = new LinkedList();
 		if (ALL_OBJECTS.equals(objType) || ALL_REGIONS.equals(objType)) {
 			ImPage[] pages = doc.getPages();
-			for (int p = 0; p < pages.length; p++)
+			for (int p = 0; p < pages.length; p++) {
 				objects.addAll(Arrays.asList(pages[p].getRegions(type)));
+				if ((type == null) || ImRegion.WORD_ANNOTATION_TYPE.equals(type))
+					objects.addAll(Arrays.asList(pages[p].getWords()));
+			}
 		}
 		if (ALL_OBJECTS.equals(objType) || ALL_ANNOTATIONS.equals(objType))
 			objects.addAll(Arrays.asList(doc.getAnnotations(type)));

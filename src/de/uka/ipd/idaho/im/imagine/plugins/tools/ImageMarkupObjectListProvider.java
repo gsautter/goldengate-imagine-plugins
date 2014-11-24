@@ -64,7 +64,6 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
-import javax.swing.JEditorPane;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
@@ -72,13 +71,9 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
-import javax.swing.JTabbedPane;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.ListSelectionEvent;
@@ -110,6 +105,7 @@ import de.uka.ipd.idaho.goldenGate.plugins.AnnotationFilter;
 import de.uka.ipd.idaho.goldenGate.util.AttributeEditorDialog;
 import de.uka.ipd.idaho.goldenGate.util.DataListListener;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
+import de.uka.ipd.idaho.goldenGate.util.HelpEditorDialog;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
@@ -852,7 +848,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		}
 		
 		private void editHelpText() {
-			HelpEditorDialog hed = new HelpEditorDialog(this.name, this.helpText);
+			HelpEditorDialog hed = new HelpEditorDialog(("Edit Help Text for '" + this.name + "'"), this.helpText);
 			hed.setVisible(true);
 			if (hed.isCommitted()) {
 				this.helpText = hed.getHelpText();
@@ -891,85 +887,6 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		}
 	}
 	
-	private class HelpEditorDialog extends DialogPanel {
-		private JTextArea editor = new JTextArea();
-		private JEditorPane preview = new JEditorPane();
-		HelpEditorDialog(String name, String helpText) {
-			super(("Edit Help Text for '" + name + "'"), true);
-			
-			//	initialize main buttons
-			JButton commitButton = new JButton("OK");
-			commitButton.setBorder(BorderFactory.createRaisedBevelBorder());
-			commitButton.setPreferredSize(new Dimension(100, 21));
-			commitButton.addActionListener(new ActionListener() {
-				public void actionPerformed(ActionEvent ae) {
-					dispose();
-				}
-			});
-			
-			JButton abortButton = new JButton("Cancel");
-			abortButton.setBorder(BorderFactory.createRaisedBevelBorder());
-			abortButton.setPreferredSize(new Dimension(100, 21));
-			abortButton.addActionListener(new ActionListener() {
-				public void actionPerformed(ActionEvent ae) {
-					HelpEditorDialog.this.editor = null;
-					dispose();
-				}
-			});
-			
-			JPanel mainButtonPanel = new JPanel();
-			mainButtonPanel.setLayout(new FlowLayout());
-			mainButtonPanel.add(commitButton);
-			mainButtonPanel.add(abortButton);
-			
-			//	initialize editors
-			this.editor.setText((helpText == null) ? "" : helpText);
-			
-			//	make editor scrollable
-			final JScrollPane editorBox = new JScrollPane(this.editor);
-			editorBox.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
-			editorBox.getVerticalScrollBar().setUnitIncrement(25);
-			editorBox.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-			editorBox.getHorizontalScrollBar().setUnitIncrement(25);
-			final JScrollPane previewBox = new JScrollPane(this.preview);
-			previewBox.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
-			previewBox.getVerticalScrollBar().setUnitIncrement(25);
-			
-			//	put editor in tabs
-			final JTabbedPane tabs = new JTabbedPane();
-			tabs.addTab("Editor", editorBox);
-			tabs.addTab("Preview", previewBox);
-			tabs.addChangeListener(new ChangeListener() {
-				public void stateChanged(ChangeEvent ce) {
-					if (tabs.getSelectedComponent() == previewBox) {
-						String ht = editor.getText();
-						if ((ht.length() > 6) && ("<html>".equals(ht.substring(0, 6).toLowerCase()) || "<html ".equals(ht.substring(0, 6).toLowerCase())))
-							preview.setContentType("text/html");
-						else preview.setContentType("text/plain");
-						preview.setText(ht);
-					}
-				}
-			});
-			
-			//	put the whole stuff together
-			this.setLayout(new BorderLayout());
-			this.add(tabs, BorderLayout.CENTER);
-			this.add(mainButtonPanel, BorderLayout.SOUTH);
-			
-			this.setResizable(true);
-			this.setSize(new Dimension(600, 400));
-			this.setLocationRelativeTo(this.getOwner());
-		}
-		
-		boolean isCommitted() {
-			return (this.editor != null);
-		}
-		
-		String getHelpText() {
-			return ((this.editor == null) ? null : this.editor.getText().trim());
-		}
-	}
-	
 	/**
 	 * Open a list of Image Markup objects. Depending on the argument normalization
 	 * level, the listed objects are regions or annotations. If the argument
@@ -994,6 +911,10 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		//	open list viewer around wrapper, and work on wrapper (it all goes through to document anyway)
 		ObjectListDialog and = new ObjectListDialog(title, wrappedDoc, showingLayoutObjects, idmp, filter);
 		and.setVisible(true);
+		
+		//	show any changes
+		idmp.validate();
+		idmp.repaint();
 	}
 	
 	private StringVector customFilterHistory = new StringVector();
@@ -1041,7 +962,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			
 			this.setResizable(true);
 			this.setSize(new Dimension(500, 650));
-			this.setLocationRelativeTo((target == null) ? ((Component) this.getOwner()) : ((Component) target));
+			this.setLocationRelativeTo(this.getOwner());
 		}
 		
 		private JPanel buildFilterPanel(MutableAnnotation data, ImDocumentMarkupPanel target) {

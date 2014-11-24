@@ -27,20 +27,36 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
+import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.font.FontRenderContext;
 import java.awt.font.TextLayout;
+import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
 
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.TokenSequence;
 import de.uka.ipd.idaho.gamta.Tokenizer;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
+import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
@@ -68,6 +84,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 	private ImImageEditTool eraserSlash = new Eraser("Eraser /", "00000000011\n00000000111\n00000001110\n00000011100\n00000111000\n00001110000\n00011100000\n00111000000\n01110000000\n11100000000\n11000000000");
 	private ImImageEditTool eraserBackslash = new Eraser("Eraser \\", "11000000000\n11100000000\n01110000000\n00111000000\n00011100000\n00001110000\n00000111000\n00000011100\n00000001110\n00000000111\n00000000011");
 	private ImImageEditTool eraserFlex = new EraserFlex();
+	private ImImageEditTool rotator = new Rotator();
 	private ImImageEditTool wordRemover = new WordRemover();
 	private ImImageEditTool wordMarker = new WordMarker();
 	
@@ -97,6 +114,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			this.eraserSlash,
 			this.eraserBackslash,
 			this.eraserFlex,
+			this.rotator,
 			this.wordRemover,
 			this.wordMarker,
 		};
@@ -423,6 +441,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			if (nextWord != null)
 				((ImWord) wordList.get(wordList.size() - 1)).setAttribute((ImWord.NEXT_WORD_ATTRIBUTE + "Temp"), nextWord);
 		}
+		
 		private int getMaxRegionColor(int[][] regionColors) {
 			int maxRegionColor = 0;
 			for (int c = 0; c < regionColors.length; c++) {
@@ -430,6 +449,117 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 					maxRegionColor = Math.max(maxRegionColor, regionColors[c][r]);
 			}
 			return maxRegionColor;
+		}
+	}
+	
+	private class Rotator extends SelectionImageEditTool implements ImagingConstants {
+		Rotator() {
+			super("Rotate", "Rotate parts of the page image", null, true);
+		}
+		
+		protected void doEdit(ImImageEditorPanel iiep, int sx, int sy, int ex, int ey) {
+			
+			//	compute bounds
+			int left = Math.min(sx, ex);
+			int right = Math.max(sx, ex);
+			int top = Math.min(sy, ey);
+			int bottom = Math.max(sy, ey);
+			
+			//	get selected image block
+			final BufferedImage bi = iiep.getImage().getSubimage(left, top, (right - left), (bottom - top));
+			
+			final JTextField angleField = new JTextField("0.0");
+			final double[] angle = {Double.NaN};
+			
+			final JPanel bip = new JPanel() {
+				public void paint(Graphics g) {
+					super.paint(g);
+					
+					AffineTransform at = null;
+					if ((angle[0] != Double.NaN) && (g instanceof Graphics2D)) {
+						at = ((Graphics2D) g).getTransform();
+						((Graphics2D) g).rotate(angle[0], (bi.getWidth() / 2), (bi.getHeight() / 2));
+					}
+					g.drawImage(bi, ((this.getWidth() - bi.getWidth()) / 2), ((this.getHeight() - bi.getHeight()) / 2), this);
+					if (at != null)
+						((Graphics2D) g).setTransform(at);
+					
+					Color preLineColor = g.getColor();
+					g.setColor(Color.RED);
+					for (int y = 10; y < this.getHeight(); y += 10)
+						g.drawLine(0, y, this.getWidth(), y);
+					g.setColor(preLineColor);
+				}
+			};
+			bip.setBackground(Color.WHITE);
+			bip.validate();
+			bip.repaint();
+			
+			angleField.addActionListener(new ActionListener() {
+				public void actionPerformed(ActionEvent ae) {
+					try {
+						angle[0] = Double.parseDouble(angleField.getText().trim());
+						bip.validate();
+						bip.repaint();
+					} catch (Exception e) {}
+				}
+			});
+			
+			final DialogPanel dp = new DialogPanel("Rotate Image Part", true);
+			
+			JPanel ap = new JPanel(new BorderLayout(), true);
+			ap.add(new JLabel("Rotation Angle (hit 'Enter' to apply): "), BorderLayout.WEST);
+			ap.add(angleField, BorderLayout.CENTER);
+			
+			JButton ok = new JButton("Rotate");
+			ok.setBorder(BorderFactory.createRaisedBevelBorder());
+			ok.addActionListener(new ActionListener() {
+				public void actionPerformed(ActionEvent ae) {
+					try {
+						angle[0] = Double.parseDouble(angleField.getText().trim());
+						dp.dispose();
+					}
+					catch (Exception e) {
+						JOptionPane.showMessageDialog(dp, "Invalid Rotation Angle", ("'" + angleField.getText() + "' is not a valid angle."), JOptionPane.ERROR_MESSAGE);
+					}
+				}
+			});
+			JButton cancel = new JButton("Cancel");
+			cancel.setBorder(BorderFactory.createRaisedBevelBorder());
+			cancel.addActionListener(new ActionListener() {
+				public void actionPerformed(ActionEvent ae) {
+					angle[0] = Double.NaN;
+					dp.dispose();
+				}
+			});
+			JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER), true);
+			bp.add(ok);
+			bp.add(cancel);
+			
+			dp.add(ap, BorderLayout.NORTH);
+			dp.add(bip, BorderLayout.CENTER);
+			dp.add(bp, BorderLayout.SOUTH);
+			
+			dp.setSize((bi.getWidth() + 100), (bi.getHeight() + 100));
+			dp.setLocationRelativeTo(dp.getOwner());
+			dp.setVisible(true);
+			
+			if ((angle[0] == Double.NaN) || (angle[0] == 0))
+				return;
+			
+			BufferedImage cbi = new BufferedImage(bi.getWidth(), bi.getHeight(), bi.getType());
+			Graphics cg = cbi.getGraphics();
+			cg.setColor(Color.WHITE);
+			cg.fillRect(0, 0, cbi.getWidth(), cbi.getHeight());
+			cg.drawImage(bi, 0, 0, null);
+			cg.dispose();
+			
+			BufferedImage tbi = iiep.getImage();
+			Graphics2D tg = tbi.createGraphics();
+			tg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+			tg.rotate(angle[0], ((left + right) / 2), ((top + bottom) / 2));
+			tg.drawImage(cbi, left, top, null);
+			tg.dispose();
 		}
 	}
 }
