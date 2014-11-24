@@ -5,7 +5,7 @@
 -->
 
 <project name="dist">
-	<target name="plugins" depends="annotationsjar,attributesjar,basicimageeditjar,regionsjar,textjar,textblocksjar,textstreamsjar,docmeatdatajar,docstructurejar,fontsjar,urldroplinkerjar,tablesjar,annotationlistjar,dpimtoolsjar">
+	<target name="plugins" depends="annotationsjar,attributesjar,basicimageeditjar,regionsjar,textjar,textblocksjar,textstreamsjar,docmeatdatajar,docstructurejar,fontsjar,urldroplinkerjar,tablesjar,objectlistjar,dpimtoolsjar">
 		<!-- proxy target only -->
 	</target>
 	
@@ -177,15 +177,15 @@
 		</jar>
 	</target>
 	
-	<target name="annotationlistjar">
-		<delete file="${jar.annotationlist}" />
-		<jar destfile="${jar.annotationlist}" manifest="${file.home}/MANIFEST.plugins.MF">
+	<target name="objectlistjar">
+		<delete file="${jar.objectlist}" />
+		<jar destfile="${jar.objectlist}" manifest="${file.home}/MANIFEST.plugins.MF">
 			<fileset dir="${build.home}/classes">
-				<include name="**/imagine/plugins/tools/AnnotationListProvider.class" />
-				<include name="**/imagine/plugins/tools/AnnotationListProvider$*.class" />
+				<include name="**/imagine/plugins/tools/ImageMarkupObjectListProvider.class" />
+				<include name="**/imagine/plugins/tools/ImageMarkupObjectProvider$*.class" />
 			</fileset>
 			<fileset dir="${src.home}">
-				<include name="**/imagine/plugins/tools/AnnotationListProvider.java" />
+				<include name="**/imagine/plugins/tools/ImageMarkupObjectProvider.java" />
 			</fileset>
 			<fileset dir="." includes="LICENSE.txt"/>
 		</jar>

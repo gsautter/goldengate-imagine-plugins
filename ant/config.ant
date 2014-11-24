@@ -66,5 +66,5 @@
 	<property name="jar.dpimtools" value="${dist.home}/Plugins/DocumentProcessorImTools.jar" />
 	
 	<!-- path to the .jar file that shall be created -->
-	<property name="jar.annotationlist" value="${dist.home}/Plugins/AnnotationListProvider.jar" />
+	<property name="jar.objectlist" value="${dist.home}/Plugins/ObjectListProvider.jar" />
 </project>
