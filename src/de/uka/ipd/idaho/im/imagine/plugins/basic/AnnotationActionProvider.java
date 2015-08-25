@@ -282,7 +282,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		
 		//	create an annotation
 		if (createAnnotTypes.isEmpty()) {
-			actions.add(new SelectionAction("Annotate", "Annotate selected words") {
+			actions.add(new SelectionAction("annotate", "Annotate", "Annotate selected words") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", annotTypes, null, true);
 					if (annotType == null)
@@ -294,7 +294,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					return true;
 				}
 			});
-			actions.add(new SelectionAction("Annotate All", "Annotate all occurrences of selected words") {
+			actions.add(new SelectionAction("annotateAll", "Annotate All", "Annotate all occurrences of selected words") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", annotTypes, null, true);
 					if (annotType == null)
@@ -306,7 +306,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			});
 		}
 		else {
-			actions.add(new SelectionAction("Annotate", "Annotate selected words") {
+			actions.add(new SelectionAction("annotate", "Annotate", "Annotate selected words") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
@@ -317,10 +317,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						public void actionPerformed(ActionEvent ae) {
 							String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", annotTypes, null, true);
 							if (annotType != null) {
+								invoker.beginAtomicAction("Add '" + annotType + "' Annotation");
 								ImWord fw = ((ImUtils.textStreamOrder.compare(start, end) < 0) ? start : end);
 								ImWord lw = ((ImUtils.textStreamOrder.compare(start, end) < 0) ? end : start);
 								idmp.document.addAnnotation(fw, lw, annotType);
-								idmp.setAnnotationsPainted(annotType, true);
+								invoker.endAtomicAction();
+								invoker.setAnnotationsPainted(annotType, true);
 								invoker.validate();
 								invoker.repaint();
 							}
@@ -332,10 +334,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						mi = new JMenuItem("- " + annotType);
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
+								invoker.beginAtomicAction("Add '" + annotType + "' Annotation");
 								ImWord fw = ((ImUtils.textStreamOrder.compare(start, end) < 0) ? start : end);
 								ImWord lw = ((ImUtils.textStreamOrder.compare(start, end) < 0) ? end : start);
 								ImAnnotation imAnnot = idmp.document.addAnnotation(fw, lw, annotType);
-								idmp.setAnnotationsPainted(imAnnot.getType(), true);
+								invoker.endAtomicAction();
+								invoker.setAnnotationsPainted(imAnnot.getType(), true);
 								invoker.validate();
 								invoker.repaint();
 							}
@@ -345,7 +349,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					return pm;
 				}
 			});
-			actions.add(new SelectionAction("Annotate All", "Annotate all occurrences of selected words") {
+			actions.add(new SelectionAction("annotateAll", "Annotate All", "Annotate all occurrences of selected words") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
@@ -356,10 +360,10 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						public void actionPerformed(ActionEvent ae) {
 							String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotations to create", annotTypes, null, true);
 							if (annotType != null) {
-								idmp.beginAtomicAction("Annotate All");
+								invoker.beginAtomicAction("Annotate All");
 								annotateAll(idmp.document, start, end, annotType);
-								idmp.endAtomicAction();
-								idmp.setAnnotationsPainted(annotType, true);
+								invoker.endAtomicAction();
+								invoker.setAnnotationsPainted(annotType, true);
 								invoker.validate();
 								invoker.repaint();
 							}
@@ -371,10 +375,10 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						mi = new JMenuItem("- " + annotType);
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								idmp.beginAtomicAction("Annotate All");
+								invoker.beginAtomicAction("Annotate All");
 								annotateAll(idmp.document, start, end, annotType);
-								idmp.endAtomicAction();
-								idmp.setAnnotationsPainted(annotType, true);
+								invoker.setAnnotationsPainted(annotType, true);
+								invoker.endAtomicAction();
 								invoker.validate();
 								invoker.repaint();
 							}
@@ -388,7 +392,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		
 		//	single word selection (offer editing word attributes above same for other annotations)
 		if (start == end)
-			actions.add(new SelectionAction(("Edit Word Attributes"), ("Edit attributes of '" + start.getString() + "'.")) {
+			actions.add(new SelectionAction("editAttributesWord", "Edit Word Attributes", ("Edit attributes of '" + start.getString() + "'.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					idmp.editAttributes(start, start.getType(), start.getString());
 					return true;
@@ -399,31 +403,31 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		if (spanningAnnots.length == 1) {
 			
 			//	edit attributes of existing annotations
-			actions.add(new SelectionAction(("Edit " + spanningAnnots[0].getType() + " Attributes"), ("Edit attributes of '" + spanningAnnots[0].getType() + "' annotation.")) {
+			actions.add(new SelectionAction("editAttributesAnnot", ("Edit " + spanningAnnots[0].getType() + " Attributes"), ("Edit attributes of '" + spanningAnnots[0].getType() + "' annotation.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					StringBuffer selectedAnnotValue = new StringBuffer();
+					StringBuffer spanningAnnotValue = new StringBuffer();
 					for (ImWord imw = spanningAnnots[0].getFirstWord(); imw != null; imw = imw.getNextWord()) {
 						if (imw.pageId != spanningAnnots[0].getFirstWord().pageId)
 							break;
-						selectedAnnotValue.append(imw.toString());
+						spanningAnnotValue.append(imw.toString());
 						if (imw == spanningAnnots[0].getLastWord())
 							break;
 					}
-					idmp.editAttributes(spanningAnnots[0], spanningAnnots[0].getType(), selectedAnnotValue.toString());
+					idmp.editAttributes(spanningAnnots[0], spanningAnnots[0].getType(), spanningAnnotValue.toString());
 					return true;
 				}
 			});
 			
 			//	remove existing annotation
-			actions.add(new SelectionAction(("Remove " + spanningAnnots[0].getType() + " Annotation"), ("Remove '" + spanningAnnots[0].getType() + "' annotation.")) {
+			actions.add(new SelectionAction("removeAnnot", ("Remove " + spanningAnnots[0].getType() + " Annotation"), ("Remove '" + spanningAnnots[0].getType() + "' annotation.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					idmp.document.removeAnnotation(spanningAnnots[0]);
 					return true;
 				}
 			});
 			
-			//	remove all existing annotation with selected value TODO shorten label
-			actions.add(new SelectionAction(("Remove All '" + start.getString() + ((start == end) ? "" : (((start.getNextWord() == end) ? " " : " ... ") + end.getString())) + "' " + spanningAnnots[0].getType() + " Annotations"), ("Remove all '" + spanningAnnots[0].getType() + "' annotations with value '" + start.getString() + ((start == end) ? "" : (((start.getNextWord() == end) ? " " : " ... ") + end.getString())) + "'.")) {
+			//	remove all existing annotation with selected value
+			actions.add(new SelectionAction("removeAllAnnot", ("Remove All '" + getAnnotationShortValue(start, end) + "' " + spanningAnnots[0].getType() + " Annotations"), ("Remove all '" + spanningAnnots[0].getType() + "' annotations with value '" + getAnnotationShortValue(start, end) + "'.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					idmp.beginAtomicAction("Remove All");
 					removeAll(idmp.document, spanningAnnots[0]);
@@ -433,7 +437,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			});
 			
 			//	change type of existing annotation
-			actions.add(new SelectionAction(("Change Annotation Type"), ("Change type of '" + spanningAnnots[0].getType() + "' annotation.")) {
+			actions.add(new SelectionAction("changeTypeAnnot", ("Change Annotation Type"), ("Change type of '" + spanningAnnots[0].getType() + "' annotation.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select new annotation type", annotTypes, spanningAnnots[0].getType(), true);
 					if (annotType == null)
@@ -453,7 +457,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		else if ((spanningAnnots.length > 1) && (annotMergerGroups.isEmpty() || (start == end))) {
 			
 			//	edit attributes of existing annotations
-			actions.add(new SelectionAction("Edit Annotation Attributes ...", "Edit attributes of selected annotations.") {
+			actions.add(new SelectionAction("editAttributesAnnot", "Edit Annotation Attributes ...", "Edit attributes of selected annotations.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
@@ -461,19 +465,19 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					JMenu pm = new JMenu("Edit Annotation Attributes ...");
 					JMenuItem mi;
 					for (int a = 0; a < spanningAnnots.length; a++) {
-						final ImAnnotation selectedAnnot = spanningAnnots[a];
-						mi = new JMenuItem("- " + selectedAnnot.getType() + " '" + selectedAnnot.getFirstWord().getString() + "'");
+						final ImAnnotation spanningAnnot = spanningAnnots[a];
+						mi = new JMenuItem("- " + spanningAnnot.getType() + " '" + getAnnotationShortValue(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord()) + "'");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								StringBuffer selectedAnnotValue = new StringBuffer();
-								for (ImWord imw = selectedAnnot.getFirstWord(); imw != null; imw = imw.getNextWord()) {
-									if (imw.pageId != selectedAnnot.getFirstWord().pageId)
+								StringBuffer spanningAnnotValue = new StringBuffer();
+								for (ImWord imw = spanningAnnot.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+									if (imw.pageId != spanningAnnot.getFirstWord().pageId)
 										break;
-									selectedAnnotValue.append(imw.toString());
-									if (imw == selectedAnnot.getLastWord())
+									spanningAnnotValue.append(imw.toString());
+									if (imw == spanningAnnot.getLastWord())
 										break;
 								}
-								idmp.editAttributes(selectedAnnot, selectedAnnot.getType(), selectedAnnotValue.toString());
+								idmp.editAttributes(spanningAnnot, spanningAnnot.getType(), spanningAnnotValue.toString());
 								invoker.validate();
 								invoker.repaint();
 							}
@@ -485,7 +489,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			});
 			
 			//	remove existing annotation
-			actions.add(new SelectionAction("Remove Annotation ...", "Remove selected annotations.") {
+			actions.add(new SelectionAction("removeAnnot", "Remove Annotation ...", "Remove selected annotations.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
@@ -493,11 +497,13 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					JMenu pm = new JMenu("Remove Annotation ...");
 					JMenuItem mi;
 					for (int a = 0; a < spanningAnnots.length; a++) {
-						final ImAnnotation selectedAnnot = spanningAnnots[a];
-						mi = new JMenuItem("- " + selectedAnnot.getType() + " '" + selectedAnnot.getFirstWord().getString() + "'");
+						final ImAnnotation spanningAnnot = spanningAnnots[a];
+						mi = new JMenuItem("- " + spanningAnnot.getType() + " '" + getAnnotationShortValue(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord()) + "'");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								idmp.document.removeAnnotation(selectedAnnot);
+								invoker.beginAtomicAction("Remove Annotation");
+								idmp.document.removeAnnotation(spanningAnnot);
+								invoker.endAtomicAction();
 								invoker.validate();
 								invoker.repaint();
 							}
@@ -508,22 +514,22 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 				}
 			});
 			
-			//	remove all existing annotation with selected value TODO shorten sub menu labels
-			actions.add(new SelectionAction("Remove All Annotations ...", "Remove all annotations with selected value.") {
+			//	remove all existing annotation with selected value
+			actions.add(new SelectionAction("removeAllAnnot", "Remove All Annotations ...", "Remove all annotations with selected value.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
 				public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
-					JMenu pm = new JMenu("Remove All Annotation ...");
+					JMenu pm = new JMenu("Remove All Annotations ...");
 					JMenuItem mi;
 					for (int a = 0; a < spanningAnnots.length; a++) {
 						final ImAnnotation selectedAnnot = spanningAnnots[a];
-						mi = new JMenuItem("- " + selectedAnnot.getType() + " '" + start.getString() + ((start == end) ? "" : (((start.getNextWord() == end) ? " " : " ... ") + end.getString())) + "'");
+						mi = new JMenuItem("- " + selectedAnnot.getType() + " '" + getAnnotationShortValue(start, end) + "'");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								idmp.beginAtomicAction("Remove All");
+								invoker.beginAtomicAction("Remove All");
 								removeAll(idmp.document, selectedAnnot);
-								idmp.endAtomicAction();
+								invoker.endAtomicAction();
 								invoker.validate();
 								invoker.repaint();
 							}
@@ -535,7 +541,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			});
 			
 			//	change type of existing annotation
-			actions.add(new SelectionAction("Change Annotation Type ...", "Change the type of selected annotations.") {
+			actions.add(new SelectionAction("changeTypeAnnot", "Change Annotation Type ...", "Change the type of selected annotations.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
@@ -543,14 +549,16 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					JMenu pm = new JMenu("Change Annotation Type ...");
 					JMenuItem mi;
 					for (int a = 0; a < spanningAnnots.length; a++) {
-						final ImAnnotation selectedAnnot = spanningAnnots[a];
-						mi = new JMenuItem("- " + selectedAnnot.getType() + " '" + selectedAnnot.getFirstWord().getString() + "'");
+						final ImAnnotation spanningAnnot = spanningAnnots[a];
+						mi = new JMenuItem("- " + spanningAnnot.getType() + " '" + spanningAnnot.getFirstWord().getString() + "'");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select new annotation type", annotTypes, selectedAnnot.getType(), true);
+								String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select new annotation type", annotTypes, spanningAnnot.getType(), true);
 								if (annotType != null) {
-									selectedAnnot.setType(annotType);
+									invoker.beginAtomicAction("Change Annotation Type");
+									spanningAnnot.setType(annotType);
 									idmp.setAnnotationsPainted(annotType, true);
+									invoker.endAtomicAction();
 									invoker.validate();
 									invoker.repaint();
 								}
@@ -567,13 +575,13 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		if (start == end) {
 			
 			//	start annotation
-			actions.add(new TwoClickSelectionAction("Start Annotation", ("Start annotation from '" + start.getString() + "'")) {
+			actions.add(new TwoClickSelectionAction("annotateTwoClick", "Start Annotation", ("Start annotation from '" + start.getString() + "'")) {
 				public boolean performAction(ImWord secondWord) {
 					if (!start.getTextStreamId().equals(secondWord.getTextStreamId())) {
 						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("Cannot annotate from '" + start.getString() + "' to '" + secondWord.getString() + "', they belong to different text streams."), "Cannot Annotate Across Text Streams", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
-					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", annotTypes, null, true);
+					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", ((String[]) createAnnotTypes.toArray(new String[createAnnotTypes.size()])), null, true);
 					if (annotType == null)
 						return false;
 					ImWord fw = ((ImUtils.textStreamOrder.compare(start, secondWord) < 0) ? start : secondWord);
@@ -594,12 +602,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			for (int a = 0; a < spanningAnnots.length; a++) {
 				if ((spanningAnnots[a].getFirstWord() == start) || (start.getPreviousWord() == null))
 					continue;
-				final ImAnnotation selectedAnnot = spanningAnnots[a];
-				actions.add(new SelectionAction(("Split " + selectedAnnot.getType() + " Before"), ("Split the '" + selectedAnnot.getType() + "' anotation before '" + start.getString() + "'")) {
+				final ImAnnotation spanningAnnot = spanningAnnots[a];
+				actions.add(new SelectionAction("splitAnnotBefore", ("Split " + spanningAnnot.getType() + " Before"), ("Split the '" + spanningAnnot.getType() + "' anotation before '" + start.getString() + "'")) {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						ImAnnotation imAnnot = idmp.document.addAnnotation(start, selectedAnnot.getLastWord(), selectedAnnot.getType());
-						imAnnot.copyAttributes(selectedAnnot);
-						selectedAnnot.setLastWord(start.getPreviousWord());
+						ImAnnotation imAnnot = idmp.document.addAnnotation(start, spanningAnnot.getLastWord(), spanningAnnot.getType());
+						imAnnot.copyAttributes(spanningAnnot);
+						spanningAnnot.setLastWord(start.getPreviousWord());
 						return true;
 					}
 				});
@@ -609,12 +617,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			for (int a = 0; a < spanningAnnots.length; a++) {
 				if ((spanningAnnots[a].getLastWord() == start) || (start.getNextWord() == null))
 					continue;
-				final ImAnnotation selectedAnnot = spanningAnnots[a];
-				actions.add(new SelectionAction(("Split " + selectedAnnot.getType() + " After"), ("Split the '" + selectedAnnot.getType() + "' anotation after '" + start.getString() + "'")) {
+				final ImAnnotation spanningAnnot = spanningAnnots[a];
+				actions.add(new SelectionAction("splitAnnotAfter", ("Split " + spanningAnnot.getType() + " After"), ("Split the '" + spanningAnnot.getType() + "' anotation after '" + start.getString() + "'")) {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						ImAnnotation imAnnot = idmp.document.addAnnotation(start.getNextWord(), selectedAnnot.getLastWord(), selectedAnnot.getType());
-						imAnnot.copyAttributes(selectedAnnot);
-						selectedAnnot.setLastWord(start);
+						ImAnnotation imAnnot = idmp.document.addAnnotation(start.getNextWord(), spanningAnnot.getLastWord(), spanningAnnot.getType());
+						imAnnot.copyAttributes(spanningAnnot);
+						spanningAnnot.setLastWord(start);
 						return true;
 					}
 				});
@@ -625,7 +633,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		for (Iterator atit = annotMergerGroups.keySet().iterator(); atit.hasNext();) {
 			final String type = ((String) atit.next());
 			final LinkedList annotMergerGroup = ((LinkedList) annotMergerGroups.get(type));
-			actions.add(new SelectionAction(("Merge " + type + "s"), ("Merge selected '" + type + "' annotations")) {
+			actions.add(new SelectionAction("mergeAnnots", ("Merge " + type + "s"), ("Merge selected '" + type + "' annotations")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					ImAnnotation mergedAnnot = ((ImAnnotation) annotMergerGroup.removeFirst());
 					mergedAnnot.setLastWord(((ImAnnotation) annotMergerGroup.getLast()).getLastWord());
@@ -643,12 +651,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		for (int a = 0; a < overlappingAnnots.length; a++) {
 			if (annotMergerGroups.containsKey(overlappingAnnots[a].getType()))
 				continue;
-			final boolean extendStart = (ImUtils.textStreamOrder.compare(start, allOverlappingAnnots[a].getFirstWord()) < 0);
-			final boolean extendEnd = (ImUtils.textStreamOrder.compare(allOverlappingAnnots[a].getLastWord(), end) < 0);
+			final boolean extendStart = (ImUtils.textStreamOrder.compare(start, overlappingAnnots[a].getFirstWord()) < 0);
+			final boolean extendEnd = (ImUtils.textStreamOrder.compare(overlappingAnnots[a].getLastWord(), end) < 0);
 			if (!extendStart && !extendEnd)
 				continue;
 			final ImAnnotation overlappingAnnot = overlappingAnnots[a];
-			actions.add(new SelectionAction(("Extend " + overlappingAnnot.getType()), ("Extend selected '" + overlappingAnnot.getType() + "' annotation to " + (extendStart ? ("'" + start.getString() + "'") : "") + (extendEnd ? ((extendStart ? " and " : "") + ("'" + end.getString() + "'")) : ""))) {
+			actions.add(new SelectionAction("extendAnnot", ("Extend " + overlappingAnnot.getType()), ("Extend selected '" + overlappingAnnot.getType() + "' annotation to " + (extendStart ? ("'" + start.getString() + "'") : "") + (extendEnd ? ((extendStart ? " and " : "") + ("'" + end.getString() + "'")) : ""))) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					if (extendStart)
 						overlappingAnnot.setFirstWord(start);
@@ -661,21 +669,21 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		
 		//	copy spanning annotations (a) as plain text and (b) as XML
 		if (spanningAnnots.length == 1) {
-			actions.add(new SelectionAction(("Copy " + spanningAnnots[0].getType() + " Text"), ("Copy the text annotated as '" + spanningAnnots[0].getType() + "' to the system clipboard")) {
+			actions.add(new SelectionAction("copyAnnotTXT", ("Copy " + spanningAnnots[0].getType() + " Text"), ("Copy the text annotated as '" + spanningAnnots[0].getType() + "' to the system clipboard")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(ImUtils.getString(spanningAnnots[0].getFirstWord(), spanningAnnots[0].getLastWord(), true)), null);
 					return false;
 				}
 			});
-			actions.add(new SelectionAction(("Copy " + spanningAnnots[0].getType() + " XML"), ("Copy the '" + spanningAnnots[0].getType() + "' annotation to the system clipboard as XML")) {
+			actions.add(new SelectionAction("copyAnnotXML", ("Copy " + spanningAnnots[0].getType() + " XML"), ("Copy the '" + spanningAnnots[0].getType() + "' annotation to the system clipboard as XML")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					copyAnnotationXML(spanningAnnots[0]);
 					return false;
 				}
 			});
 		}
-		else {
-			actions.add(new SelectionAction("Copy Annotation Text", "Copy the text of annnotations to the system clipboard") {
+		else if (spanningAnnots.length > 1) {
+			actions.add(new SelectionAction("copyAnnotTXT", "Copy Annotation Text", "Copy the text of annnotations to the system clipboard") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
@@ -695,7 +703,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					return pm;
 				}
 			});
-			actions.add(new SelectionAction("Copy Annotation XML", "Copy annnotations to the system clipboard as XML") {
+			actions.add(new SelectionAction("copyAnnotXML", "Copy Annotation XML", "Copy annnotations to the system clipboard as XML") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
@@ -721,12 +729,18 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
+	private String getAnnotationShortValue(ImWord start, ImWord end) {
+		if (start == end)
+			return start.getString();
+		else if (start.getNextWord() == end)
+			return (start.getString() + (Gamta.insertSpace(start.getString(), end.getString()) ? " " : "") + end.getString());
+		else return (start.getString() + " ... " + end.getString());
+	}
+	
 	private void copyAnnotationXML(final ImAnnotation annot) {
 		
 		//	wrap annotation
 		ImDocumentRoot wrappedAnnot = new ImDocumentRoot(annot, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS);
-		wrappedAnnot.setUseRandomAnnotationIDs(false);
-		wrappedAnnot.setShowTokensAsWordsAnnotations(false);
 		
 		//	write annotation as XML (filter out implicit paragraphs, though)
 		StringWriter annotData = new StringWriter();

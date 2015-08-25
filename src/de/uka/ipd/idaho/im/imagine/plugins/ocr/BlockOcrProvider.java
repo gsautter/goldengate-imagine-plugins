@@ -25,7 +25,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package de.uka.ipd.idaho.im.imagine.plugins.blocks;
+package de.uka.ipd.idaho.im.imagine.plugins.ocr;
 
 import java.awt.Color;
 import java.awt.Graphics;
@@ -40,7 +40,6 @@ import javax.imageio.ImageIO;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.PageImage;
-import de.uka.ipd.idaho.gamta.util.imaging.utilities.ImageDisplayDialog;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.gamta.util.swing.ProgressMonitorDialog;
 import de.uka.ipd.idaho.im.ImDocument;
@@ -55,6 +54,7 @@ import de.uka.ipd.idaho.im.analysis.PageImageAnalysis.Block;
 import de.uka.ipd.idaho.im.analysis.PageImageAnalysis.Line;
 import de.uka.ipd.idaho.im.analysis.PageImageAnalysis.Region;
 import de.uka.ipd.idaho.im.analysis.PageImageAnalysis.Word;
+import de.uka.ipd.idaho.im.analysis.WordImageAnalysis;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageEditToolProvider;
 import de.uka.ipd.idaho.im.ocr.OcrEngine;
@@ -62,6 +62,7 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImImageEditorPanel;
 import de.uka.ipd.idaho.im.util.ImImageEditorPanel.ImImageEditTool;
 import de.uka.ipd.idaho.im.util.ImImageEditorPanel.SelectionImageEditTool;
+import de.uka.ipd.idaho.im.utilities.ImageDisplayDialog;
 
 /**
  * This plugin provides functionality for running OCR on selected blocks of a
@@ -82,6 +83,13 @@ public class BlockOcrProvider extends AbstractImageMarkupToolProvider implements
 	
 	/** public zero-argument constructor for class loading */
 	public BlockOcrProvider() {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#getPluginName()
+	 */
+	public String getPluginName() {
+		return "IM Block OCR Provider";
+	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractGoldenGateImaginePlugin#initImagine()
@@ -274,27 +282,22 @@ public class BlockOcrProvider extends AbstractImageMarkupToolProvider implements
 					ocrWordsByBounds.put(ocrWords[w].bounds.toString(), ocrWords[w]);
 				}
 				PageImageAnalysis.getBlockStructure(bsBlock, ocrPi.currentDpi, ocrWordBounds, pm);
-				PageImageAnalysis.computeFontMetrics(bsBlock, ocrPi.currentDpi);
+				PageImageAnalysis.computeLineBaselines(bsBlock, ocrPi.currentDpi);
 				Line[] bsLines = bsBlock.getLines();
 				for (int l = 0; l < bsLines.length; l++) {
 					Word[] bsWords = bsLines[l].getWords();
 					for (int w = 0; w < bsWords.length; w++) {
 						ImWord ocrWord = ((ImWord) ocrWordsByBounds.get(bsWords[w].getBoundingBox()));
-						if (ocrWord == null)
-							continue;
-						if (bsWords[w].isBold())
-							ocrWord.setAttribute(ImWord.BOLD_ATTRIBUTE);
-						if (bsWords[w].isItalics())
-							ocrWord.setAttribute(ImWord.ITALICS_ATTRIBUTE);
-						if (bsWords[w].getBaseline() != -1)
+						if ((ocrWord != null) && (bsWords[w].getBaseline() != -1))
 							ocrWord.setAttribute(ImWord.BASELINE_ATTRIBUTE, ("" + bsWords[w].getBaseline()));
-						if (bsLines[l].getFontSize() != -1)
-							ocrWord.setAttribute(ImWord.FONT_SIZE_ATTRIBUTE, ("" + bsLines[l].getFontSize()));
 					}
 				}
 			}
 			
-			//	remove existing words
+			//	analyze font metrics
+			WordImageAnalysis.analyzeFontMetrics(ocrBlock, pm);
+			
+			//	remove existing words TODO observe page image edges
 			pm.setStep("Removing spurious words");
 			BoundingBox bBounds = new BoundingBox(left, right, top, bottom);
 			ImWord[] eWords = iiep.getWords();
@@ -303,13 +306,14 @@ public class BlockOcrProvider extends AbstractImageMarkupToolProvider implements
 					iiep.removeWord(eWords[w]);
 			}
 			
-			//	add words to document, line by line, subtracting offsets
+			//	add words to document, line by line, subtracting vertical offsets
 			pm.setStep("Adding detected words");
 			for (int l = 0; l < bLines.length; l++)
 				for (int w = 0; w < ocrWords.length; w++) {
 					if (ocrWords[w] == null)
 						continue;
 					if ((ocrWords[w].centerY > (bLines[l].getTopRow() - bRect.getTopRow() + bLineOffsets[l])) && (ocrWords[w].centerY < (bLines[l].getBottomRow() - bRect.getTopRow() + bLineOffsets[l]))) {
+						//	TODO observe page image edges
 						ImWord bWord = new ImWord(iiep.getPage().getDocument(), iiep.getPage().pageId, new BoundingBox(
 								(ocrWords[w].bounds.left + left + bRect.getLeftCol()),
 								(ocrWords[w].bounds.right + left + bRect.getLeftCol()),

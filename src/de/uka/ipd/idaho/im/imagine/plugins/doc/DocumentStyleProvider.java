@@ -25,10 +25,11 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package de.uka.ipd.idaho.im.imagine.plugins.basic;
+package de.uka.ipd.idaho.im.imagine.plugins.doc;
 
-import java.util.LinkedList;
+import java.awt.Point;
 
+import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
@@ -38,43 +39,36 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
  * @author sautter
  *
  */
-public class TextActionProvider extends AbstractSelectionActionProvider {
-
-	/** public zero-argument constructor for class loading*/
-	public TextActionProvider() {}
+public class DocumentStyleProvider extends AbstractSelectionActionProvider {
 	
-	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager#getPluginName()
+	/**
+	 * 
 	 */
-	public String getPluginName() {
-		return "IM Text Actions";
+	public DocumentStyleProvider() {
+		// TODO Auto-generated constructor stub
 	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
-	public SelectionAction[] getActions(final ImWord start, ImWord end, final ImDocumentMarkupPanel idmp) {
+	public SelectionAction[] getActions(ImWord start, ImWord end, ImDocumentMarkupPanel idmp) {
+		// TODO Auto-generated method stub
+		return super.getActions(start, end, idmp);
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(java.awt.Point, java.awt.Point, de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
+	 */
+	public SelectionAction[] getActions(Point start, Point end, ImPage page, ImDocumentMarkupPanel idmp) {
+		// TODO Auto-generated method stub
+		return super.getActions(start, end, page, idmp);
+	}
+	
+	/**
+	 * @param args
+	 */
+	public static void main(String[] args) {
+		// TODO Auto-generated method stub
 		
-		//	we are editing individual words only
-		if (start != end)
-			return null;
-		
-		//	we work only if text is visible
-		if (!idmp.areTextStringsPainted())
-			return null;
-		
-		//	collect available actions
-		LinkedList actions = new LinkedList();
-		
-		//	edit word string
-		actions.add(new SelectionAction("editWord", ("Edit String ('" + start.getString() + "')"), ("Edit the string value associated with the word, currently '" + start.getString() + "'")) {
-			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				idmp.editWord(start);
-				return true;
-			}
-		});
-		
-		//	finally ...
-		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 }

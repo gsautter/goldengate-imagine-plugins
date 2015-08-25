@@ -55,7 +55,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.Set;
+import java.util.TreeSet;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
@@ -66,6 +69,7 @@ import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -87,6 +91,7 @@ import javax.swing.text.JTextComponent;
 import de.uka.ipd.idaho.easyIO.settings.Settings;
 import de.uka.ipd.idaho.gamta.Annotation;
 import de.uka.ipd.idaho.gamta.AnnotationUtils;
+import de.uka.ipd.idaho.gamta.AttributeUtils;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.MutableAnnotation;
 import de.uka.ipd.idaho.gamta.QueriableAnnotation;
@@ -100,20 +105,24 @@ import de.uka.ipd.idaho.gamta.util.gPath.GPath;
 import de.uka.ipd.idaho.gamta.util.gPath.GPathParser;
 import de.uka.ipd.idaho.gamta.util.gPath.exceptions.GPathException;
 import de.uka.ipd.idaho.gamta.util.swing.AnnotationDisplayDialog;
+import de.uka.ipd.idaho.gamta.util.swing.AttributeEditor;
 import de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager;
 import de.uka.ipd.idaho.goldenGate.plugins.AnnotationFilter;
-import de.uka.ipd.idaho.goldenGate.util.AttributeEditorDialog;
 import de.uka.ipd.idaho.goldenGate.util.DataListListener;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.goldenGate.util.HelpEditorDialog;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
+import de.uka.ipd.idaho.im.ImPage;
+import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.imagine.GoldenGateImagine;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.basic.AttributeToolProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
+import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.stringUtils.StringVector;
 
@@ -131,7 +140,7 @@ import de.uka.ipd.idaho.stringUtils.StringVector;
  * 
  * @author sautter
  */
-public class ImageMarkupObjectListProvider extends AbstractResourceManager implements ImageMarkupToolProvider {
+public class ImageMarkupObjectListProvider extends AbstractResourceManager implements ImageMarkupToolProvider, SelectionActionProvider {
 	
 	private static final String FILE_EXTENSION = ".imObjectList";
 	
@@ -232,6 +241,73 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 	}
 	
 	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider#getActions(de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
+	 */
+	public SelectionAction[] getActions(ImWord start, ImWord end, ImDocumentMarkupPanel idmp) {
+
+		//	we're single word selection only
+		if (start != end)
+			return null;
+		
+		//	collect painted annotations spanning or overlapping whole selection
+		ImAnnotation[] spanningAnnots = idmp.document.getAnnotationsSpanning(start, end);
+		final TreeSet spanningAnnotTypes = new TreeSet();
+		for (int a = 0; a < spanningAnnots.length; a++) {
+			if (idmp.areAnnotationsPainted(spanningAnnots[a].getType()))
+				spanningAnnotTypes.add(spanningAnnots[a].getType());
+		}
+		
+		//	nothing to work with
+		if (spanningAnnotTypes.size() == 0)
+			return null;
+		
+		//	collect available actions
+		LinkedList actions = new LinkedList();
+		
+		//	a single annotation to work with
+		if (spanningAnnotTypes.size() == 1) {
+			final String annotType = ((String) spanningAnnotTypes.first());
+			actions.add(new SelectionAction("listAnnots", ("List " + annotType + " Annotations"), ("Open a list of all " + annotType + " annotations")) {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					invoker.applyMarkupTool(new AnnotTypeLister(annotType), null);
+					return true;
+				}
+			});
+		}
+		
+		//	multiple annotation types to work with
+		else actions.add(new SelectionAction("listAnnots", "List Annotations ...", ("Open a list of annotations from the document")) {
+			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				return false;
+			}
+			public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+				JMenu pm = new JMenu("List Annotations");
+				for (Iterator atit = spanningAnnotTypes.iterator(); atit.hasNext();) {
+					final String annotType = ((String) atit.next());
+					JMenuItem mi = new JMenuItem("- " + annotType);
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							invoker.applyMarkupTool(new AnnotTypeLister(annotType), null);
+						}
+					});
+					pm.add(mi);
+				}
+				return pm;
+			}
+		});
+		
+		//	finally ...
+		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider#getActions(java.awt.Point, java.awt.Point, de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
+	 */
+	public SelectionAction[] getActions(Point start, Point end, ImPage page, ImDocumentMarkupPanel idmp) {
+		return null;
+	}
+	
+	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider#getEditMenuItemNames()
 	 */
 	public String[] getEditMenuItemNames() {
@@ -273,8 +349,33 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			if (annot != null)
 				return;
 			
-			//	offer editing annotations on paragraph level normalized document
+			//	list annotations on paragraph level normalized document
 			listImObjects("Annotation List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, idmp, null);
+		}
+	}
+	
+	private class AnnotTypeLister implements ImageMarkupTool {
+		private String annotType;
+		AnnotTypeLister(String annotType) {
+			this.annotType = annotType;
+		}
+		public String getLabel() {
+			return ("List " + this.annotType + " Annotations");
+		}
+		public String getTooltip() {
+			return ("List " + this.annotType + " annotations present in document");
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			
+			//	we're only processing the document as a whole
+			if (annot != null)
+				return;
+			
+			//	list annotations of matching type on paragraph level normalized document
+			listImObjects("Annotation List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, idmp, getGPathFilter(this.annotType));
 		}
 	}
 	
@@ -294,7 +395,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			if (annot != null)
 				return;
 			
-			//	offer editing regions on un-normalized normalized document
+			//	list regions on un-normalized normalized document
 			listImObjects("Region List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_RAW, idmp, null);
 		}
 	}
@@ -423,7 +524,6 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			return this.filterString;
 		}
 	}
-	
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#getMainMenuTitle()
@@ -901,16 +1001,14 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 	public void listImObjects(String title, ImDocument doc, int normalizationLevel, ImDocumentMarkupPanel idmp, AnnotationFilter filter) {
 		
 		//	wrap document
-		ImDocumentRoot wrappedDoc = new ImDocumentRoot(doc, normalizationLevel);
-		wrappedDoc.setShowTokensAsWordsAnnotations(true);
-		wrappedDoc.setUseRandomAnnotationIDs(true);
+		ImDocumentRoot wrappedDoc = new ImDocumentRoot(doc, (normalizationLevel | ImDocumentRoot.SHOW_TOKENS_AS_WORD_ANNOTATIONS | ImDocumentRoot.USE_RANDOM_ANNOTATION_IDS));
 		
 		//	are we showing layout objects?
 		boolean showingLayoutObjects = ((normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_RAW) || (normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_WORDS));
 		
 		//	open list viewer around wrapper, and work on wrapper (it all goes through to document anyway)
-		ObjectListDialog and = new ObjectListDialog(title, wrappedDoc, showingLayoutObjects, idmp, filter);
-		and.setVisible(true);
+		ObjectListDialog ond = new ObjectListDialog(title, wrappedDoc, showingLayoutObjects, idmp, filter);
+		ond.setVisible(true);
 		
 		//	show any changes
 		idmp.validate();
@@ -923,13 +1021,12 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 	
 	//	TODO give value as 'head ... tail' instead of 'head ...'
 	
-	//	TODO allow merging only if (a) single range selection of equally typed annotations and (b) sorted by start
-	
 	private class ObjectListDialog extends DialogPanel {
 		
 		private ObjectListPanel objectDisplay;
 		
 		private String originalTitle;
+		private boolean showingLayoutObjects;
 		
 		private JComboBox filterSelector = new JComboBox();
 		private boolean customFilterSelectorKeyPressed = false;
@@ -937,6 +1034,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		ObjectListDialog(String title, MutableAnnotation wrappedDoc, boolean showingLayoutObjects, ImDocumentMarkupPanel target, AnnotationFilter filter) {
 			super(title, true);
 			this.originalTitle = title;
+			this.showingLayoutObjects = showingLayoutObjects;
 			
 			JButton closeButton = new JButton("Close");
 			closeButton.setBorder(BorderFactory.createRaisedBevelBorder());
@@ -967,10 +1065,33 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		
 		private JPanel buildFilterPanel(MutableAnnotation data, ImDocumentMarkupPanel target) {
 			
-			StringVector filterNames = new StringVector();
-			filterNames.addContentIgnoreDuplicates(customFilterHistory);
+			StringVector filters = new StringVector();
+			TreeSet filterTypes = new TreeSet();
+			for (int f = 0; f < customFilterHistory.size(); f++) {
+				String cf = customFilterHistory.get(f);
+				if ((cf.indexOf('[') == -1) && (cf.indexOf('/') == -1))
+					filters.addElementIgnoreDuplicates(cf);
+				else filterTypes.add(cf);
+			}
+			filters.addContentIgnoreDuplicates(customFilterHistory);
+			if (this.showingLayoutObjects) {
+				String[] layoutObjectTypes = target.getLayoutObjectTypes();
+				for (int t = 0; t < layoutObjectTypes.length; t++) {
+					if (target.areRegionsPainted(layoutObjectTypes[t]))
+						filterTypes.add(layoutObjectTypes[t]);
+				}
+			}
+			else {
+				String[] annotTypes = target.getAnnotationTypes();
+				for (int t = 0; t < annotTypes.length; t++) {
+					if (target.areAnnotationsPainted(annotTypes[t]))
+						filterTypes.add(annotTypes[t]);
+				}
+			}
+			for (Iterator ftit = filterTypes.iterator(); ftit.hasNext();)
+				filters.addElementIgnoreDuplicates((String) ftit.next());
 			
-			this.filterSelector.setModel(new DefaultComboBoxModel(filterNames.toStringArray()));
+			this.filterSelector.setModel(new DefaultComboBoxModel(filters.toStringArray()));
 			this.filterSelector.setEditable(true);
 			this.filterSelector.setSelectedItem("");
 			this.filterSelector.setBorder(BorderFactory.createLoweredBevelBorder());
@@ -1086,6 +1207,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			private JRadioButton showMatches = new JRadioButton("Show Matches Only", true);
 			private JRadioButton highlightMatches = new JRadioButton("Highlight Matches", false);
 			
+			private JButton mergeButton;
 			private JButton renameButton;
 			private JButton removeButton;
 			private JButton deleteButton;
@@ -1165,6 +1287,37 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			}
 			
 			private JPanel buildMenu() {
+				this.mergeButton = new JButton("Merge");
+				this.mergeButton.setToolTipText("Merge " + layoutObjectName.toLowerCase() + "s, i.e., change their type");
+				this.mergeButton.setBorder(BorderFactory.createRaisedBevelBorder());
+				this.mergeButton.addActionListener(new ActionListener() {
+					public void actionPerformed(ActionEvent ae) {
+						Annotation[] annotations = getSelectedObjects();
+						if (annotations.length < 2)
+							return;
+						int start = annotations[0].getStartIndex();
+						int end = annotations[0].getEndIndex();
+						for (int a = 1; a < annotations.length; a++) {
+							start = Math.min(start, annotations[a].getStartIndex());
+							end = Math.max(end, annotations[a].getEndIndex());
+						}
+						Annotation mAnnotation = null;
+						for (int a = 0; a < annotations.length; a++)
+							if ((annotations[a].getStartIndex() == start) && (annotations[a].getEndIndex() == end)) {
+								mAnnotation = annotations[a];
+								break;
+							}
+						if (mAnnotation == null)
+							mAnnotation = wrappedDoc.addAnnotation(annotations[0].getType(), start, (end - start));
+						for (int a = 0; a < annotations.length; a++) {
+							AttributeUtils.copyAttributes(annotations[a], mAnnotation, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+							if (annotations[a] != mAnnotation)
+								wrappedDoc.removeAnnotation(annotations[a]);
+						}
+						refreshAnnotations();
+					}
+				});
+				
 				this.renameButton = new JButton("Rename");
 				this.renameButton.setToolTipText("Rename " + layoutObjectName.toLowerCase() + "s, i.e., change their type");
 				this.renameButton.setBorder(BorderFactory.createRaisedBevelBorder());
@@ -1220,9 +1373,17 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				this.editAttributesButton.setBorder(BorderFactory.createRaisedBevelBorder());
 				this.editAttributesButton.addActionListener(new ActionListener() {
 					public void actionPerformed(ActionEvent ae) {
-						Annotation[] annotations = getSelectedObjects();
-						if (annotations.length == 1)
-							editObjectAttributes(annotations[0]);
+//						Annotation[] annotations = getSelectedObjects();
+//						if (annotations.length == 1)
+//							editObjectAttributes(annotations[0]);
+						int[] selectedRows = objectTable.getSelectedRows();
+						if (selectedRows.length == 1)
+							editObjectAttributes(selectedRows[0]);
+						/* TODO
+						 * - facilitate Previous-ing and Next-ing through object list with attributes dialog
+						 * - 'Previous' and 'Next' both imply 'OK'
+						 * - use current sort order
+						 */
 					}
 				});
 				
@@ -1254,6 +1415,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				});
 				
 				JPanel menuPanel = new JPanel(new GridLayout(1, 0, 2, 2));
+				menuPanel.add(this.mergeButton);
 				menuPanel.add(this.renameButton);
 				menuPanel.add(this.removeButton);
 				menuPanel.add(this.deleteButton);
@@ -1267,6 +1429,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			void adjustMenu() {
 				int[] rows = this.objectTable.getSelectedRows();
 				if (rows.length == 0) {
+					this.mergeButton.setEnabled(false);
 					this.renameButton.setEnabled(this.singleTypeMatch);
 					this.removeButton.setEnabled(0 < this.matchObjectCount);
 					this.deleteButton.setEnabled(false);
@@ -1276,8 +1439,10 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 					this.removeAttributeButton.setEnabled(0 < this.matchObjectCount);
 				}
 				else {
+					Arrays.sort(rows);
 					int fRow = rows[0];
 					int lRow = rows[rows.length-1];
+					this.mergeButton.setEnabled(this.isMergeableSelection(rows));
 					this.renameButton.setEnabled(this.isSingleTypeSelection(rows));
 					this.removeButton.setEnabled(true);
 					this.deleteButton.setEnabled(true);
@@ -1296,6 +1461,30 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				String type = this.objectTrays[rows[0]].wrappedObject.getType();
 				for (int r = 1; r < rows.length; r++) {
 					if (!type.equals(this.objectTrays[rows[r]].wrappedObject.getType()))
+						return false;
+				}
+				return true;
+			}
+			
+			boolean isMergeableSelection(int[] rows) {
+				if (rows.length <= 1)
+					return false;
+				if (((this.sortColumn != 1) && (this.sortColumn != -1)) || this.sortDescending)
+					return false;
+				if (this.showingLayoutObjects)
+					return false;
+				for (int r = 1; r < rows.length; r++) {
+					if ((rows[r-1] + 1) != rows[r])
+						return false;
+				}
+				if (!this.isSingleTypeSelection(rows))
+					return false;
+				ImWord fImw = ((ImWord) this.objectTrays[rows[0]].wrappedObject.getAttribute(ImAnnotation.FIRST_WORD_ATTRIBUTE));
+				if ((fImw == null) || (fImw.getTextStreamId() == null))
+					return false;
+				for (int r = 1; r < rows.length; r++) {
+					ImWord rImw = ((ImWord) this.objectTrays[rows[r]].wrappedObject.getAttribute(ImAnnotation.FIRST_WORD_ATTRIBUTE));
+					if ((rImw == null) || !fImw.getTextStreamId().equals(rImw.getTextStreamId()))
 						return false;
 				}
 				return true;
@@ -1407,26 +1596,115 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				ObjectListDialog.this.validate();
 			}
 			
-			void editObjectAttributes(Annotation wrappedObject) {
+			void editObjectAttributes(int objectIndex) {
+				Annotation[] objects = new Annotation[this.objectTrays.length];
+				for (int o = 0; o < this.objectTrays.length; o++)
+					objects[o] = this.objectTrays[o].wrappedObject;
 				
-				//	create dialog
-				AttributeEditorDialog aed = new AttributeEditorDialog(ObjectListDialog.this.getDialog(), ("Edit " + this.layoutObjectName + " Attributes"), wrappedObject, wrappedDoc) {
-					public void dispose() {
-						attributeDialogSize = this.getSize();
-						attributeDialogLocation = this.getLocation(attributeDialogLocation);
-						super.dispose();
-					}
-				};
-				
-				//	position and show dialog
-				aed.setSize(attributeDialogSize);
-				if (attributeDialogLocation == null)
-					aed.setLocationRelativeTo(DialogPanel.getTopWindow());
-				else aed.setLocation(attributeDialogLocation);
-				aed.setVisible(true);
+				//	keep going while user skips up and down
+				boolean dirty = false;
+				while (objectIndex != -1) {
+					
+					//	create dialog
+					AttributeEditorDialog aed = new AttributeEditorDialog(ObjectListDialog.this.getDialog(), objects, objectIndex);
+					aed.setVisible(true);
+					
+					//	read editing result
+					objectIndex = aed.getSelectedObjectIndex();
+					dirty = (dirty | aed.isDirty());
+				}
 				
 				//	finish
-				if (aed.isDirty()) refreshAnnotations();
+				if (dirty)
+					refreshAnnotations();
+			}
+			
+			private class AttributeEditorDialog extends DialogPanel {
+				private int objectIndex;
+				private boolean dirty = false;
+				private AttributeEditor attributeEditor;
+				AttributeEditorDialog(Window owner, Annotation[] objects, int objectIndex) {
+					super(owner, ("Edit " + layoutObjectName + " Attributes"), true);
+					this.objectIndex = objectIndex;
+					
+					//	set size and location
+					this.setSize(attributeDialogSize);
+					if (attributeDialogLocation == null)
+						this.setLocationRelativeTo(owner);
+					else this.setLocation(attributeDialogLocation);
+					
+					//	create attribute editor
+					this.attributeEditor = new AttributeEditor(objects[objectIndex], objects[objectIndex].getType(), objects[objectIndex].getValue(), objects);
+					
+					//	create buttons
+					JButton previous = new JButton("Previous");
+					previous.setBorder(BorderFactory.createRaisedBevelBorder());
+					previous.setPreferredSize(new Dimension(80, 21));
+					previous.setEnabled(this.objectIndex > 0);
+					previous.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							AttributeEditorDialog.this.objectIndex--;
+							AttributeEditorDialog.this.dirty = attributeEditor.writeChanges();
+							AttributeEditorDialog.this.dispose();
+						}
+					});
+					JButton ok = new JButton("OK");
+					ok.setBorder(BorderFactory.createRaisedBevelBorder());
+					ok.setPreferredSize(new Dimension(80, 21));
+					ok.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							AttributeEditorDialog.this.objectIndex = -1;
+							AttributeEditorDialog.this.dirty = attributeEditor.writeChanges();
+							AttributeEditorDialog.this.dispose();
+						}
+					});
+					JButton cancel = new JButton("Cancel");
+					cancel.setBorder(BorderFactory.createRaisedBevelBorder());
+					cancel.setPreferredSize(new Dimension(80, 21));
+					cancel.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							AttributeEditorDialog.this.objectIndex = -1;
+							AttributeEditorDialog.this.dispose();
+						}
+					});
+					JButton next = new JButton("Next");
+					next.setBorder(BorderFactory.createRaisedBevelBorder());
+					next.setPreferredSize(new Dimension(80, 21));
+					next.setEnabled((this.objectIndex + 1) < objects.length);
+					next.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							AttributeEditorDialog.this.objectIndex++;
+							AttributeEditorDialog.this.dirty = attributeEditor.writeChanges();
+							AttributeEditorDialog.this.dispose();
+						}
+					});
+					
+					//	tray up buttons
+					JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER));
+					buttons.add(previous);
+					buttons.add(ok);
+					buttons.add(cancel);
+					buttons.add(next);
+					
+					//	assemble the whole thing
+					this.add(this.attributeEditor, BorderLayout.CENTER);
+					this.add(buttons, BorderLayout.SOUTH);
+				}
+				
+				//	remember size and location on closing
+				public void dispose() {
+					attributeDialogSize = this.getSize();
+					attributeDialogLocation = this.getLocation(attributeDialogLocation);
+					super.dispose();
+				}
+				
+				int getSelectedObjectIndex() {
+					return this.objectIndex;
+				}
+				
+				boolean isDirty() {
+					return this.dirty;
+				}
 			}
 			
 			void renameObjectAttribute() {

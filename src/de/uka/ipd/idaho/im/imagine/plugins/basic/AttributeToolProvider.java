@@ -424,15 +424,11 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 				modified = true;
 			}
 			else if (REPLACE_MODE.equals(mode) && ((oldValue == null) || oldValue.equals(value))) {
-				if (newValue == null)
-					targetObjects[o].removeAttribute(name);
-				else targetObjects[o].setAttribute(name, newValue);
+				targetObjects[o].setAttribute(name, newValue);
 				modified = true;
 			}
 			else if (SET_MODE.equals(mode)) {
-				if (newValue == null)
-					targetObjects[o].removeAttribute(name);
-				else targetObjects[o].setAttribute(name, newValue);
+				targetObjects[o].setAttribute(name, newValue);
 				modified = true;
 			}
 		}

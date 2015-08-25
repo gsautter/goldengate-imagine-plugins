@@ -90,6 +90,7 @@ import de.uka.ipd.idaho.gamta.util.swing.AnnotationDisplayDialog;
 import de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager;
 import de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessor;
 import de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessorManager;
+import de.uka.ipd.idaho.goldenGate.plugins.MonitorableDocumentProcessor;
 import de.uka.ipd.idaho.goldenGate.plugins.Resource;
 import de.uka.ipd.idaho.goldenGate.plugins.ResourceManager;
 import de.uka.ipd.idaho.goldenGate.util.DataListListener;
@@ -198,7 +199,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				if (this.contextMenuTools[t].displayFor(wrappedAnnot)) {
 					final ImAnnotation annot = spanningAnnots[a-1];
 					final DpImageMarkupTool imt = this.contextMenuTools[t];
-					actions.add(new SelectionAction(this.contextMenuTools[t].label, this.contextMenuTools[t].tooltip) {
+					actions.add(new SelectionAction(("imt" + this.contextMenuTools[t].getName()), this.contextMenuTools[t].label, this.contextMenuTools[t].tooltip) {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
 							invoker.applyMarkupTool(imt, annot);
 							return true;
@@ -458,7 +459,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 		final String label;
 		final String tooltip;
 		
-		final int normalizationLevel;
+		final int xmlWrapperFlags;
 		
 		final boolean useInToolsMenu;
 		final boolean useAsSelectionAction;
@@ -469,11 +470,11 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 		final DocumentProcessorManager processorProvider;
 		final String processorName;
 		
-		DpImageMarkupTool(String name, String label, String tooltip, int normalizationLevel, String dpName, DocumentProcessorManager dpManager, boolean useInToolsMenu, LinkedHashMap toolsMenuPreclusions, boolean useAsSelectionAction, String[] selectionActionFilters) {
+		DpImageMarkupTool(String name, String label, String tooltip, int xmlWrapperFlags, String dpName, DocumentProcessorManager dpManager, boolean useInToolsMenu, LinkedHashMap toolsMenuPreclusions, boolean useAsSelectionAction, String[] selectionActionFilters) {
 			this.name = name;
 			this.label = label;
 			this.tooltip = tooltip;
-			this.normalizationLevel = normalizationLevel;
+			this.xmlWrapperFlags = xmlWrapperFlags;
 			this.useInToolsMenu = useInToolsMenu;
 			this.toolsMenuPreclusions = new LinkedHashMap();
 			if (toolsMenuPreclusions != null)
@@ -507,7 +508,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			//	wrap document (or annotation)
 			if (pm != null)
 				pm.setStep("Wrapping document");
-			ImDocumentRoot wrappedDoc = ((annot == null) ? new ImDocumentRoot(doc, this.normalizationLevel) : new ImDocumentRoot(annot, this.normalizationLevel));
+			ImDocumentRoot wrappedDoc = ((annot == null) ? new ImDocumentRoot(doc, this.xmlWrapperFlags) : new ImDocumentRoot(annot, this.xmlWrapperFlags));
 			
 			//	check preclusions (only if annotation is null)
 			if (annot == null) {
@@ -536,9 +537,13 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			parameters.setProperty(DocumentProcessor.INTERACTIVE_PARAMETER, DocumentProcessor.INTERACTIVE_PARAMETER);
 			
 			//	process document (or annotation)
-			if (pm != null)
-				pm.setStep("Processing document");
-			dp.process(wrappedDoc, parameters);
+			if ((dp instanceof MonitorableDocumentProcessor) && (pm != null))
+				((MonitorableDocumentProcessor) dp).process(wrappedDoc, parameters, pm);
+			else {
+				if (pm != null)
+					pm.setStep("Processing document");
+				dp.process(wrappedDoc, parameters);
+			}
 		}
 		String getPrecludingError(QueriableAnnotation doc) {
 			if (!this.useInToolsMenu)
@@ -576,7 +581,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 	private static final String LABEL_ATTRIBUTE = "LABEL";
 	private static final String TOOLTIP_ATTRIBUTE = "TOOLTIP";
 	
-	private static final String NORMALIZATION_LEVEL_ATTRIBUTE = "NORMALIZATION_LEVEL";
+	private static final String XML_WRAPPER_FLAGS_ATTRIBUTE = "XML_WRAPPER_FLAGS";
 	
 	private static final String PROCESSOR_NAME_ATTRIBUTE = "PROCESSOR_NAME";
 	private static final String PROCESSOR_PROVIDER_CLASS_NAME_ATTRIBUTE = "PROCESSOR_PROVIDER_CLASS";
@@ -675,7 +680,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			String label = settings.getSetting(LABEL_ATTRIBUTE, "");
 			String tooltip = settings.getSetting(TOOLTIP_ATTRIBUTE, "");
 			
-			int normalizationLevel = Integer.parseInt(settings.getSetting(NORMALIZATION_LEVEL_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_WORDS)));
+			int xmlWrapperFlags = Integer.parseInt(settings.getSetting(XML_WRAPPER_FLAGS_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_WORDS)));
 			
 			String processorName = settings.getSetting(PROCESSOR_NAME_ATTRIBUTE);
 			String processorProviderClassName = settings.getSetting(PROCESSOR_PROVIDER_CLASS_NAME_ATTRIBUTE);
@@ -708,7 +713,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 						filters.add(filter);
 				}
 			
-			return new DpImageMarkupTool(name, label, tooltip, normalizationLevel, processorName, dpm, (location.indexOf(TOOLS_MENU_LOCATION) != -1), (preclusions.isEmpty() ? null : preclusions), (location.indexOf(SELECTION_ACTION_LOCATION) != -1), (filters.isEmpty() ? null : ((String[]) filters.toArray(new String[filters.size()]))));
+			return new DpImageMarkupTool(name, label, tooltip, xmlWrapperFlags, processorName, dpm, (location.indexOf(TOOLS_MENU_LOCATION) != -1), (preclusions.isEmpty() ? null : preclusions), (location.indexOf(SELECTION_ACTION_LOCATION) != -1), (filters.isEmpty() ? null : ((String[]) filters.toArray(new String[filters.size()]))));
 		}
 		catch (Exception e) {
 			e.printStackTrace();
@@ -797,6 +802,12 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 		private JComboBox location = new JComboBox(LOCATIONS);
 		
 		private JComboBox normalizationLevel = new JComboBox(NORMALIZATION_LEVELS);
+		private JCheckBox normalizeChars = new JCheckBox("Normalize Chars");
+		
+		private JCheckBox excludeTables = new JCheckBox("Exclude Tables");
+		private JCheckBox excludeCaptionsFootnotes = new JCheckBox("Exclude Captions & Footnotes");
+		private JCheckBox useRandomAnnotationIDs = new JCheckBox("Random Annotation IDs", true);
+		private JCheckBox showWordsAnnotations = new JCheckBox("Show Word Annotations");
 		
 		private LinkedHashMap preclusions = new LinkedHashMap();
 		private String[] filters = new String[0];
@@ -832,13 +843,21 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				if (this.processorProvider != null)
 					this.processorTypeLabel = this.processorProvider.getResourceTypeLabel();
 				this.location.setSelectedItem(imt.useInToolsMenu ? (imt.useAsSelectionAction ? BOTH_LOCATION : TOOLS_MENU_LOCATION) : SELECTION_ACTION_LOCATION);
-				if (imt.normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_RAW)
+				
+				int normalizationLevel = (imt.xmlWrapperFlags & ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS);
+				if (normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_RAW)
 					this.normalizationLevel.setSelectedItem(RAW_NORMALIZATION_LEVEL);
-				else if (imt.normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_WORDS)
+				else if (normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_WORDS)
 					this.normalizationLevel.setSelectedItem(WORD_NORMALIZATION_LEVEL);
-				else if (imt.normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS)
+				else if (normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS)
 					this.normalizationLevel.setSelectedItem(STREAM_NORMALIZATION_LEVEL);
 				else this.normalizationLevel.setSelectedItem(PARAGRAPH_NORMALIZATION_LEVEL);
+				this.normalizeChars.setSelected((imt.xmlWrapperFlags & ImDocumentRoot.NORMALIZE_CHARACTERS) != 0);
+				this.excludeTables.setSelected((imt.xmlWrapperFlags & ImDocumentRoot.EXCLUDE_TABLES) != 0);
+				this.excludeCaptionsFootnotes.setSelected((imt.xmlWrapperFlags & ImDocumentRoot.EXCLUDE_CAPTIONS_AND_FOOTNOTES) != 0);
+				this.useRandomAnnotationIDs.setSelected((imt.xmlWrapperFlags & ImDocumentRoot.USE_RANDOM_ANNOTATION_IDS) != 0);
+				this.showWordsAnnotations.setSelected((imt.xmlWrapperFlags & ImDocumentRoot.SHOW_TOKENS_AS_WORD_ANNOTATIONS) != 0);
+				
 				if (imt.toolsMenuPreclusions != null)
 					this.preclusions.putAll(imt.toolsMenuPreclusions);
 				if (imt.selectionActionFilters != null)
@@ -867,6 +886,11 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				}
 			});
 			this.normalizationLevel.addItemListener(new ItemListener() {
+				public void itemStateChanged(ItemEvent ie) {
+					dirty = true;
+				}
+			});
+			this.normalizeChars.addItemListener(new ItemListener() {
 				public void itemStateChanged(ItemEvent ie) {
 					dirty = true;
 				}
@@ -926,8 +950,22 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			functionPanel.add(new JLabel("Use Document Normalization Level ...", JLabel.LEFT), gbc.clone());
 			gbc.gridx = 1;
 			gbc.weightx = 1;
-			gbc.gridwidth = 2;
 			functionPanel.add(this.normalizationLevel, gbc.clone());
+			gbc.gridx = 2;
+			gbc.weightx = 0;
+			functionPanel.add(this.normalizeChars, gbc.clone());
+			
+			gbc.gridy ++;
+			gbc.gridx = 0;
+			gbc.gridwidth = 1;
+			gbc.weightx = 0;
+			functionPanel.add(this.showWordsAnnotations, gbc.clone());
+			gbc.gridx = 1;
+			gbc.weightx = 1;
+			functionPanel.add(this.excludeCaptionsFootnotes, gbc.clone());
+			gbc.gridx = 2;
+			gbc.weightx = 0;
+			functionPanel.add(this.excludeTables, gbc.clone());
 			
 			gbc.gridy ++;
 			gbc.gridx = 0;
@@ -1093,13 +1131,27 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			
 			set.setSetting(LOCATION_ATTRIBUTE, this.location.getSelectedItem().toString());
 			
+			int xmlWrapperFlags;
 			if (RAW_NORMALIZATION_LEVEL.equals(this.normalizationLevel.getSelectedItem()))
-				set.setSetting(NORMALIZATION_LEVEL_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_RAW));
+				xmlWrapperFlags = ImDocumentRoot.NORMALIZATION_LEVEL_RAW;
 			else if (WORD_NORMALIZATION_LEVEL.equals(this.normalizationLevel.getSelectedItem()))
-				set.setSetting(NORMALIZATION_LEVEL_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_WORDS));
+				xmlWrapperFlags = ImDocumentRoot.NORMALIZATION_LEVEL_WORDS;
 			else if (STREAM_NORMALIZATION_LEVEL.equals(this.normalizationLevel.getSelectedItem()))
-				set.setSetting(NORMALIZATION_LEVEL_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS));
-			else set.setSetting(NORMALIZATION_LEVEL_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS));
+				xmlWrapperFlags = ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS;
+			else xmlWrapperFlags = ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS;
+			
+			if (this.normalizeChars.isSelected())
+				xmlWrapperFlags |= ImDocumentRoot.NORMALIZE_CHARACTERS;
+			if (this.excludeTables.isSelected())
+				xmlWrapperFlags |= ImDocumentRoot.EXCLUDE_TABLES;
+			if (this.excludeCaptionsFootnotes.isSelected())
+				xmlWrapperFlags |= ImDocumentRoot.EXCLUDE_CAPTIONS_AND_FOOTNOTES;
+			if (this.useRandomAnnotationIDs.isSelected())
+				xmlWrapperFlags |= ImDocumentRoot.USE_RANDOM_ANNOTATION_IDS;
+			if (this.showWordsAnnotations.isSelected())
+				xmlWrapperFlags |= ImDocumentRoot.SHOW_TOKENS_AS_WORD_ANNOTATIONS;
+			
+			set.setSetting(XML_WRAPPER_FLAGS_ATTRIBUTE, ("" + xmlWrapperFlags));
 			
 			int preclusionCount = 0;
 			for (Iterator fit = this.preclusions.keySet().iterator(); fit.hasNext();) {

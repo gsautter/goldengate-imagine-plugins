@@ -98,7 +98,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#getPluginName()
 	 */
 	public String getPluginName() {
-		return "Im Basic Image Edit Tools";
+		return "IM Basic Image Edit Tools";
 	}
 	
 	/* (non-Javadoc)
@@ -132,6 +132,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			gr.fillRect(Math.min(sx, ex), Math.min(sy, ey), Math.abs(ex - sx), Math.abs(ey - sy));
 			gr.setColor(bc);
 			ImWord[] words = iiep.getWords();
+			//	TODO observe page image edges
 			BoundingBox edited = new BoundingBox(Math.min(sx, ex), Math.max(ex, sx), Math.min(sy, ey), Math.max(ey, sy));
 			for (int w = 0; w < words.length; w++) {
 				if (!edited.includes(words[w].bounds, true))
@@ -167,6 +168,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 		}
 		protected void doEdit(ImImageEditorPanel iiep, int sx, int sy, int ex, int ey) {
 			ImWord[] words = iiep.getWords();
+			//	TODO observe page image edges
 			BoundingBox edited = new BoundingBox(Math.min(sx, ex), Math.max(ex, sx), Math.min(sy, ey), Math.max(ey, sy));
 			for (int w = 0; w < words.length; w++) {
 				if (!edited.includes(words[w].bounds, true))
@@ -311,6 +313,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			StringBuffer wordString = new StringBuffer();
 			int boldCharCount = 0;
 			int italicsCharCount = 0;
+			//	TODO observe page image edges
 			BoundingBox wordBox = new BoundingBox(eMinX, eMaxX, eMinY, eMaxY);
 			ImWord prevWord = null;
 			ImWord nextWord = null;
