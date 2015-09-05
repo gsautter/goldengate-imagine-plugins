@@ -75,6 +75,7 @@ import de.uka.ipd.idaho.gamta.TokenSequenceUtils;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.SgmlDocumentReader;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.plugins.PluginDataProviderFileBased;
 import de.uka.ipd.idaho.im.ImAnnotation;
@@ -96,7 +97,6 @@ import de.uka.ipd.idaho.plugins.bibRefs.BibRefUtils.RefData;
 import de.uka.ipd.idaho.plugins.bibRefs.refBank.RefBankClient;
 import de.uka.ipd.idaho.plugins.bibRefs.refBank.RefBankClient.BibRef;
 import de.uka.ipd.idaho.plugins.bibRefs.refBank.RefBankClient.BibRefIterator;
-import de.uka.ipd.idaho.plugins.docStyle.DocumentStyle;
 import de.uka.ipd.idaho.stringUtils.StringUtils;
 import de.uka.ipd.idaho.stringUtils.StringVector;
 
@@ -372,10 +372,6 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			
 			//	get extraction parameters
 			BoundingBox area = attributeStyle.getBoxProperty("area", null, dpi);
-			if (area == null) {
-				System.out.println(" ==> deactivated");
-				return false;
-			}
 			boolean isBold = attributeStyle.getBooleanProperty("isBold", false);
 			boolean isItalics = attributeStyle.getBooleanProperty("isItalics", false);
 			boolean isAllCaps = attributeStyle.getBooleanProperty("isAllCaps", false);
@@ -384,6 +380,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			int maxFontSize = attributeStyle.getIntProperty("maxFontSize", ((fontSize == -1) ? 72 : fontSize));
 			String contextPattern = attributeStyle.getProperty("contextPattern", null);
 			String valuePattern = attributeStyle.getProperty("valuePattern", null);
+			if (area == null) {
+				System.out.println(" ==> deactivated");
+				return false;
+			}
 			
 			//	get words from area
 			ImWord[] words = page.getWordsInside(area);

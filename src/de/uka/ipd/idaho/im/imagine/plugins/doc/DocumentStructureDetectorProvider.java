@@ -58,6 +58,7 @@ import de.uka.ipd.idaho.gamta.util.ParallelJobRunner.ParallelFor;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor.SynchronizedProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
 import de.uka.ipd.idaho.goldenGate.plugins.PluginDataProviderFileBased;
 import de.uka.ipd.idaho.im.ImAnnotation;
@@ -76,7 +77,6 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.im.util.ImfIO;
-import de.uka.ipd.idaho.plugins.docStyle.DocumentStyle;
 import de.uka.ipd.idaho.stringUtils.StringVector;
 import de.uka.ipd.idaho.stringUtils.regExUtils.RegExUtils;
 
@@ -843,10 +843,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setBaseProgress(65);
 		spm.setMaxProgress(75);
 		final HashMap tablesToCaptionAnnots = new HashMap();
-		final boolean figureAboveCaptions = docLayout.getBooleanProperty("caption.belowFigure", false);
-		final boolean figureBelowCaptions = docLayout.getBooleanProperty("caption.aboveFigure", true);
+		final boolean figureAboveCaptions = docLayout.getBooleanProperty("caption.belowFigure", true);
+		final boolean figureBelowCaptions = docLayout.getBooleanProperty("caption.aboveFigure", false);
+		final boolean figureBesideCaptions = docLayout.getBooleanProperty("caption.besideFigure", true);
 		final boolean tableAboveCaptions = docLayout.getBooleanProperty("caption.belowTable", true);
 		final boolean tableBelowCaptions = docLayout.getBooleanProperty("caption.aboveTable", true);
+		final boolean tableBesideCaptions = docLayout.getBooleanProperty("caption.besideTable", false);
 		ParallelJobRunner.runParallelFor(new ParallelFor() {
 			public void doFor(int p) throws Exception {
 				spm.setProgress((p * 100) / pages.length);
@@ -858,6 +860,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				//	collect possible caption target areas
 				HashMap aboveCaptionTargets = new HashMap();
 				HashMap belowCaptionTargets = new HashMap();
+				HashMap besideCaptionTargets = new HashMap();
 				for (Iterator cit = pageCaptions[p].keySet().iterator(); cit.hasNext();) {
 					ImRegion caption = ((ImRegion) cit.next());
 					ImAnnotation captionAnnot = ((ImAnnotation) pageCaptions[p].get(caption));
@@ -871,6 +874,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						ImRegion belowCaptionTarget = getBelowCaptionTarget(pages[p], caption, pageImageDpi, isTableCaption);
 						if (belowCaptionTarget != null)
 							belowCaptionTargets.put(caption, belowCaptionTarget);
+					}
+					if (isTableCaption ? tableBesideCaptions : figureBesideCaptions) {
+						ImRegion besideCaptionTarget = getBesideCaptionTarget(pages[p], caption, pageImageDpi, isTableCaption);
+						if (besideCaptionTarget != null)
+							besideCaptionTargets.put(caption, besideCaptionTarget);
 					}
 				}
 				
@@ -907,19 +915,31 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 									 break;
 								}
 						}
+						ImRegion sct = ((ImRegion) besideCaptionTargets.get(captions[c]));
+						if (sct != null) {
+							for (int a = 0; a < assignedCaptionTargets.size(); a++)
+								if (((ImRegion) assignedCaptionTargets.get(a)).bounds.overlaps(sct.bounds)) {
+									 besideCaptionTargets.remove(captions[c]);
+									 sct = null;
+									 break;
+								}
+						}
+						
+						//	count targets
+						int ctCount = (((act == null) ? 0 : 1) + ((bct == null) ? 0 : 1) + ((sct == null) ? 0 : 1));
 						
 						//	no target found or left for this one
-						if ((act == null) && (bct == null)) {
+						if (ctCount == 0) {
 							pageCaptions[p].remove(captions[c]);
 							continue;
 						}
 						
 						//	this one's ambiguous, save for another round
-						if (skipAmbiguousCaptions && (act != null) && (bct != null))
+						if (skipAmbiguousCaptions && (ctCount != 1))
 							continue;
 						
-						//	get target area (prefer above over below)
-						ImRegion ct = ((act == null) ? bct : act);
+						//	get target area (prefer above over below, and below over beside)
+						ImRegion ct = ((act == null) ? ((bct == null) ? sct : bct) : act);
 						
 						//	get annotation and check target type
 						ImAnnotation captionAnnot = ((ImAnnotation) pageCaptions[p].get(captions[c]));
@@ -956,6 +976,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						pageCaptions[p].remove(captions[c]);
 						aboveCaptionTargets.remove(captions[c]);
 						belowCaptionTargets.remove(captions[c]);
+						besideCaptionTargets.remove(captions[c]);
 					}
 				}
 				
@@ -3004,6 +3025,105 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return targetRegion;
 	}
 	
+	private ImRegion getBesideCaptionTarget(ImPage page, ImRegion caption, int dpi, boolean isTableCaption) {
+		
+		//	get regions
+		ImRegion[] pageRegions = page.getRegions(isTableCaption ? ImRegion.TABLE_TYPE : null);
+		
+		//	compute vertical center of caption
+		int captionCenterY = ((caption.bounds.top + caption.bounds.bottom) / 2);
+		
+		//	seek suitable target regions
+		ImRegion targetRegion = null;
+		for (int r = 0; r < pageRegions.length; r++) {
+			
+			//	ignore lines and paragraphs
+			if (ImRegion.LINE_ANNOTATION_TYPE.equals(pageRegions[r].getType()) || ImRegion.PARAGRAPH_TYPE.equals(pageRegions[r].getType()))
+				continue;
+			
+			//	ignore tables we're not out for
+			if (isTableCaption != ImRegion.TABLE_TYPE.equals(pageRegions[r].getType()))
+				continue;
+			
+			//	this one's too far down
+			if (captionCenterY < pageRegions[r].bounds.top)
+				continue;
+			
+			//	this one's too high up
+			if (pageRegions[r].bounds.bottom < captionCenterY)
+				continue;
+			
+			//	check if size is sufficient
+			if (((pageRegions[r].bounds.bottom - pageRegions[r].bounds.top) * 2) < dpi)
+				continue;
+			
+			//	check if candidate target contains words that cannot belong to a caption target area, and find lower edge
+			ImWord[] pageRegionWords = page.getWordsInside(pageRegions[r].bounds);
+			boolean gotNonCaptionableWords = false;
+			for (int w = 0; w < pageRegionWords.length; w++) {
+				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(pageRegionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(pageRegionWords[w].getTextStreamType()))
+					continue;
+				if (isTableCaption && ImWord.TEXT_STREAM_TYPE_TABLE.equals(pageRegionWords[w].getTextStreamType()))
+					continue;
+				gotNonCaptionableWords = true;
+				break;
+			}
+			if (gotNonCaptionableWords)
+				continue;
+			
+			//	this one looks good
+			if (isTableCaption) // return target table right away
+				return pageRegions[r];
+			else { // store target figure (might be part of actual figure, to be restored below)
+				targetRegion = pageRegions[r];
+				break;
+			}
+		}
+		
+		//	do we have a target region to start with?
+		if (targetRegion == null)
+			return null;
+		
+		//	try and restore images cut apart horizontally by page structure detection (vertical splits result in the parent region being retained, so we'll find the latter first)
+		for (int r = 0; r < pageRegions.length; r++) {
+			
+			//	ignore lines and paragraphs
+			if (ImRegion.LINE_ANNOTATION_TYPE.equals(pageRegions[r].getType()) || ImRegion.PARAGRAPH_TYPE.equals(pageRegions[r].getType()))
+				continue;
+			
+			//	ignore tables we're not out for
+			if (ImRegion.TABLE_TYPE.equals(pageRegions[r].getType()))
+				continue;
+			
+			//	this one lies inside what we already have
+			if (targetRegion.bounds.includes(pageRegions[r].bounds, false))
+				continue;
+			
+			//	this one's too high up
+			if (pageRegions[r].bounds.top < caption.bounds.bottom)
+				continue;
+			
+			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
+			BoundingBox aggregateBounds = new BoundingBox(Math.min(targetRegion.bounds.left, pageRegions[r].bounds.left), Math.max(targetRegion.bounds.right, pageRegions[r].bounds.right), Math.min(targetRegion.bounds.top, pageRegions[r].bounds.top), Math.max(targetRegion.bounds.bottom, pageRegions[r].bounds.bottom));
+			ImWord[] aggregateWords = page.getWordsInside(aggregateBounds);
+			boolean gotNonCaptionableWords = false;
+			for (int w = 0; w < aggregateWords.length; w++) {
+				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(aggregateWords[w].getTextStreamType()))
+					continue;
+				gotNonCaptionableWords = true;
+				break;
+			}
+			if (gotNonCaptionableWords)
+				continue;
+			
+			//	include this one in the aggregate
+			targetRegion = new ImRegion(targetRegion.getDocument(), targetRegion.pageId, aggregateBounds, ImRegion.REGION_ANNOTATION_TYPE);
+		}
+		
+		//	return what we got
+		return targetRegion;
+	}
+	
 	private TreeMap getCaptionStartNumberIndex(ImDocument doc) {
 		TreeMap captionStartsToNumbers = new TreeMap(String.CASE_INSENSITIVE_ORDER);
 		
@@ -3991,7 +4111,11 @@ Create HeadingStructureEditor
 			String captionStart = this.getCaptionStart(caption);
 			String captionText = ImUtils.getString(caption.getFirstWord(), caption.getLastWord(), true);
 			String captionTargetPageId = ((String) caption.getAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE));
+			if (captionTargetPageId == null)
+				return;
 			String captionTargetBoxString = ((String) caption.getAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE));
+			if (captionTargetBoxString == null)
+				return;
 			String captionTargetId = this.getCaptionTargetSupplementId(idmp.document.getPage(Integer.parseInt(captionTargetPageId)), BoundingBox.parse(captionTargetBoxString));
 			boolean captionStartWordIsTable = caption.getFirstWord().getString().toLowerCase().startsWith("tab");
 			

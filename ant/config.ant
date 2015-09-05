@@ -33,7 +33,10 @@
 	<property name="jar.attributes" value="${dist.home}/Plugins/AttributeToolProvider.jar" />
 	
 	<!-- path to the .jar file that shall be created -->
-	<property name="jar.basicimageedit" value="${dist.home}/Plugins/BasicImageEditProvider.jar" />
+	<property name="jar.basicimageedit" value="${dist.home}/Plugins/BasicImageEditToolProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.navigation" value="${dist.home}/Plugins/NavigationProvider.jar" />
 	
 	<!-- path to the .jar file that shall be created -->
 	<property name="jar.regions" value="${dist.home}/Plugins/RegionActionProvider.jar" />
@@ -67,4 +70,19 @@
 	
 	<!-- path to the .jar file that shall be created -->
 	<property name="jar.objectlist" value="${dist.home}/Plugins/ObjectListProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.blockocr" value="${dist.home}/Plugins/BlockOcrProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.ocrcheck" value="${dist.home}/Plugins/OcrChecker.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.xmlview" value="${dist.home}/Plugins/XmlViewer.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.docstyleprov" value="${dist.home}/Plugins/DocumentStyleProvider.jar" />
+	
+	<!-- path to the .jar file that shall be created -->
+	<property name="jar.docstyleman" value="${dist.home}/Plugins/DocumentStyleManager.jar" />
 </project>
