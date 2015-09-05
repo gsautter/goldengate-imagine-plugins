@@ -534,7 +534,8 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			
 			//	create parameters
 			Properties parameters = new Properties();
-			parameters.setProperty(DocumentProcessor.INTERACTIVE_PARAMETER, DocumentProcessor.INTERACTIVE_PARAMETER);
+			if (idmp != null)
+				parameters.setProperty(DocumentProcessor.INTERACTIVE_PARAMETER, DocumentProcessor.INTERACTIVE_PARAMETER);
 			
 			//	process document (or annotation)
 			if ((dp instanceof MonitorableDocumentProcessor) && (pm != null))
