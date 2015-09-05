@@ -250,8 +250,26 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			return null; // for now ...
 		}
 		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
-			if (annot == null)
-				detectDocumentStructure(doc, idmp.documentBornDigital, pm);
+			if (annot == null) {
+				boolean documentBornDigital;
+				if (idmp != null)
+					documentBornDigital = idmp.documentBornDigital;
+				else {
+					ImPage[] pages = doc.getPages();
+					int wordCount = 0;
+					int fnWordCount = 0;
+					for (int p = 0; p < pages.length; p++) {
+						ImWord[] pageWords = pages[p].getWords();
+						for (int w = 0; w < pageWords.length; w++) {
+							wordCount++;
+							if (pageWords[w].hasAttribute(ImWord.FONT_NAME_ATTRIBUTE))
+								fnWordCount++;
+						}
+					}
+					documentBornDigital = ((wordCount * 2) < (fnWordCount * 3));
+				}
+				detectDocumentStructure(doc, documentBornDigital, pm);
+			}
 			else pm.setStep("Cannot detect document structure on single annotation");
 		}
 	}
