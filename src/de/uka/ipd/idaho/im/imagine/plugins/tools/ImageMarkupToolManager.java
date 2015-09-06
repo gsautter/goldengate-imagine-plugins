@@ -521,6 +521,8 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 						precludingError = precludingError.substring("W:".length());
 						isWarning = true;
 					}
+					if (idmp == null)
+						return;
 					int choice = JOptionPane.showConfirmDialog(DialogPanel.getTopWindow(), ("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, (isWarning ? JOptionPane.WARNING_MESSAGE : JOptionPane.ERROR_MESSAGE));
 					if (choice != JOptionPane.YES_OPTION)
 						return;

@@ -42,7 +42,6 @@ import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
 import de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager;
-import de.uka.ipd.idaho.goldenGate.util.ResourceDialog;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImWord;
@@ -165,24 +164,19 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 				if (docStyle != null)
 					return docStyle.toProperties();
 			}
-			
-			//	TODO remove this after tests
-			ResourceDialog dssd = ResourceDialog.getResourceDialog(this, "Select Document Style", "OK");
-			dssd.setLocationRelativeTo(dssd.getOwner());
-			dssd.setVisible(true);
-			if (dssd.isCommitted()) {
-				docStyleName = dssd.getSelectedResourceName();
-				if (docStyleName == null)
-					return null;
-//				Settings docStyle = this.loadSettingsResource(docStyleName);
-//				if (docStyle != null) {
-//					docStyle.setSetting(DocumentStyle.DOCUMENT_STYLE_NAME_ATTRIBUTE, docStyleName.substring(0, docStyleName.lastIndexOf('.')));
+//			
+//			//	TODO use this for tests
+//			ResourceDialog dssd = ResourceDialog.getResourceDialog(this, "Select Document Style", "OK");
+//			dssd.setLocationRelativeTo(dssd.getOwner());
+//			dssd.setVisible(true);
+//			if (dssd.isCommitted()) {
+//				docStyleName = dssd.getSelectedResourceName();
+//				if (docStyleName == null)
+//					return null;
+//				DocStyle docStyle = ((DocStyle) this.docStylesByName.get(docStyleName + ".docStyle"));
+//				if (docStyle != null)
 //					return docStyle.toProperties();
-//				}
-				DocStyle docStyle = ((DocStyle) this.docStylesByName.get(docStyleName + ".docStyle"));
-				if (docStyle != null)
-					return docStyle.toProperties();
-			}
+//			}
 			
 			return null;
 		}
