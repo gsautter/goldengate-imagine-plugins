@@ -722,16 +722,25 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setBaseProgress(55);
 		spm.setMaxProgress(60);
 		HashMap paragraphEndWords = new HashMap();
+		HashMap paragraphEndWordBlocks = new HashMap();
 		for (int pg = 0; pg < pages.length; pg++) {
 			spm.setProgress((pg * 100) / pages.length);
 			spm.setInfo("Indexing paragraphs on page " + pages[pg].pageId);
-			ImRegion[] pageParagraphs = pages[pg].getRegions(PARAGRAPH_TYPE);
+			ImRegion[] pageParagraphs = pages[pg].getRegions(ImRegion.PARAGRAPH_TYPE);
 			for (int p = 0; p < pageParagraphs.length; p++) {
 				ImWord[] paragraphWords = pageParagraphs[p].getWords();
 				if (paragraphWords.length == 0)
 					continue;
 				Arrays.sort(paragraphWords, ImUtils.textStreamOrder);
 				paragraphEndWords.put(paragraphWords[paragraphWords.length-1], pageParagraphs[p]);
+			}
+			ImRegion[] pageBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+			for (int b = 0; b < pageBlocks.length; b++) {
+				ImWord[] blockWords = pageBlocks[b].getWords();
+				for (int w = 0; w < blockWords.length; w++) {
+					if (paragraphEndWords.containsKey(blockWords[w]))
+						paragraphEndWordBlocks.put(blockWords[w], pageBlocks[b]);
+				}
 			}
 		}
 		
@@ -816,7 +825,16 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					continue;
 				
 				//	this one's too far left in its paragraph (further than 10% of width away from right boundary)
-				if (((imwParagraph.bounds.right - imw.bounds.right) * 10) > ((imwParagraph.bounds.right - imwParagraph.bounds.left) * 9))
+				if (((imwParagraph.bounds.right - imw.bounds.right) * 10) > (imwParagraph.bounds.right - imwParagraph.bounds.left))
+					continue;
+				
+				//	get parent block to compare width (helps with single-line paragraphs)
+				ImRegion imwBlock = ((ImRegion) paragraphEndWordBlocks.get(imw));
+				if (imwBlock == null)
+					continue;
+				
+				//	this one's too far left in its block (further than 10% of width away from right boundary)
+				if (((imwBlock.bounds.right - imw.bounds.right) * 10) > (imwBlock.bounds.right - imwBlock.bounds.left))
 					continue;
 				
 				//	no use checking with a sentence end
@@ -2843,8 +2861,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			return false;
 		}
 		
-		//	more numbers than words ==> reference to caption
-		if (firstLineWordCount < firstLineNumberCount) {
+		//	more numbers than words ==> reference to caption (we can cut some more slack if we have other clues)
+		if ((startIsBold || (startPatterns != this.captionStartPatterns)) ? ((firstLineWordCount * 3) < (firstLineNumberCount * 2)) : (firstLineWordCount < firstLineNumberCount)) {
 			if (DEBUG_IS_CAPTION) System.out.println(" ==> " + firstLineWordCount + " words < " + firstLineNumberCount + " numbers, caption reference");
 			return false;
 		}
