@@ -788,6 +788,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 		}
 		
+		//	get minimum block margin from document style to estimate vertical block distance
+		int minBlockMargin = docLayout.getIntProperty("minBlockMargin", 0, pageImageDpi);
+		
 		//	try and merge paragraphs
 		spm.setStep(" - merging interrupted paragraphs");
 		spm.setBaseProgress(63);
@@ -828,7 +831,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					ignoreWordRelation = false;
 				else if ((imw.bounds.right < nextImw.bounds.left) && (nextImw.bounds.bottom < imw.bounds.top)) // column break (successor up and right)
 					ignoreWordRelation = false;
-				else if (((imw.bounds.bottom - imw.bounds.top) + (nextImw.bounds.bottom - nextImw.bounds.top)) < (nextImw.bounds.top - imw.bounds.bottom)) // continuation after artifact (successor way down)
+				else if (Math.max((minBlockMargin * 2), ((imw.bounds.bottom - imw.bounds.top) + (nextImw.bounds.bottom - nextImw.bounds.top))) < (nextImw.bounds.top - imw.bounds.bottom)) // continuation after artifact (successor way down)
 					ignoreWordRelation = false;
 				
 				//	we don't seem to have to investigate this one
@@ -2868,8 +2871,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (isTableCaption != ImRegion.TABLE_TYPE.equals(pageRegions[r].getType()))
 				continue;
 			
-			//	this one's too far down
-			if (caption.bounds.top < pageRegions[r].bounds.bottom)
+			//	this one's too far down (we need to cut this a little slack, as images can be masked to smaller sizes in born-digital PDFs)
+//			if (caption.bounds.top < pageRegions[r].bounds.bottom)
+//				continue;
+			if (((caption.bounds.top + caption.bounds.bottom) / 2) < pageRegions[r].bounds.bottom)
 				continue;
 			
 			//	check if size is sufficient
@@ -2922,8 +2927,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (targetRegion.bounds.includes(pageRegions[r].bounds, false))
 				continue;
 			
-			//	this one's too far down
-			if (caption.bounds.top < pageRegions[r].bounds.bottom)
+			//	this one's too far down (we need to cut this a little slack, as images can be masked to smaller sizes in born-digital PDFs)
+//			if (caption.bounds.top < pageRegions[r].bounds.bottom)
+//				continue;
+			if (((caption.bounds.top + caption.bounds.bottom) / 2) < pageRegions[r].bounds.bottom)
 				continue;
 			
 			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
@@ -2964,8 +2971,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (isTableCaption != ImRegion.TABLE_TYPE.equals(pageRegions[r].getType()))
 				continue;
 			
-			//	this one's too high up
-			if (pageRegions[r].bounds.top < caption.bounds.bottom)
+			//	this one's too high up (we need to cut this a little slack, as images can be masked to smaller sizes in born-digital PDFs)
+//			if (pageRegions[r].bounds.top < caption.bounds.bottom)
+//				continue;
+			if (pageRegions[r].bounds.top < ((caption.bounds.top + caption.bounds.bottom) / 2))
 				continue;
 			
 			//	check if size is sufficient
@@ -3018,8 +3027,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (targetRegion.bounds.includes(pageRegions[r].bounds, false))
 				continue;
 			
-			//	this one's too high up
-			if (pageRegions[r].bounds.top < caption.bounds.bottom)
+			//	this one's too high up (we need to cut this a little slack, as images can be masked to smaller sizes in born-digital PDFs)
+//			if (pageRegions[r].bounds.top < caption.bounds.bottom)
+//				continue;
+			if (pageRegions[r].bounds.top < ((caption.bounds.top + caption.bounds.bottom) / 2))
 				continue;
 			
 			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
@@ -3113,12 +3124,16 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (ImRegion.TABLE_TYPE.equals(pageRegions[r].getType()))
 				continue;
 			
-			//	this one lies inside what we already have
-			if (targetRegion.bounds.includes(pageRegions[r].bounds, false))
+			//	this one's too far down
+			if (captionCenterY < pageRegions[r].bounds.top)
 				continue;
 			
 			//	this one's too high up
-			if (pageRegions[r].bounds.top < caption.bounds.bottom)
+			if (pageRegions[r].bounds.bottom < captionCenterY)
+				continue;
+			
+			//	this one lies inside what we already have
+			if (targetRegion.bounds.includes(pageRegions[r].bounds, false))
 				continue;
 			
 			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
