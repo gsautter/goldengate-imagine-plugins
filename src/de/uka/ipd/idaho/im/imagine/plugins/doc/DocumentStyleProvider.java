@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-, IPD Boehm, Universitaet Karlsruhe (TH) / KIT, by Guido Sautter
+< * Copyright (c) 2006-, IPD Boehm, Universitaet Karlsruhe (TH) / KIT, by Guido Sautter
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -240,6 +240,7 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 	private DocStyle findStyleFor(ImDocument doc) {
 		System.out.println("Searching style for document " + doc.docId);
 		DocStyle bestDocStyle = null;
+		int bestDocStyleAnchorMatchCount = 0;
 		float bestDocStyleAnchorMatchScore = 0.66f; // require at least two thirds of anchors to match to prevent erroneous style assignments
 		for (Iterator dsnit = this.docStylesByName.keySet().iterator(); dsnit.hasNext();) {
 			String dsn = ((String) dsnit.next());
@@ -265,8 +266,15 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 			System.out.println(" - match score is " + dsAnchorMatchScore);
 			if (dsAnchorMatchScore > bestDocStyleAnchorMatchScore) {
 				bestDocStyle = ds;
+				bestDocStyleAnchorMatchCount = dsAnchorMatchCount;
 				bestDocStyleAnchorMatchScore = dsAnchorMatchScore;
-				System.out.println(" ==> new best match");
+				System.out.println(" ==> new best match (" + dsAnchorMatchScore + " for " + dsAnchorMatchCount + " out of " + ds.anchors.length + ")");
+			}
+			else if ((dsAnchorMatchScore == bestDocStyleAnchorMatchScore) && (bestDocStyleAnchorMatchCount < dsAnchorMatchCount)) {
+				bestDocStyle = ds;
+				bestDocStyleAnchorMatchCount = dsAnchorMatchCount;
+				bestDocStyleAnchorMatchScore = dsAnchorMatchScore;
+				System.out.println(" ==> new best-founded match (" + dsAnchorMatchScore + " for " + dsAnchorMatchCount + " out of " + ds.anchors.length + ")");
 			}
 			else System.out.println(" ==> worse than best match");
 		}
