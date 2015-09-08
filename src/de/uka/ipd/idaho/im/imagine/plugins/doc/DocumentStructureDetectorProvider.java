@@ -1229,14 +1229,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					ImAnnotation emphasis = doc.addAnnotation(boldStart, imw.getPreviousWord(), ImAnnotation.EMPHASIS_TYPE);
 					emphasis.setAttribute(ImWord.BOLD_ATTRIBUTE);
 					markedBoldEmphasis = true;
-					if (italicsStart == null)
-						spm.setInfo("Found bold emphasis on '" + emphasis.getFirstWord().getTextStreamType() + "' text stream: " + ImUtils.getString(emphasis.getFirstWord(), emphasis.getLastWord(), true));
-					else {
+					if ((italicsStart != null) && (ImUtils.textStreamOrder.compare(italicsStart, boldStart) <= 0)) {
 						emphasis.setAttribute(ImWord.ITALICS_ATTRIBUTE);
 						spm.setInfo("Found bold+italics emphasis on '" + emphasis.getFirstWord().getTextStreamType() + "' text stream: " + ImUtils.getString(emphasis.getFirstWord(), emphasis.getLastWord(), true));
 						if ((boldStart == italicsStart) && !imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE))
 							italicsStart = null;
 					}
+					else spm.setInfo("Found bold emphasis on '" + emphasis.getFirstWord().getTextStreamType() + "' text stream: " + ImUtils.getString(emphasis.getFirstWord(), emphasis.getLastWord(), true));
 					
 					//	remember emphasized words
 					for (ImWord eImw = emphasis.getFirstWord(); eImw != null; eImw = eImw.getNextWord()) {
@@ -1272,14 +1271,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					ImAnnotation emphasis = doc.addAnnotation(italicsStart, imw.getPreviousWord(), ImAnnotation.EMPHASIS_TYPE);
 					emphasis.setAttribute(ImWord.ITALICS_ATTRIBUTE);
 					markedItalicsEmphasis = true;
-					if ((boldStart == null) || (ImUtils.textStreamOrder.compare(italicsStart, boldStart) < 0))
-						spm.setInfo("Found italics emphasis on '" + emphasis.getFirstWord().getTextStreamType() + "' text stream: " + ImUtils.getString(emphasis.getFirstWord(), emphasis.getLastWord(), true));
-					else {
+					if ((boldStart != null) && (ImUtils.textStreamOrder.compare(boldStart, italicsStart) <= 0)) {
 						emphasis.setAttribute(ImWord.BOLD_ATTRIBUTE);
 						spm.setInfo("Found italics+bold emphasis on '" + emphasis.getFirstWord().getTextStreamType() + "' text stream: " + ImUtils.getString(emphasis.getFirstWord(), emphasis.getLastWord(), true));
 						if ((italicsStart == boldStart) && !imw.hasAttribute(ImWord.BOLD_ATTRIBUTE))
 							boldStart = null;
 					}
+					else spm.setInfo("Found italics emphasis on '" + emphasis.getFirstWord().getTextStreamType() + "' text stream: " + ImUtils.getString(emphasis.getFirstWord(), emphasis.getLastWord(), true));
 					
 					//	remember emphasized words
 					for (ImWord eImw = emphasis.getFirstWord(); eImw != null; eImw = eImw.getNextWord()) {
