@@ -592,7 +592,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			actions.add(new TwoClickSelectionAction("annotateTwoClick", "Start Annotation", ("Start annotation from '" + start.getString() + "'")) {
 				public boolean performAction(ImWord secondWord) {
 					if (!start.getTextStreamId().equals(secondWord.getTextStreamId())) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("Cannot annotate from '" + start.getString() + "' to '" + secondWord.getString() + "', they belong to different text streams."), "Cannot Annotate Across Text Streams", JOptionPane.ERROR_MESSAGE);
+						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("Cannot annotate from '" + start.getString() + "' to '" + secondWord.getString() + "', they belong to different text streams:\r\n- '" + start.getString() + "': " + start.getTextStreamId() + ", type '" + start.getTextStreamType() + "'\r\n- '" + secondWord.getString() + "': " + secondWord.getTextStreamId() + ", type '" + secondWord.getTextStreamType() + "'"), "Cannot Annotate Across Text Streams", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", ((String[]) createAnnotTypes.toArray(new String[createAnnotTypes.size()])), null, true);

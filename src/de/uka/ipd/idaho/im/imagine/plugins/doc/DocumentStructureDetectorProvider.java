@@ -81,15 +81,6 @@ import de.uka.ipd.idaho.stringUtils.regExUtils.RegExUtils;
  * @author sautter
  */
 public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolProvider implements ImagingConstants {
-	
-	/* TODO Figure out how to split up this class, it's just growing too large
-	 * ... especially as style templates are only in planning as of now
-	 * - likely factor out one or more function libraries ...
-	 * - ... e.g. assignCaptionsToTargets(ImPage) ...
-	 * - ... or whole figureCitation / tableCitation handling
-	 * - ... which might also be used from other places
-	 */
-	
 	private boolean debug = false;
 	
 	private static final String STRUCTURE_DETECTOR_IMT_NAME = "StructureDetector";
