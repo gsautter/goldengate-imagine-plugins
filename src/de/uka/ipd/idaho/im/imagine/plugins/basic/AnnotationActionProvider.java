@@ -36,6 +36,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.StringWriter;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -220,6 +221,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
+	private static final Comparator annotationOrder = new Comparator() {
+		public int compare(Object obj1, Object obj2) {
+			ImAnnotation annot1 = ((ImAnnotation) obj1);
+			ImAnnotation annot2 = ((ImAnnotation) obj2);
+			int c = ImUtils.textStreamOrder.compare(annot1.getFirstWord(), annot2.getFirstWord());
+			return ((c == 0) ? ImUtils.textStreamOrder.compare(annot2.getLastWord(), annot1.getLastWord()) : c);
+		}
+	};
+	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
@@ -245,6 +255,10 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		}
 		final ImAnnotation[] spanningAnnots = ((ImAnnotation[]) spanningAnnotList.toArray(new ImAnnotation[spanningAnnotList.size()]));
 		final ImAnnotation[] overlappingAnnots = ((ImAnnotation[]) overlappingAnnotList.toArray(new ImAnnotation[overlappingAnnotList.size()]));
+		
+		//	sort annotations to reflect nesting order
+		Arrays.sort(spanningAnnots, annotationOrder);
+		Arrays.sort(overlappingAnnots, annotationOrder);
 		
 		//	index overlapping annotations by type to identify merger groups
 		final TreeMap annotMergerGroups = new TreeMap();
@@ -636,12 +650,17 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			actions.add(new SelectionAction("mergeAnnots", ("Merge " + type + "s"), ("Merge selected '" + type + "' annotations")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					ImAnnotation mergedAnnot = ((ImAnnotation) annotMergerGroup.removeFirst());
-					mergedAnnot.setLastWord(((ImAnnotation) annotMergerGroup.getLast()).getLastWord());
+					ImWord mergedLastWord = mergedAnnot.getLastWord();
 					for (Iterator ait = annotMergerGroup.iterator(); ait.hasNext();) {
 						ImAnnotation annot = ((ImAnnotation) ait.next());
+						ImWord lastWord = annot.getLastWord();
+						if (ImUtils.textStreamOrder.compare(mergedLastWord, lastWord) < 0)
+							mergedLastWord = lastWord;
 						AttributeUtils.copyAttributes(annot, mergedAnnot, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
 						idmp.document.removeAnnotation(annot);
 					}
+					if (mergedLastWord != mergedAnnot.getLastWord())
+						mergedAnnot.setLastWord(mergedLastWord);
 					return true;
 				}
 			});
