@@ -5,7 +5,7 @@
 -->
 
 <project name="dist">
-	<target name="plugins" depends="annotationsjar,attributesjar,basicimageeditjar,navigationjar,blockocr,ocrcheck,regionsjar,textjar,textblocksjar,textstreamsjar,docmeatdatajar,docstructurejar,fontsjar,urldroplinkerjar,tablesjar,objectlistjar,dpimtoolsjar,xmlviewerjar,docstyleprovjar,docstylemanjar">
+	<target name="plugins" depends="annotationsjar,attributesjar,basicimageeditjar,navigationjar,blockocr,ocrcheck,regionsjar,textjar,textblocksjar,textstreamsjar,docmeatdatajar,docstructurejar,captioncitationjar,fontsjar,urldroplinkerjar,tablesjar,objectlistjar,dpimtoolsjar,xmlviewerjar,docstyleprovjar,docstylemanjar">
 		<!-- proxy target only -->
 	</target>
 	
@@ -172,6 +172,20 @@
 			</fileset>
 			<fileset dir="${src.home}">
 				<include name="**/imagine/plugins/doc/DocumentStructureDetectorProvider.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
+	<target name="captioncitationjar">
+		<delete file="${jar.captioncitations}" />
+		<jar destfile="${jar.captioncitations}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/util/CaptionCitationHandler.class" />
+				<include name="**/imagine/plugins/util/CaptionCitationHandler$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/util/CaptionCitationHandler.java" />
 			</fileset>
 			<fileset dir="." includes="LICENSE.txt"/>
 		</jar>
