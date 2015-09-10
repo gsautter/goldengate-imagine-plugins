@@ -85,6 +85,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	 */
 	public SelectionAction[] getActions(final ImWord start, ImWord end, final ImDocumentMarkupPanel idmp) {
 		
+		//	TODO find out why this is not offering merging table rows or columns
+		
 		//	anything to work with?
 		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(start.getTextStreamType()) || !start.getTextStreamId().equals(end.getTextStreamId()) || (start.pageId != end.pageId))
 			return null;
@@ -93,8 +95,10 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	get start table
 		final ImRegion startTable = this.getTableAt(start);
-		if (startTable == null)
+		if (startTable == null) {
+			System.out.println("Enclosing table not found");
 			return null;
+		}
 		
 		//	collect actions
 		LinkedList actions = new LinkedList();
@@ -150,7 +154,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			});
 		
 		//	offer merging columns across tables
-		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && !startTable.hasAttribute("colsContinueIn"))
+		if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && !startTable.hasAttribute("colsContinueIn"))
 			actions.add(new TwoClickSelectionAction("tableExtendCols", "Connect Table Columns", "Connect the columns in this table to those in another table, merging the tables top to bottom.") {
 				public boolean performAction(ImWord secondWord) {
 					if (start.getTextStreamId().equals(secondWord.getTextStreamId())) {

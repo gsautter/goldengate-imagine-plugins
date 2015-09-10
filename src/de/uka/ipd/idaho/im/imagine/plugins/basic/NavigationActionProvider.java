@@ -778,6 +778,8 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 		}
 		
 		void invalidateIfContains(ImWord imw) {
+			if (this.tsIndexes == null)
+				return;
 			for (int s = 0; s < this.tsIndexes.length; s++)
 				if (imw.getTextStreamId().equals(this.tsIndexes[s].textStreamWords[0].getLocalID()) && (ImUtils.textStreamOrder.compare(imw, this.tsIndexes[s].textStreamWords[this.tsIndexes[s].textStream.length() - 1]) <= 0)) {
 					this.tsIndexes = null;

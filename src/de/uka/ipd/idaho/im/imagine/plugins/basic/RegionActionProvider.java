@@ -978,9 +978,13 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 								blockWordLists.add(this.markBlock(page, selectedWords));
 						}
 						
-						//	chain block text streams
+						//	chain block text streams (only if text stream types match, however)
 						for (int b = 0; b < blockWordLists.size(); b++) {
 							ImWord[] imws = ((ImWord[]) blockWordLists.get(b));
+							if (imws.length == 0)
+								continue;
+							if ((blockPrevWord != null) && !blockPrevWord.getTextStreamType().endsWith(imws[0].getTextStreamType()))
+								continue;
 							if (blockPrevWord != null)
 								blockPrevWord.setNextWord(imws[0]);
 							blockPrevWord = imws[imws.length - 1];
