@@ -768,6 +768,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 				String captionText = ImUtils.getString(citedCaption.getFirstWord(), citedCaption.getLastWord(), true);
 				String captionTargetPageId = ((String) citedCaption.getAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE));
 				BoundingBox captionTargetBox = BoundingBox.parse((String) citedCaption.getAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE));
+				String captionHttpUri = ((String) citedCaption.getAttribute("httpUri"));
 				if (cc.citedCaptions.size() == 1) {
 					captionCitation.setAttribute("captionStartId", citedCaption.getFirstWord().getLocalID());
 					captionCitation.setAttribute("captionStart", captionStart);
@@ -779,6 +780,8 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 						if (captionTargetId != null)
 							captionCitation.setAttribute("captionTargetId", captionTargetId);
 					}
+					if (captionHttpUri != null)
+						captionCitation.setAttribute("httpUri", captionHttpUri);
 				}
 				else {
 					int cci = ccIndex++;
@@ -792,6 +795,8 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 						if (captionTargetId != null)
 							captionCitation.setAttribute(("captionTargetId-" + cci), captionTargetId);
 					}
+					if (captionHttpUri != null)
+						captionCitation.setAttribute(("httpUri-" + cci), captionHttpUri);
 				}
 			}
 			if (DEBUG_MARK_CAPTION_CITATIONS) {
