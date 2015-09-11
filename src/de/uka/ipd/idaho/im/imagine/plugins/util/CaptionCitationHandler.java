@@ -577,7 +577,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		return captionStartsToNumbers;
 	}
 	
-	private static final boolean DEBUG_MARK_CAPTION_CITATIONS = false;
+	private static final boolean DEBUG_MARK_CAPTION_CITATIONS = true;
 	private void markCaptionCitations(ImDocument doc, ImWord textStreamHead, TreeMap captionStartsToNumbers) {
 		for (ImWord imw = textStreamHead; imw.getNextWord() != null; imw = imw.getNextWord()) {
 			String imwString = imw.getString();
@@ -596,6 +596,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 	private ImWord markCaptionCitation(ImDocument doc, ImWord ccStart, TreeMap captionStartNumbers) {
 		int lastNumber = -1;
 		int lastLetter = -1;
+		boolean lastWasLetter = false;
 		CaptionCitation cc = null;
 		ArrayList ccList = new ArrayList();
 		
@@ -607,7 +608,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 			
 			//	number
 			if (imwString.matches("[1-9][0-9]{0,2}") && captionStartNumbers.containsKey(imwString)) {
-				if ((lastNumber == -1) || (lastLetter != -1)) {
+				if ((lastNumber == -1) || (lastLetter != -1) || lastWasLetter) {
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got number " + imwString);
 					cc = new CaptionCitation((ccList.isEmpty() ? ccStart : imw), imw);
 					ccList.add(cc);
@@ -626,6 +627,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 				}
 				lastNumber = Integer.parseInt(imwString);
 				lastLetter = -1;
+				lastWasLetter = false;
 			}
 			
 			//	lower case index letter
@@ -646,7 +648,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 				else {
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter range " + ((char) (lastLetter + 'a')) + "-" + imwString);
 					cc.lastWord = imw;
-					for (int l = lastLetter; l <= (Character.toLowerCase(imwString.charAt(0)) - 'a'); l++) {
+					for (int l = lastLetter; l <= (imwString.charAt(0) - 'a'); l++) {
 						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + ((char) (l + 'a'))));
 						if (citedCaption == null)
 							citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumber + ((char) (l + 'a'))));
@@ -654,7 +656,8 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 							cc.citedCaptions.add(citedCaption);
 					}
 				}
-				lastLetter = (Character.toLowerCase(imwString.charAt(0)) - 'a');
+				lastLetter = (imwString.charAt(0) - 'a');
+				lastWasLetter = true;
 			}
 			
 			//	upper case index letter
@@ -673,9 +676,9 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 						cc.citedCaptions.add(citedCaption);
 				}
 				else {
-					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter range " + ((char) (lastLetter + 'a')) + "-" + imwString);
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter range " + ((char) (lastLetter + 'A')) + "-" + imwString);
 					cc.lastWord = imw;
-					for (int l = lastLetter; l <= (Character.toLowerCase(imwString.charAt(0)) - 'A'); l++) {
+					for (int l = lastLetter; l <= (imwString.charAt(0) - 'A'); l++) {
 						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + ((char) (l + 'A'))));
 						if (citedCaption == null)
 							citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumber + ((char) (l + 'A'))));
@@ -683,28 +686,42 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 							cc.citedCaptions.add(citedCaption);
 					}
 				}
-				lastLetter = (Character.toLowerCase(imwString.charAt(0)) - 'a');
+				lastLetter = (imwString.charAt(0) - 'A');
+				lastWasLetter = true;
 			}
 			
 			//	enumeration separator
 			else if (imwString.equals(",") || imwString.equals("&") || (";and;und;et;y;".indexOf(";" + imwString.toLowerCase() + ";") != -1)) {
 				cc = null;
-				if (lastLetter != -1) // clear last letter
+				if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got enumeration separator " + imwString);
+				if (lastLetter != -1) {// clear last letter
 					lastLetter = -1;
-				else if (lastNumber != -1) // clear last number
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println("   ==> letter range start reset");
+				}
+				else if (lastNumber != -1) {// clear last number
 					lastNumber = -1;
-				else break; // nothing to clear, we're done here
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println("   ==> number range start reset");
+				}
+				else {
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println("   ==> no enumeration open, end of caption citation sequence");
+					break; // nothing to clear, we're done here
+				}
 			}
 			
 			//	range marker
 			else if (imwString.matches("[\\-\\u00AD\\u2010-\\u2015\\u2212]+")) {
-				if ((lastNumber == -1) && (lastLetter == -1)) // no range open, we're done here
+				if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got range separator " + imwString);
+				if ((lastNumber == -1) && (lastLetter == -1)) {// no range open, we're done here
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println("   ==> no range open, end of caption citation sequence");
 					break;
+				}
 			}
 			
 			//	ignore dots
-			else if (!".".equals(imwString))
+			else if (!".".equals(imwString)) {
+				if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - end of caption citation sequence at " + imwString);
 				break;
+			}
 		}
 		
 		//	anything to work with at all?
@@ -736,6 +753,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 				cc.lastWord = ncc.lastWord;
 				cc.citedCaptions.addAll(ncc.citedCaptions);
 				ccList.remove(c+1);
+				c--;
 			}
 		}
 		
