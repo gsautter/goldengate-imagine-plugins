@@ -577,7 +577,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		return captionStartsToNumbers;
 	}
 	
-	private static final boolean DEBUG_MARK_CAPTION_CITATIONS = true;
+	private static final boolean DEBUG_MARK_CAPTION_CITATIONS = false;
 	private void markCaptionCitations(ImDocument doc, ImWord textStreamHead, TreeMap captionStartsToNumbers) {
 		for (ImWord imw = textStreamHead; imw.getNextWord() != null; imw = imw.getNextWord()) {
 			String imwString = imw.getString();
