@@ -32,17 +32,23 @@ import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Properties;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 
+import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
@@ -53,11 +59,14 @@ import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
+import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.TwoClickSelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
+import de.uka.ipd.idaho.stringUtils.StringVector;
 
 /**
  * This plugin provides actions for marking tables in Image Markup documents,
@@ -65,7 +74,15 @@ import de.uka.ipd.idaho.im.util.ImUtils;
  * 
  * @author sautter
  */
-public class TableActionProvider extends AbstractSelectionActionProvider implements ReactionProvider {
+public class TableActionProvider extends AbstractSelectionActionProvider implements ImageMarkupToolProvider, ReactionProvider {
+	private static final String TABLE_CLEANER_IMT_NAME = "TableAnnotCleaner";
+	private ImageMarkupTool tableCleaner = new TableCleaner();
+	
+	private static final String SPLIT_OPERATION = "split";
+	private static final String REMOVE_OPERATION = "remove";
+	private static final String CUT_TO_START_OPERATION = "cutToStart";
+	private static final String CUT_TO_END_OPERATION = "cutToEnd";
+	private Properties annotTypeOperations = new Properties();
 	
 	//	example with multi-line cells (in-cell line margin about 5 pixels, row margin about 15 pixels): zt00904.pdf, page 6
 	
@@ -81,6 +98,71 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	 */
 	public String getPluginName() {
 		return "IM Table Actions";
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#init()
+	 */
+	public void init() {
+		
+		//	read operations for individual annotation types
+		try {
+			Reader tor = new BufferedReader(new InputStreamReader(this.dataProvider.getInputStream("tableCleanupOptions.cnfg")));
+			StringVector typeOperationList = StringVector.loadList(tor);
+			tor.close();
+			for (int t = 0; t < typeOperationList.size(); t++) {
+				String typeOperation = typeOperationList.get(t).trim();
+				if (typeOperation.length() == 0)
+					continue;
+				if (typeOperation.startsWith("//"))
+					continue;
+				String[] typeAndOperation = typeOperation.split("\\s+");
+				if (typeAndOperation.length == 2)
+					this.annotTypeOperations.setProperty(typeAndOperation[0], typeAndOperation[1]);
+			}
+		} catch (IOException ioe) {}
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getEditMenuItemNames()
+	 */
+	public String[] getEditMenuItemNames() {
+		return null;
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getToolsMenuItemNames()
+	 */
+	public String[] getToolsMenuItemNames() {
+		String[] tmins = {TABLE_CLEANER_IMT_NAME};
+		return tmins;
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getImageMarkupTool(java.lang.String)
+	 */
+	public ImageMarkupTool getImageMarkupTool(String name) {
+		if (TABLE_CLEANER_IMT_NAME.equals(name))
+			return this.tableCleaner;
+		else return null;
+	}
+	
+	private class TableCleaner implements ImageMarkupTool {
+		public String getLabel() {
+			return "Clean Table Annotations";
+		}
+		public String getTooltip() {
+			return "Clean annotations in tables, specifically ones spanning column breaks";
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			
+			//	we're only processing documents as a whole
+			if (annot == null)
+				cleanupTableAnnotations(doc, pm);
+		}
 	}
 	
 	/* (non-Javadoc)
@@ -428,10 +510,10 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	 */
 	public void annotationRemoved(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
 	
-	//	TODO call this from Image Markup Tool
-	private void cleanupTableAnnotations(ImDocument doc) {
+	private void cleanupTableAnnotations(ImDocument doc, ProgressMonitor pm) {
 		ImPage[] pages = doc.getPages();
 		for (int p = 0; p < pages.length; p++) {
+			pm.setProgress((p * 100) / pages.length);
 			ImRegion[] pageTables = pages[p].getRegions(ImRegion.TABLE_TYPE);
 			if (pageTables.length == 0)
 				continue;
@@ -500,25 +582,55 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (wordsToCells.get(annotation.getFirstWord()) == wordsToCells.get(annotation.getLastWord()))
 			return;
 		
-		//	mark parts of original annotation in individual cells
-		ImRegion annotCell = ((ImRegion) wordsToCells.get(annotation.getFirstWord()));
-		ImAnnotation annot = doc.addAnnotation(annotation.getFirstWord(), annotation.getType());
-		annot.copyAttributes(annotation);
-		for (ImWord imw = annotation.getFirstWord(); imw != null; imw = imw.getNextWord()) {
-			if (wordsToCells.get(imw) != annotCell) {
-				annot.setLastWord(imw.getPreviousWord());
-				annot = doc.addAnnotation(imw, annotation.getType());
-				annot.copyAttributes(annotation);
-				annotCell = ((ImRegion) wordsToCells.get(imw));
-			}
-			if (imw == annotation.getLastWord()) {
-				annot.setLastWord(imw);
-				break;
+		//	get cleanup operation, and behave accordingly
+		String annotTypeOperation = this.annotTypeOperations.getProperty(annotation.getType(), SPLIT_OPERATION);
+		
+		//	remove annotation (happens below)
+		if (REMOVE_OPERATION.equals(annotTypeOperation)) {}
+		
+		//	cut at end of start cell
+		else if (CUT_TO_START_OPERATION.equals(annotTypeOperation)) {
+			ImRegion annotStartCell = ((ImRegion) wordsToCells.get(annotation.getFirstWord()));
+			for (ImWord imw = annotation.getFirstWord(); imw != null; imw = imw.getNextWord())
+				if (wordsToCells.get(imw) != annotStartCell) {
+					annotation.setLastWord(imw.getPreviousWord());
+					break;
+				}
+		}
+		
+		//	cut at start of end cell
+		else if (CUT_TO_END_OPERATION.equals(annotTypeOperation)) {
+			ImRegion annotEndCell = ((ImRegion) wordsToCells.get(annotation.getLastWord()));
+			for (ImWord imw = annotation.getLastWord(); imw != null; imw = imw.getPreviousWord())
+				if (wordsToCells.get(imw) != annotEndCell) {
+					annotation.setFirstWord(imw.getNextWord());
+					break;
+				}
+		}
+		
+		//	split up to individual cells
+		else if (SPLIT_OPERATION.equals(annotTypeOperation)) {
+			ImRegion annotCell = ((ImRegion) wordsToCells.get(annotation.getFirstWord()));
+			ImAnnotation annot = doc.addAnnotation(annotation.getFirstWord(), annotation.getType());
+			annot.copyAttributes(annotation);
+			for (ImWord imw = annotation.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+				if (wordsToCells.get(imw) != annotCell) {
+					annot.setLastWord(imw.getPreviousWord());
+					annot = doc.addAnnotation(imw, annotation.getType());
+					annot.copyAttributes(annotation);
+					annotCell = ((ImRegion) wordsToCells.get(imw));
+				}
+				if (imw == annotation.getLastWord()) {
+					annot.setLastWord(imw);
+					break;
+				}
 			}
 		}
 		
 		//	clean up original annotation
 		doc.removeAnnotation(annotation);
+		
+		//	TODO call document annotation cleanup here (soon as it's implemented)
 	}
 	
 	/* (non-Javadoc)
