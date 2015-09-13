@@ -567,6 +567,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					&& !docStyleParamNames[p].endsWith(".height") && !docStyleParamNames[p].endsWith("Height")
 					&& !docStyleParamNames[p].endsWith(".distance") && !docStyleParamNames[p].endsWith("Distance")
 					&& !docStyleParamNames[p].endsWith(".dist") && !docStyleParamNames[p].endsWith("Dist")
+					&& !docStyleParamNames[p].endsWith(".gap") && !docStyleParamNames[p].endsWith("Gap")
 				) continue;
 			if (checkParamValueClass(docStyleParamNames[p], Integer.class, false))
 				mDocStyleParamNames.add(docStyleParamNames[p]);
@@ -792,6 +793,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					&& !docStyleParamNames[p].endsWith(".height") && !docStyleParamNames[p].endsWith("Height")
 					&& !docStyleParamNames[p].endsWith(".distance") && !docStyleParamNames[p].endsWith("Distance")
 					&& !docStyleParamNames[p].endsWith(".dist") && !docStyleParamNames[p].endsWith("Dist")
+					&& !docStyleParamNames[p].endsWith(".gap") && !docStyleParamNames[p].endsWith("Gap")
 				) continue;
 			if (checkParamValueClass(docStyleParamNames[p], Integer.class, false))
 				mDocStyleParamNames.add(docStyleParamNames[p]);

@@ -513,6 +513,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
 		
+		//	get table layout hints
+		DocumentStyle tableLayout = docLayout.getSubset(ImRegion.TABLE_TYPE);
+		final int minTableColMargin = tableLayout.getIntProperty("minColumnMargin", (pageImageDpi / 30), pageImageDpi);
+		
 		//	detect tables
 		spm.setStep(" - detecting tables");
 		spm.setBaseProgress(30);
@@ -520,12 +524,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		ParallelJobRunner.runParallelFor(new ParallelFor() {
 			public void doFor(int p) throws Exception {
 				spm.setProgress((p * 100) / pages.length);
-				detectTables(pages[p], pageImageDpi, spm);
+				detectTables(pages[p], pageImageDpi, minTableColMargin, spm);
 				//	TODO figure out what layout hints might be useful for tables
 				
 				/* TODO restrict table detection:
 				 * - maxColumnWidth: maximum width of individual column, prevents putting multi-column text in tables
-				 * - minColumnMargin: minimum margin between two columns, restricts column splitting
 				 * 
 				 * - maxRowHeight: maximum height for individual rows, prevents main text cross splits
 				 * - maxAvgRowHeight: maximum average row height, prevents main text multi-cross splits
@@ -2223,7 +2226,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return false;
 	}
 	
-	private void detectTables(ImPage page, int pageImageDpi, ProgressMonitor pm) {
+	private void detectTables(ImPage page, int pageImageDpi, int minColMargin, ProgressMonitor pm) {
 		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 		Arrays.sort(pageBlocks, ImUtils.topDownOrder);
 		
@@ -2241,7 +2244,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[b][0].getTextStreamType()))
 				continue;
 			pm.setInfo("Testing block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table or table part");
-			pageBlockCols[b] = this.getTableColumns(pageBlocks[b]);
+			pageBlockCols[b] = this.getTableColumns(pageBlocks[b], minColMargin);
 			if (pageBlockCols[b] != null)
 				pm.setInfo(" ==> columns OK");
 			pageBlockRows[b] = this.getTableRows(pageBlocks[b]);
@@ -2298,7 +2301,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					mergeTestBlockBounds = new BoundingBox(mtbbLeft, mtbbRight, mergeTestBlockBounds.top, mergeTestBlockBounds.bottom);
 				ImRegion mergeTestBlock = new ImRegion(page.getDocument(), page.pageId, mergeTestBlockBounds, ImRegion.BLOCK_ANNOTATION_TYPE);
 				pm.setInfo(" - merged block is " + mergeTestBlock.bounds);
-				ImRegion[] mergeTestBlockCols = this.getTableColumns(mergeTestBlock);
+				ImRegion[] mergeTestBlockCols = this.getTableColumns(mergeTestBlock, minColMargin);
 				if (mergeTestBlockCols == null) {
 					pm.setInfo(" ==> foo few columns");
 					continue;
@@ -2365,7 +2368,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						mergeTestBlockBounds = new BoundingBox(mtbbLeft, mtbbRight, mergeTestBlockBounds.top, mergeTestBlockBounds.bottom);
 					ImRegion mergeTestBlock = new ImRegion(page.getDocument(), page.pageId, mergeTestBlockBounds, ImRegion.BLOCK_ANNOTATION_TYPE);
 					pm.setInfo(" - merged block is " + mergeTestBlock.bounds);
-					ImRegion[] mergeTestBlockCols = this.getTableColumns(mergeTestBlock);
+					ImRegion[] mergeTestBlockCols = this.getTableColumns(mergeTestBlock, minColMargin);
 					if (mergeTestBlockCols == null) {
 						pm.setInfo(" ==> too few columns");
 						break;
@@ -2433,11 +2436,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if ((pageBlockWords[b].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[b][0].getTextStreamType()))
 				continue;
 			pm.setInfo("Testing block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table");
-			if (this.markIfIsTable(page, pageBlocks[b], pageBlockCols[b], pageBlockWords[b], pageImageDpi)) {
+			if (this.markIfIsTable(page, pageBlocks[b], pageBlockCols[b], pageBlockWords[b], pageImageDpi, minColMargin)) {
 				pm.setInfo(" ==> table detected");
 				page.removeRegion(pageBlocks[b]);
 			}
-			else if (this.markIfContainsTable(page, pageBlocks[b], pageBlockWords[b], pageImageDpi)) {
+			else if (this.markIfContainsTable(page, pageBlocks[b], pageBlockWords[b], pageImageDpi, minColMargin)) {
 				pm.setInfo(" ==> table extracted");
 				page.removeRegion(pageBlocks[b]);
 			}
@@ -2446,12 +2449,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	}
 	
 	private static final boolean DEBUG_IS_TABLE = true;
-	private boolean markIfIsTable(ImPage page, ImRegion block, ImRegion[] tableCols, ImWord[] blockWords, int dpi) {
+	private boolean markIfIsTable(ImPage page, ImRegion block, ImRegion[] tableCols, ImWord[] blockWords, int dpi, int minColMargin) {
 		if (DEBUG_IS_TABLE) System.out.println("Testing for table: " + block.bounds.toString() + " on page " + block.pageId + " with " + blockWords.length + " words");
 		
 		//	try to get table columns
 		if (tableCols == null)
-			tableCols = this.getTableColumns(block);
+			tableCols = this.getTableColumns(block, minColMargin);
 		if (tableCols == null)
 			return false;
 		
@@ -2476,7 +2479,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return true;
 	}
 	
-	private boolean markIfContainsTable(ImPage page, ImRegion block, ImWord[] blockWords, int dpi) {
+	private boolean markIfContainsTable(ImPage page, ImRegion block, ImWord[] blockWords, int dpi, int minColMargin) {
 		if (DEBUG_IS_TABLE) System.out.println("Testing for contained table: " + block.bounds.toString() + " on page " + block.pageId + " with " + blockWords.length + " words");
 		
 		//	this one's not tall enough (less than 2 inches)
@@ -2494,7 +2497,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		ImRegion middleBlock = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(block.bounds.left, block.bounds.right, middleBlockTop, middleBlockBottom), "test");
 		
 		//	try to get table columns from test block
-		ImRegion[] middleBlockCols = this.getTableColumns(middleBlock);
+		ImRegion[] middleBlockCols = this.getTableColumns(middleBlock, minColMargin);
 		if (middleBlockCols == null)
 			return false;
 		
@@ -2504,7 +2507,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (middleBlockTop < blockRows[r].bounds.top)
 				return false;
 			ImRegion topBlock = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(block.bounds.left, block.bounds.right, blockRows[r].bounds.top, middleBlockBottom), "test");
-			ImRegion[] topBlockCols = this.getTableColumns(topBlock);
+			ImRegion[] topBlockCols = this.getTableColumns(topBlock, minColMargin);
 			if ((topBlockCols != null) && (middleBlockCols.length <= topBlockCols.length)) {
 				tableTop = blockRows[r].bounds.top;
 				break;
@@ -2517,7 +2520,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (blockRows[r].bounds.bottom < middleBlockBottom)
 				return false;
 			ImRegion bottomBlock = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(block.bounds.left, block.bounds.right, middleBlockTop, blockRows[r].bounds.bottom), "test");
-			ImRegion[] bottomBlockCols = this.getTableColumns(bottomBlock);
+			ImRegion[] bottomBlockCols = this.getTableColumns(bottomBlock, minColMargin);
 			if ((bottomBlockCols != null) && (middleBlockCols.length <= bottomBlockCols.length)) {
 				tableBottom = blockRows[r].bounds.bottom;
 				break;
@@ -2555,7 +2558,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		if (DEBUG_IS_TABLE) System.out.println(" ==> contained table found at " + table.bounds);
 		
 		//	try to get table columns
-		ImRegion[] tableCols = this.getTableColumns(table);
+		ImRegion[] tableCols = this.getTableColumns(table, minColMargin);
 		if (tableCols == null)
 			return false;
 		
@@ -2577,13 +2580,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return true;
 	}
 	
-	private ImRegion[] getTableColumns(ImRegion block) {
+	private ImRegion[] getTableColumns(ImRegion block, int minColMargin) {
 		
 		//	try to get table columns
 		ImRegion[] tableCols = ImUtils.getTableColumns(block);
 		if ((tableCols == null) || (tableCols.length < 3)) {
 			if (DEBUG_IS_TABLE) System.out.println(" ==> too few columns");
 			return null;
+		}
+		
+		//	check column margin
+		for (int c = 1; c < tableCols.length; c++) {
+			if ((tableCols[c].bounds.left - tableCols[c-1].bounds.right) < minColMargin)
+				return null;
 		}
 		
 		//	check column widths

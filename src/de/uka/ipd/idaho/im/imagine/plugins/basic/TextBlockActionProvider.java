@@ -170,12 +170,6 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 					break;
 				}
 				
-				//	TODO also automatically mark caption citations
-				
-				//	TODO put this in public methods ...
-				//	TODO ... and call it from document structure detector
-				//	dependencies on _basic_ plugins should be tolerable
-				
 				//	finally ...
 				return true;
 			}

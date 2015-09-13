@@ -375,7 +375,26 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#annotationAdded(de.uka.ipd.idaho.im.ImAnnotation, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
 	 */
-	public void annotationAdded(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
+	public void annotationAdded(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {
+		
+		//	we're only interested in tables
+		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(annotation.getFirstWord().getTextStreamType()))
+			return;
+		
+		/* TODO prevent annotations from spanning across multiple table cells:
+		 * - if annotation added to 'table' test stream,
+		 *   - check if it spans multiple cells ...
+		 *   - ... and chop it up if so
+		 * - also do that in 'Update Table', which helps with annotation added by markup gizmos (emphases, taxonomicNames, dates, goeCoordinates, etc.)
+		 * 
+		 * - implementation:
+		 *   - keep model for each table, mapping words to cells
+		 *     ==> check for cell span pretty fast
+		 *   - update when table changes
+		 *   - keep in list for each document (disposing when document closed)
+		 */
+		
+	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#annotationRemoved(de.uka.ipd.idaho.im.ImAnnotation, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
