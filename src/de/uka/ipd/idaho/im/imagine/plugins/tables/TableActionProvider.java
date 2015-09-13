@@ -34,8 +34,10 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.Map;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -44,6 +46,7 @@ import javax.swing.JOptionPane;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
+import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImLayoutObject;
 import de.uka.ipd.idaho.im.ImObject;
 import de.uka.ipd.idaho.im.ImPage;
@@ -84,8 +87,6 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
 	public SelectionAction[] getActions(final ImWord start, ImWord end, final ImDocumentMarkupPanel idmp) {
-		
-		//	TODO find out why this is not offering merging table rows or columns
 		
 		//	anything to work with?
 		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(start.getTextStreamType()) || !start.getTextStreamId().equals(end.getTextStreamId()) || (start.pageId != end.pageId))
@@ -381,25 +382,144 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(annotation.getFirstWord().getTextStreamType()))
 			return;
 		
-		/* TODO prevent annotations from spanning across multiple table cells:
-		 * - if annotation added to 'table' test stream,
-		 *   - check if it spans multiple cells ...
-		 *   - ... and chop it up if so
-		 * - also do that in 'Update Table', which helps with annotation added by markup gizmos (emphases, taxonomicNames, dates, goeCoordinates, etc.)
-		 * 
-		 * - implementation:
-		 *   - keep model for each table, mapping words to cells
-		 *     ==> check for cell span pretty fast
-		 *   - update when table changes
-		 *   - keep in list for each document (disposing when document closed)
-		 */
+		//	single-word annotation cannot span multiple table cells
+		if (annotation.getFirstWord() == annotation.getLastWord())
+			return;
 		
+		//	annotation spanning two pages, none of out business here
+		if (annotation.getFirstWord().pageId != annotation.getLastWord().pageId)
+			return;
+		
+		//	get document and page
+		ImDocument doc = annotation.getDocument();
+		if (doc == null)
+			return;
+		ImPage page = doc.getPage(annotation.getFirstWord().pageId);
+		if (page == null)
+			return;
+		
+		//	get and sort table cells
+		ImRegion[] cells = page.getRegions(ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(cells, ImUtils.leftRightOrder);
+		Arrays.sort(cells, ImUtils.topDownOrder);
+		
+		//	index cells by words
+		Map wordsToCells = new HashMap();
+		ImRegion wordCell = null;
+		for (ImWord imw = annotation.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+			if ((wordCell != null) && (wordCell.bounds.includes(imw.bounds, true)))
+				wordsToCells.put(imw, wordCell);
+			else for (int c = 0; c < cells.length; c++)
+				if (cells[c].bounds.includes(imw.bounds, true)) {
+					wordCell = cells[c];
+					wordsToCells.put(imw, wordCell);
+					break;
+				}
+			if (imw == annotation.getLastWord())
+				break;
+		}
+		
+		//	mark parts of original annotation in individual cells
+		this.cleanupTableAnnotation(doc, annotation, wordsToCells);
 	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#annotationRemoved(de.uka.ipd.idaho.im.ImAnnotation, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
 	 */
 	public void annotationRemoved(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
+	
+	//	TODO call this from Image Markup Tool
+	private void cleanupTableAnnotations(ImDocument doc) {
+		ImPage[] pages = doc.getPages();
+		for (int p = 0; p < pages.length; p++) {
+			ImRegion[] pageTables = pages[p].getRegions(ImRegion.TABLE_TYPE);
+			if (pageTables.length == 0)
+				continue;
+			for (int t = 0; t < pageTables.length; t++)
+				this.cleanupTableAnnotations(doc, pageTables[t]);
+		}
+	}
+	
+	private void cleanupTableAnnotations(ImDocument doc, ImRegion table) {
+		
+		//	get annotations lying inside table
+		ImAnnotation[] annots = doc.getAnnotations(table.pageId);
+		ArrayList annotList = new ArrayList();
+		for (int a = 0; a < annots.length; a++) {
+			if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(annots[a].getFirstWord().getTextStreamType()))
+				continue;
+			if (table.pageId != annots[a].getFirstWord().pageId)
+				continue;
+			if (table.pageId != annots[a].getLastWord().pageId)
+				continue;
+			if (!table.bounds.includes(annots[a].getFirstWord().bounds, true))
+				continue;
+			if (!table.bounds.includes(annots[a].getLastWord().bounds, true))
+				continue;
+			annotList.add(annots[a]);
+		}
+		if (annotList.isEmpty())
+			return;
+		
+		//	get and sort table cells
+		ImRegion[] cells = table.getRegions(ImRegion.TABLE_CELL_TYPE);
+		if (cells.length == 0)
+			return;
+		Arrays.sort(cells, ImUtils.leftRightOrder);
+		Arrays.sort(cells, ImUtils.topDownOrder);
+		
+		//	get table words
+		ImWord[] words = table.getWords();
+		if (words.length == 0)
+			return;
+		Arrays.sort(words, ImUtils.textStreamOrder);
+		
+		//	index cells by words
+		Map wordsToCells = new HashMap();
+		ImRegion wordCell = null;
+		for (int w = 0; w < words.length; w++) {
+			if ((wordCell != null) && (wordCell.bounds.includes(words[w].bounds, true)))
+				wordsToCells.put(words[w], wordCell);
+			else for (int c = 0; c < cells.length; c++)
+				if (cells[c].bounds.includes(words[w].bounds, true)) {
+					wordCell = cells[c];
+					wordsToCells.put(words[w], wordCell);
+					break;
+				}
+		}
+		
+		//	mark parts of original annotation in individual cells
+		for (int a = 0; a < annotList.size(); a++)
+			this.cleanupTableAnnotation(doc, ((ImAnnotation) annotList.get(a)), wordsToCells);
+		
+	}
+	
+	private void cleanupTableAnnotation(ImDocument doc, ImAnnotation annotation, Map wordsToCells) {
+		
+		//	single-cell annotation, nothing to chop
+		if (wordsToCells.get(annotation.getFirstWord()) == wordsToCells.get(annotation.getLastWord()))
+			return;
+		
+		//	mark parts of original annotation in individual cells
+		ImRegion annotCell = ((ImRegion) wordsToCells.get(annotation.getFirstWord()));
+		ImAnnotation annot = doc.addAnnotation(annotation.getFirstWord(), annotation.getType());
+		annot.copyAttributes(annotation);
+		for (ImWord imw = annotation.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+			if (wordsToCells.get(imw) != annotCell) {
+				annot.setLastWord(imw.getPreviousWord());
+				annot = doc.addAnnotation(imw, annotation.getType());
+				annot.copyAttributes(annotation);
+				annotCell = ((ImRegion) wordsToCells.get(imw));
+			}
+			if (imw == annotation.getLastWord()) {
+				annot.setLastWord(imw);
+				break;
+			}
+		}
+		
+		//	clean up original annotation
+		doc.removeAnnotation(annotation);
+	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(java.awt.Point, java.awt.Point, de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
@@ -504,6 +624,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					ImRegion[][] tableCells = markTableCells(page, tables[0]);
 					ImUtils.orderTableWords(tableCells);
+					cleanupTableAnnotations(page.getDocument(), tables[0]);
 					return true;
 				}
 			});
@@ -680,6 +801,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			table.getPage().removeRegion(mergeRows[r]);
 		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
 		ImUtils.orderTableWords(tableCells);
+		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
 	private boolean splitTableRow(ImRegion table, ImRegion toSplitRow, BoundingBox splitBox) {
@@ -818,6 +940,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	clean up table structure
 		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
 		ImUtils.orderTableWords(tableCells);
+		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
 	private boolean splitTableRowToLines(ImRegion table, ImRegion toSplitRow) {
@@ -841,6 +964,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	clean up table structure
 		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
 		ImUtils.orderTableWords(tableCells);
+		this.cleanupTableAnnotations(table.getDocument(), table);
 		
 		//	finally ...
 		return true;
@@ -906,6 +1030,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			table.getPage().removeRegion(mergeCols[c]);
 		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
 		ImUtils.orderTableWords(tableCells);
+		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
 	private boolean splitTableCol(ImRegion table, ImRegion toSplitCol, BoundingBox splitBox) {
@@ -1044,6 +1169,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	clean up table structure
 		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
 		ImUtils.orderTableWords(tableCells);
+		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
 	private boolean markTable(ImPage page, ImWord[] words, BoundingBox tableBox, ImDocumentMarkupPanel idmp) {
@@ -1106,6 +1232,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	order words from each cell as a text stream
 		ImUtils.orderTableWords(tableCells);
+		this.cleanupTableAnnotations(page.getDocument(), tableRegion);
 		
 		//	show regions in invoker
 		idmp.setRegionsPainted(ImRegion.TABLE_TYPE, true);
