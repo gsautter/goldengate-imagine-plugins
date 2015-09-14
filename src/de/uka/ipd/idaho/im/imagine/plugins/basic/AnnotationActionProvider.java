@@ -81,9 +81,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 	
 	private static final String ANNOT_RETYPER_IMT_NAME = "RetypeAnnots";
 	private static final String ANNOT_REMOVER_IMT_NAME = "RemoveAnnots";
+	private static final String ANNOT_DUPLICATE_REMOVER_IMT_NAME = "RemoveDuplicateAnnots";
 	
 	private ImageMarkupTool annotRetyper = new AnnotRetyper();
 	private ImageMarkupTool annotRemover = new AnnotRemover();
+	private ImageMarkupTool annotDuplicateRemover = new AnnotDuplicateRemover();
 	
 	private TreeSet annotTypes = new TreeSet(String.CASE_INSENSITIVE_ORDER);
 	
@@ -117,7 +119,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getEditMenuItemNames()
 	 */
 	public String[] getEditMenuItemNames() {
-		String[] emins = {ANNOT_RETYPER_IMT_NAME, ANNOT_REMOVER_IMT_NAME};
+		String[] emins = {ANNOT_RETYPER_IMT_NAME, ANNOT_REMOVER_IMT_NAME, ANNOT_DUPLICATE_REMOVER_IMT_NAME};
 		return emins;
 	}
 	
@@ -136,6 +138,8 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			return this.annotRetyper;
 		else if (ANNOT_REMOVER_IMT_NAME.equals(name))
 			return this.annotRemover;
+		else if (ANNOT_DUPLICATE_REMOVER_IMT_NAME.equals(name))
+			return this.annotDuplicateRemover;
 		else return null;
 	}
 	
@@ -221,6 +225,21 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			ImAnnotation[] annots = doc.getAnnotations(annotType);
 			for (int a = 0; a < annots.length; a++)
 				doc.removeAnnotation(annots[a]);
+		}
+	}
+	
+	private class AnnotDuplicateRemover implements ImageMarkupTool {
+		public String getLabel() {
+			return "Remove Duplicate Annotations";
+		}
+		public String getTooltip() {
+			return "Remove duplicate annotations from document";
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			doc.cleanupAnnotations();
 		}
 	}
 	
