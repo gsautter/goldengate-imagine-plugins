@@ -177,6 +177,9 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			ImAnnotation[] annots = doc.getAnnotations(annotTypeChange.strOld);
 			for (int a = 0; a < annots.length; a++)
 				annots[a].setType(annotTypeChange.strNew);
+			
+			//	perform document annotation cleanup to deal with whatever duplicates we might have incurred
+			doc.cleanupAnnotations();
 		}
 	}
 	
@@ -622,6 +625,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						ImAnnotation imAnnot = idmp.document.addAnnotation(start, spanningAnnot.getLastWord(), spanningAnnot.getType());
 						imAnnot.copyAttributes(spanningAnnot);
 						spanningAnnot.setLastWord(start.getPreviousWord());
+						idmp.document.cleanupAnnotations();
 						return true;
 					}
 				});
@@ -637,6 +641,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						ImAnnotation imAnnot = idmp.document.addAnnotation(start.getNextWord(), spanningAnnot.getLastWord(), spanningAnnot.getType());
 						imAnnot.copyAttributes(spanningAnnot);
 						spanningAnnot.setLastWord(start);
+						idmp.document.cleanupAnnotations();
 						return true;
 					}
 				});
@@ -661,6 +666,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					}
 					if (mergedLastWord != mergedAnnot.getLastWord())
 						mergedAnnot.setLastWord(mergedLastWord);
+					idmp.document.cleanupAnnotations();
 					return true;
 				}
 			});
@@ -681,6 +687,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						overlappingAnnot.setFirstWord(start);
 					if (extendEnd)
 						overlappingAnnot.setLastWord(end);
+					idmp.document.cleanupAnnotations();
 					return true;
 				}
 			});

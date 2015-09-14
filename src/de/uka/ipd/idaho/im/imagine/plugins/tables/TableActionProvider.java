@@ -503,6 +503,9 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	mark parts of original annotation in individual cells
 		this.cleanupTableAnnotation(doc, annotation, wordsToCells);
+		
+		//	perform document annotation cleanup to deal with whatever duplicates we might have incurred
+		doc.cleanupAnnotations();
 	}
 	
 	/* (non-Javadoc)
@@ -511,6 +514,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	public void annotationRemoved(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
 	
 	private void cleanupTableAnnotations(ImDocument doc, ProgressMonitor pm) {
+		
+		//	clean up tables page by page
 		ImPage[] pages = doc.getPages();
 		for (int p = 0; p < pages.length; p++) {
 			pm.setProgress((p * 100) / pages.length);
@@ -520,6 +525,9 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			for (int t = 0; t < pageTables.length; t++)
 				this.cleanupTableAnnotations(doc, pageTables[t]);
 		}
+		
+		//	perform document annotation cleanup to deal with whatever duplicates we might have incurred
+		doc.cleanupAnnotations();
 	}
 	
 	private void cleanupTableAnnotations(ImDocument doc, ImRegion table) {
@@ -574,6 +582,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		for (int a = 0; a < annotList.size(); a++)
 			this.cleanupTableAnnotation(doc, ((ImAnnotation) annotList.get(a)), wordsToCells);
 		
+		//	perform document annotation cleanup to deal with whatever duplicates we might have incurred
+		doc.cleanupAnnotations();
 	}
 	
 	private void cleanupTableAnnotation(ImDocument doc, ImAnnotation annotation, Map wordsToCells) {
@@ -629,8 +639,6 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	clean up original annotation
 		doc.removeAnnotation(annotation);
-		
-		//	TODO call document annotation cleanup here (soon as it's implemented)
 	}
 	
 	/* (non-Javadoc)
