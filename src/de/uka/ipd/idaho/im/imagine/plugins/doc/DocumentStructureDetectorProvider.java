@@ -2663,6 +2663,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 		}
 		
+		//	test if cells below and right of label rows and column have content
+		int emptyTableBodyCells = 0;
+		for (int r = 1; r < tableCells.length; r++)
+			for (int c = 1; c < tableCells[r].length; c++) {
+				ImWord[] tableCellWords = page.getWordsInside(tableCells[r][c].bounds);
+				if (tableCellWords.length == 0)
+					emptyTableBodyCells++;
+			}
+		if ((emptyTableBodyCells * 2) > ((tableRows.length - 1) * (tableCols.length - 1))) {
+			if (DEBUG_IS_TABLE) System.out.println(" ==> table content extremely sparse, " + emptyTableBodyCells + " empty out of " + ((tableRows.length - 1) * (tableCols.length - 1)));
+			return null;
+		}
+		
 		//	these look good
 		return tableCells;
 	}
