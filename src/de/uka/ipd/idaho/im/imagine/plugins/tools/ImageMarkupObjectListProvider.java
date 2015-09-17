@@ -402,7 +402,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 	
 	private CustomImObjectLister getCustomLister(String name) {
 		Settings cl = this.loadSettingsResource(name);
-		if (cl.isEmpty())
+		if ((cl == null) || cl.isEmpty())
 			return null;
 		int normalizationLevel;
 		try {

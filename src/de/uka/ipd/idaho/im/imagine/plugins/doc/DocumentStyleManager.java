@@ -2341,7 +2341,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 						if (string.length() == 0)
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
-							docStyle.setSetting(this.docStyleParamName, string);
+							docStyle.setSetting(this.docStyleParamName, string.replaceAll("\\s+", " "));
 					}
 				};
 				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
