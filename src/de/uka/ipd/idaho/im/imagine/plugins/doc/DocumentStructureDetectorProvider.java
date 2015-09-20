@@ -2328,7 +2328,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					pm.setInfo(" ==> too few cells");
 					continue;
 				}
-				ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols);
+				ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols, true);
 				if (mergeTestBlockCells == null) {
 					pm.setInfo(" ==> cells incomplete");
 					continue;
@@ -2395,7 +2395,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						pm.setInfo(" ==> too few cells");
 						continue;
 					}
-					ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols);
+					ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols, true);
 					if (mergeTestBlockCells == null) {
 						pm.setInfo(" ==> cells incomplete");
 						continue;
@@ -2465,9 +2465,52 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			return false;
 		
 		//	get table cells
-		ImRegion[][] tableCells = this.getTableCells(page, block, tableRows, tableCols);
+		ImRegion[][] tableCells = this.getTableCells(page, block, tableRows, tableCols, false);
 		if (tableCells == null)
 			return false;
+		
+		//	large number of rows, but incomplete row labels or sparse table body, try increasing row margin
+		if ((tableRows.length >= 9) && (!this.checkRowLabels(page, tableCells) || !this.checkTableBody(page, tableCells))) {
+			if (DEBUG_IS_TABLE) System.out.println(" --> re-trying with increased row margin");
+			
+			//	compute average margin of table rows (we only have a chance if cell internal line margin is less than table row margin)
+			int minCellRowMargin = (block.bounds.bottom - block.bounds.top);
+			int maxCellRowMargin = 0;
+			int cellRowMarginSum = 0;
+			for (int r = 1; r < tableCells.length; r++) {
+				int cellRowMargin = ((tableCells[r][0].bounds.top - tableCells[r-1][0].bounds.bottom));
+				minCellRowMargin = Math.min(minCellRowMargin, cellRowMargin);
+				maxCellRowMargin = Math.max(maxCellRowMargin, cellRowMargin);
+				cellRowMarginSum += cellRowMargin;
+			}
+			int avgCellRowMargin = ((cellRowMarginSum + (tableCells.length / 2)) / (tableCells.length - 1));
+			if (DEBUG_IS_TABLE) System.out.println(" --> average measured row margin is " + avgCellRowMargin);
+			
+			//	no use trying again if minimum row margin didn't increase
+			if (avgCellRowMargin <= minRowMargin) {
+				if (DEBUG_IS_TABLE) System.out.println(" ==> no use re-trying");
+				return false;
+			}
+			
+			//	no use trying again if difference too small
+			if (maxCellRowMargin <= (minCellRowMargin + (dpi / 72))) {
+				if (DEBUG_IS_TABLE) System.out.println(" ==> differences in row margins too small");
+				return false;
+			}
+			
+			//	re-get table rows with increased margin
+			tableRows = this.getTableRows(block, avgCellRowMargin);
+			if (tableRows == null)
+				return false;
+			
+			//	re-get table cells
+			tableCells = this.getTableCells(page, block, tableRows, tableCols, true);
+			if (tableCells == null)
+				return false;
+			
+			//	we've salvaged this one
+			if (DEBUG_IS_TABLE) System.out.println(" --> row margin " + avgCellRowMargin + " looks better than " + minRowMargin);
+		}
 		
 		//	TODO add further checks (do we need any ?!?)
 		
@@ -2569,9 +2612,56 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			return false;
 		
 		//	get table cells
-		ImRegion[][] tableCells = this.getTableCells(page, table, tableRows, tableCols);
+		ImRegion[][] tableCells = this.getTableCells(page, table, tableRows, tableCols, false);
 		if (tableCells == null)
 			return false;
+		
+		//	test column headers
+		if (!this.checkColumnHeaders(page, tableCols, tableCells))
+			return false;
+		
+		//	large number of rows, but incomplete row labels or sparse table body, try increasing row margin
+		if ((tableRows.length >= 9) && (!this.checkRowLabels(page, tableCells) || !this.checkTableBody(page, tableCells))) {
+			if (DEBUG_IS_TABLE) System.out.println(" --> re-trying with increased row margin");
+			
+			//	compute average margin of table rows (we only have a chance if cell internal line margin is less than table row margin)
+			int minCellRowMargin = (table.bounds.bottom - table.bounds.top);
+			int maxCellRowMargin = 0;
+			int cellRowMarginSum = 0;
+			for (int r = 1; r < tableCells.length; r++) {
+				int cellRowMargin = ((tableCells[r][0].bounds.top - tableCells[r-1][0].bounds.bottom));
+				minCellRowMargin = Math.min(minCellRowMargin, cellRowMargin);
+				maxCellRowMargin = Math.max(maxCellRowMargin, cellRowMargin);
+				cellRowMarginSum += cellRowMargin;
+			}
+			int avgCellRowMargin = ((cellRowMarginSum + (tableCells.length / 2)) / (tableCells.length - 1));
+			if (DEBUG_IS_TABLE) System.out.println(" --> average measured row margin is " + avgCellRowMargin);
+			
+			//	no use trying again if minimum row margin didn't increase
+			if (avgCellRowMargin <= minRowMargin) {
+				if (DEBUG_IS_TABLE) System.out.println(" ==> no use re-trying");
+				return false;
+			}
+			
+			//	no use trying again if difference too small
+			if (maxCellRowMargin <= (minCellRowMargin + (dpi / 72))) {
+				if (DEBUG_IS_TABLE) System.out.println(" ==> differences in row margins too small");
+				return false;
+			}
+			
+			//	re-get table rows with increased margin
+			tableRows = this.getTableRows(table, avgCellRowMargin);
+			if (tableRows == null)
+				return false;
+			
+			//	re-get table cells
+			tableCells = this.getTableCells(page, table, tableRows, tableCols, true);
+			if (tableCells == null)
+				return false;
+			
+			//	we've salvaged this one
+			if (DEBUG_IS_TABLE) System.out.println(" --> row margin " + avgCellRowMargin + " looks better than " + minRowMargin);
+		}
 		
 		//	mark table
 		this.markTable(page, table, tableRows, tableCols, tableCells, ((ImWord[]) tableWords.toArray(new ImWord[tableWords.size()])));
@@ -2637,7 +2727,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return tableRows;
 	}
 	
-	private ImRegion[][] getTableCells(ImPage page, ImRegion block, ImRegion[] tableRows, ImRegion[] tableCols) {
+	private ImRegion[][] getTableCells(ImPage page, ImRegion block, ImRegion[] tableRows, ImRegion[] tableCols, boolean includeCellChecks) {
 		
 		//	get table cells
 		ImRegion[][] tableCells = ImUtils.getTableCells(block, tableRows, tableCols);
@@ -2647,38 +2737,83 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 		
 		//	test if first row (column headers) is fully occupied, safe for first column
+		if (includeCellChecks && !this.checkColumnHeaders(page, tableCols, tableCells))
+			return null;
+//		for (int c = 1; c < tableCells[0].length; c++) {
+//			ImWord[] cellWords = page.getWordsInside(tableCells[0][c].bounds);
+//			if (cellWords.length == 0) {
+//				if (DEBUG_IS_TABLE) System.out.println(" ==> column headers incomplete");
+//				return null;
+//			}
+//		}
+		
+		//	test if first column (row labels) is fully occupied, safe for top row(s)
+		if (includeCellChecks && !this.checkRowLabels(page, tableCells))
+			return null;
+//		for (int r = ((tableCells.length < 15) ? 1 : 2); r < tableCells.length; r++) {
+//			ImWord[] cellWords = page.getWordsInside(tableCells[r][0].bounds);
+//			if (cellWords.length == 0) {
+//				if (DEBUG_IS_TABLE) System.out.println(" ==> row labels incomplete");
+//				return null;
+//			}
+//		}
+		
+		//	test if cells below and right of label rows and column have content
+		if (includeCellChecks && !this.checkTableBody(page, tableCells))
+			return null;
+//		int emptyTableBodyCells = 0;
+//		for (int r = 1; r < tableCells.length; r++)
+//			for (int c = 1; c < tableCells[r].length; c++) {
+//				ImWord[] tableCellWords = page.getWordsInside(tableCells[r][c].bounds);
+//				if (tableCellWords.length == 0)
+//					emptyTableBodyCells++;
+//			}
+//		if ((emptyTableBodyCells * 2) > ((tableRows.length - 1) * (tableCols.length - 1))) {
+//			if (DEBUG_IS_TABLE) System.out.println(" ==> table content extremely sparse, " + emptyTableBodyCells + " empty out of " + ((tableRows.length - 1) * (tableCols.length - 1)));
+//			return null;
+//		}
+		
+		//	these look good
+		return tableCells;
+	}
+	
+	private boolean checkColumnHeaders(ImPage page, ImRegion[] tableCols, ImRegion[][] tableCells) {
 		for (int c = 1; c < tableCells[0].length; c++) {
 			ImWord[] cellWords = page.getWordsInside(tableCells[0][c].bounds);
 			if (cellWords.length == 0) {
 				if (DEBUG_IS_TABLE) System.out.println(" ==> column headers incomplete");
-				return null;
+				return false;
 			}
 		}
-		
-		//	test if first column (row labels) is fully occupied, safe for top row(s)
+		return true;
+	}
+	
+	private boolean checkRowLabels(ImPage page, ImRegion[][] tableCells) {
 		for (int r = ((tableCells.length < 15) ? 1 : 2); r < tableCells.length; r++) {
 			ImWord[] cellWords = page.getWordsInside(tableCells[r][0].bounds);
 			if (cellWords.length == 0) {
 				if (DEBUG_IS_TABLE) System.out.println(" ==> row labels incomplete");
-				return null;
+				return false;
 			}
 		}
-		
-		//	test if cells below and right of label rows and column have content
+		return true;
+	}
+	
+	private boolean checkTableBody(ImPage page, ImRegion[][] tableCells) {
+		int tableBodyCells = 0;
 		int emptyTableBodyCells = 0;
 		for (int r = 1; r < tableCells.length; r++)
 			for (int c = 1; c < tableCells[r].length; c++) {
+				tableBodyCells++;
 				ImWord[] tableCellWords = page.getWordsInside(tableCells[r][c].bounds);
 				if (tableCellWords.length == 0)
 					emptyTableBodyCells++;
 			}
-		if ((emptyTableBodyCells * 2) > ((tableRows.length - 1) * (tableCols.length - 1))) {
-			if (DEBUG_IS_TABLE) System.out.println(" ==> table content extremely sparse, " + emptyTableBodyCells + " empty out of " + ((tableRows.length - 1) * (tableCols.length - 1)));
-			return null;
+		if ((emptyTableBodyCells * 2) > tableBodyCells) {
+			if (DEBUG_IS_TABLE) System.out.println(" ==> table content extremely sparse, " + emptyTableBodyCells + " empty out of " + tableBodyCells);
+			return false;
 		}
-		
-		//	these look good
-		return tableCells;
+		return true;
 	}
 	
 	private void markTable(ImPage page, ImRegion tableRegion, ImRegion[] tableRows, ImRegion[] tableCols, ImRegion[][] tableCells, ImWord[] tableWords) {
