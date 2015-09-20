@@ -2844,7 +2844,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			String wordString = paragraphWords[w].getString();
 			if ((wordString == null) || (wordString.length() == 0))
 				continue;
-			if (Gamta.isNumber(wordString) || Gamta.isRomanNumber(wordString))
+			if (Gamta.isNumber(wordString)) {
+				if (wordString.length() < 4)
+					firstLineNumberCount++;
+				else firstLineWordCount++;
+			}
+			if (Gamta.isRomanNumber(wordString))
 				firstLineNumberCount++;
 			if (Gamta.isWord(wordString)) {
 				if (wordString.length() > 1)
@@ -2864,12 +2869,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	more numbers than words ==> reference to caption (we can cut some more slack if we have other clues)
 		if ((startIsBold || (startPatterns != this.captionStartPatterns)) ? ((firstLineWordCount * 3) < (firstLineNumberCount * 2)) : (firstLineWordCount < firstLineNumberCount)) {
-			if (DEBUG_IS_CAPTION) System.out.println(" ==> " + firstLineWordCount + " words < " + firstLineNumberCount + " numbers, caption reference");
+			if (DEBUG_IS_CAPTION) System.out.println(" ==> " + firstLineWordCount + " words vs. " + firstLineNumberCount + " numbers, caption reference");
 			return false;
 		}
 		
 		//	more words than numbers ==> actual caption
-		if (DEBUG_IS_CAPTION) System.out.println(" ==> " + firstLineWordCount + " words < " + firstLineNumberCount + " numbers, caption");
+		if (DEBUG_IS_CAPTION) System.out.println(" ==> " + firstLineWordCount + " words vs. " + firstLineNumberCount + " numbers, caption");
 		return true;
 	}
 	
