@@ -1034,8 +1034,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				//	sort out large tables (over 70% of page in each direction), and collect smaller ones
 				LinkedList pageTableList = new LinkedList();
 				for (int t = 0; t < pageTables.length; t++) {
-					if ((((pageTables[t].bounds.right - pageTables[t].bounds.left) * 10) < ((pages[p].bounds.right - pages[p].bounds.left) * 7)) || ((pageTables[t].bounds.bottom - pageTables[t].bounds.top) * 10) < ((pages[p].bounds.bottom - pages[p].bounds.top) * 7))
+					if ((((pageTables[t].bounds.right - pageTables[t].bounds.left) * 10) < ((pages[p].bounds.right - pages[p].bounds.left) * 7)) || ((pageTables[t].bounds.bottom - pageTables[t].bounds.top) * 10) < ((pages[p].bounds.bottom - pages[p].bounds.top) * 7)) {
 						pageTableList.add(pageTables[t]);
+						if (pageTables.length == 1)
+							synchronized (docTableList) {
+								docTableList.add(pageTables[t]);
+							}
+					}
 					else synchronized (docTableList) {
 						docTableList.add(pageTables[t]);
 					}
@@ -2231,6 +2236,101 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 		Arrays.sort(pageBlocks, ImUtils.topDownOrder);
 		
+		/* sort page blocks in text stream order based on first word:
+		 * - in a single-column layout, this is as good as top-down
+		 * - in multi-column layout, this maintains distance between in-column tables
+		 * 
+		 * BUT THEN, top-down should do in multi-column layouts as well ...
+		 * ... safe for the unlikely or constructed oddjob ...
+		 * ... e.g. two in-column tables with aligned lines */
+		
+		//	split blocks with varying line distances (might be tables with multi-line rows) at larger line gaps, and let merging do its magic
+		ArrayList pageBlockList = new ArrayList();
+		HashMap pageBlocksBySubBlocks = new HashMap();
+		for (int b = 0; b < pageBlocks.length; b++) {
+			if (DEBUG_IS_TABLE) System.out.println("Testing irregular line gap split in block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table detection");
+			
+			//	get block lines
+			ImRegion[] blockLines = pageBlocks[b].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+			if (blockLines.length < 5) {
+				pageBlockList.add(pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" ==> too few lines to assess gaps");
+				continue;
+			}
+			Arrays.sort(blockLines, ImUtils.topDownOrder);
+			if (DEBUG_IS_TABLE) System.out.println(" --> got " + blockLines.length + " lines");
+			
+			//	compute line gaps
+			int minLineGap = (pageBlocks[b].bounds.bottom - pageBlocks[b].bounds.top);
+			int maxLineGap = 0;
+			int lineGapCount = 0;
+			int lineGapSum = 0;
+			for (int l = 1; l < blockLines.length; l++) {
+				int lineGap = (blockLines[l].bounds.top - blockLines[l-1].bounds.bottom);
+				if (lineGap < 0)
+					continue;
+				minLineGap = Math.min(minLineGap, lineGap);
+				maxLineGap = Math.max(maxLineGap, lineGap);
+				lineGapSum += lineGap;
+				lineGapCount++;
+			}
+			if (lineGapCount < 4) {
+				pageBlockList.add(pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" ==> too few non-overlapping lines to assess gaps");
+				continue;
+			}
+			int avgLineGap = ((lineGapSum + (lineGapCount / 2)) / lineGapCount);
+			if (DEBUG_IS_TABLE) System.out.println(" --> measured " + lineGapCount + " line gaps, min is " + minLineGap + ", max is " + maxLineGap + ", avg is " + avgLineGap);
+			
+			//	line gaps too regular to use
+			if ((minLineGap * 4) > (maxLineGap * 3)) {
+				pageBlockList.add(pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" ==> line gaps too regular");
+				continue;
+			}
+			
+			//	count above-average line gaps
+			int aboveAvgLineGapCount = 0;
+			for (int l = 1; l < blockLines.length; l++) {
+				int lineGap = (blockLines[l].bounds.top - blockLines[l-1].bounds.bottom);
+				if (lineGap > avgLineGap)
+					aboveAvgLineGapCount++;
+			}
+			
+			//	too few above-average line gaps
+			if ((aboveAvgLineGapCount * 5) < blockLines.length) {
+				pageBlockList.add(pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" ==> too few above-average line gaps");
+				continue;
+			}
+			
+			//	create sub blocks at above-average line gaps
+			int subBlockStartLine = 0;
+			for (int l = 1; l < blockLines.length; l++) {
+				int lineGap = (blockLines[l].bounds.top - blockLines[l-1].bounds.bottom);
+				if (lineGap < avgLineGap)
+					continue;
+				ImRegion subBlock = new ImRegion(pageBlocks[b].getDocument(), pageBlocks[b].pageId, new BoundingBox(pageBlocks[b].bounds.left, pageBlocks[b].bounds.right, blockLines[subBlockStartLine].bounds.top, blockLines[l-1].bounds.bottom), ImRegion.BLOCK_ANNOTATION_TYPE);
+				pageBlockList.add(subBlock);
+				pageBlocksBySubBlocks.put(subBlock, pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" --> got sub block at " + subBlock.bounds + " with " + (l - subBlockStartLine) + " lines");
+				subBlockStartLine = l;
+			}
+			if (subBlockStartLine != 0) {
+				ImRegion subBlock = new ImRegion(pageBlocks[b].getDocument(), pageBlocks[b].pageId, new BoundingBox(pageBlocks[b].bounds.left, pageBlocks[b].bounds.right, blockLines[subBlockStartLine].bounds.top, pageBlocks[b].bounds.bottom), ImRegion.BLOCK_ANNOTATION_TYPE);
+				pageBlockList.add(subBlock);
+				pageBlocksBySubBlocks.put(subBlock, pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" --> got sub block at " + subBlock.bounds + " with " + (blockLines.length - subBlockStartLine) + " lines");
+			}
+			
+			//	increase minimum row margin to average line gap TODO_ne assess if this doesn't wreck havoc in some situations ==> seems OK with line gap width distribution catch
+			minRowMargin = Math.max(minRowMargin, avgLineGap);
+		}
+		
+		//	update page blocks if sub blocks added (do NOT re-sort, so sub blocks of same original block stay together)
+		if (pageBlocks.length < pageBlockList.size())
+			pageBlocks = ((ImRegion[]) pageBlockList.toArray(new ImRegion[pageBlockList.size()]));
+		
 		//	collect words and columns for each block, and measure width
 		boolean[] isPageBlockNarrow = new boolean[pageBlocks.length];
 		ImWord[][] pageBlockWords = new ImWord[pageBlocks.length][];
@@ -2238,7 +2338,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		ImRegion[][] pageBlockRows = new ImRegion[pageBlocks.length][];
 		for (int b = 0; b < pageBlocks.length; b++) {
 			isPageBlockNarrow[b] = (((pageBlocks[b].bounds.right - pageBlocks[b].bounds.left) * 5) < (page.bounds.right - page.bounds.left));
-			pageBlockWords[b] = pageBlocks[b].getWords();
+			pageBlockWords[b] = page.getWordsInside(pageBlocks[b].bounds);
 			if (pageBlockWords[b].length == 0)
 				continue;
 			Arrays.sort(pageBlockWords[b], ImUtils.textStreamOrder);
@@ -2261,6 +2361,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			//	collect merge result
 			ImRegion mergedBlock = null;
 			ImRegion[] mergedBlockCols = null;
+			int mergedBlockRowCount = 3;
+			int mergedBlockCellCount = 0;
 			
 			//	try merging downward from narrow block (might be table column cut off others)
 			if (isPageBlockNarrow[b]) {
@@ -2307,6 +2409,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					pm.setInfo(" ==> foo few columns");
 					continue;
 				}
+				
 				//	allow tolerance of one column lost if 9 or more columns in main block ...
 				if (mergeTestBlockCols.length < pageBlockCols[mergeBlockIndex].length) {
 					if ((pageBlockCols[mergeBlockIndex].length > 8) && ((mergeTestBlockCols.length + 1) == pageBlockCols[mergeBlockIndex].length))
@@ -2323,9 +2426,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					continue;
 				}
 				pm.setInfo(" - rows OK");
+				
 				//	... but only if more total cells in merge result than in main block
 				if ((pageBlockRows[mergeBlockIndex] != null) && ((mergeTestBlockCols.length * mergeTestBlockRows.length) < (pageBlockCols[mergeBlockIndex].length * pageBlockCols[mergeBlockIndex].length))) {
-					pm.setInfo(" ==> too few cells");
+					pm.setInfo(" ==> too few cells (1, " + mergeTestBlockCols.length + "x" + mergeTestBlockRows.length + " vs. " + pageBlockCols[b].length + "x" + pageBlockRows[b].length + ")");
+					continue;
+				}
+				else if ((mergeTestBlockCols.length * mergeTestBlockRows.length) < mergedBlockCellCount) {
+					pm.setInfo(" ==> too few cells (2, " + mergeTestBlockCols.length + "x" +  mergeTestBlockRows.length + " vs. " + mergedBlockCellCount + ")");
 					continue;
 				}
 				ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols, true);
@@ -2336,6 +2444,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				pm.setInfo(" - cells OK");
 				mergedBlock = mergeTestBlock;
 				mergedBlockCols = mergeTestBlockCols;
+				mergedBlockCellCount = (mergeTestBlockCols.length * mergeTestBlockRows.length);
 			}
 			
 			//	try merging downward from block with viable column gaps
@@ -2374,6 +2483,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						pm.setInfo(" ==> too few columns");
 						break;
 					}
+					
 					//	allow tolerance of one column lost if 9 or more columns in main block ...
 					if (mergeTestBlockCols.length < pageBlockCols[b].length) {
 						if ((pageBlockCols[b].length > 8) && ((mergeTestBlockCols.length + 1) == pageBlockCols[b].length))
@@ -2384,15 +2494,20 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						}
 					}
 					else pm.setInfo(" - columns OK");
-					ImRegion[] mergeTestBlockRows = this.getTableRows(mergeTestBlock, minRowMargin);
+					ImRegion[] mergeTestBlockRows = this.getTableRows(mergeTestBlock, minRowMargin, mergedBlockRowCount);
 					if (mergeTestBlockRows == null) {
 						pm.setInfo(" ==> too few rows");
 						continue;
 					}
 					pm.setInfo(" - rows OK");
+					
 					//	... but only if more total cells in merge result than in main block
 					if ((pageBlockRows[b] != null) && ((mergeTestBlockCols.length * mergeTestBlockRows.length) < (pageBlockCols[b].length * pageBlockRows[b].length))) {
-						pm.setInfo(" ==> too few cells");
+						pm.setInfo(" ==> too few cells (1, " + mergeTestBlockCols.length + "x" + mergeTestBlockRows.length + " vs. " + pageBlockCols[b].length + "x" + pageBlockRows[b].length + ")");
+						continue;
+					}
+					else if ((mergeTestBlockCols.length * mergeTestBlockRows.length) < mergedBlockCellCount) {
+						pm.setInfo(" ==> too few cells (2, " + mergeTestBlockCols.length + "x" +  mergeTestBlockRows.length + " vs. " + mergedBlockCellCount + ")");
 						continue;
 					}
 					ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols, true);
@@ -2403,6 +2518,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					pm.setInfo(" - cells OK");
 					mergedBlock = mergeTestBlock;
 					mergedBlockCols = mergeTestBlockCols;
+					mergedBlockRowCount = mergeTestBlockRows.length;
+					mergedBlockCellCount = (mergeTestBlockCols.length * mergeTestBlockRows.length);
 				}
 			}
 			
@@ -2417,11 +2534,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				if (!mergedBlock.bounds.includes(pageBlocks[c].bounds, true))
 					continue;
 				page.removeRegion(pageBlocks[c]);
+				pageBlocksBySubBlocks.remove(pageBlocks[c]);
 				pageBlocks[c] = null;
 				pageBlockCols[c] = null;
 				pageBlockWords[c] = null;
 				isPageBlockNarrow[c] = false;
 			}
+			
+			//	add merged block
 			page.addRegion(mergedBlock);
 			pageBlocks[b] = mergedBlock;
 			pageBlockCols[b] = mergedBlockCols;
@@ -2430,7 +2550,60 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			isPageBlockNarrow[b] = false;
 		}
 		
-		//	mark single-block tables (re-get page blocks, as some might have been merged)
+		//	store merged block, and clean up all blocks inside
+		ArrayList subBlockList = new ArrayList();
+		ImRegion subBlockParent = null;
+		int subBlockStartIndex = -1;
+		for (int b = 0; b <= pageBlocks.length; b++) {
+			if ((b < pageBlocks.length) && (pageBlocks[b] == null))
+				continue;
+			
+			//	get parent block to assess what to do
+			ImRegion pageBlockParent = null;
+			
+			//	we're in the last run, just end whatever we have
+			if (b == pageBlocks.length) {}
+			
+			//	this one's original, or a merger result, just end whatever we have
+			else if (pageBlocks[b].getPage() != null) {}
+			
+			//	we have a sub block
+			else {
+				pageBlockParent = ((ImRegion) pageBlocksBySubBlocks.remove(pageBlocks[b]));
+				if (pageBlockParent == null)
+					continue; // highly unlikely, but let's have this safety net
+				
+				//	same parent as previous sub block(s), add to list
+				if (subBlockParent == pageBlockParent) {
+					subBlockList.add(pageBlocks[b]);
+					continue;
+				}
+			}
+			
+			//	merge collected sub blocks and clean up (if we get here, we're not continuing current sub block)
+			if (subBlockList.size() != 0) {
+				BoundingBox subBlockBounds = ImLayoutObject.getAggregateBox((ImRegion[]) subBlockList.toArray(new ImRegion[subBlockList.size()]));
+				BoundingBox subBlockWordBounds = ImLayoutObject.getAggregateBox(page.getWordsInside(subBlockBounds));
+				pageBlocks[subBlockStartIndex] = new ImRegion(page, ((subBlockWordBounds == null) ? subBlockBounds : subBlockWordBounds), ImRegion.BLOCK_ANNOTATION_TYPE);
+				
+				for (int c = (subBlockStartIndex + 1); c < b; c++)
+					pageBlocks[c] = null;
+				page.removeRegion(subBlockParent);
+				
+				subBlockList.clear();
+				subBlockParent = null;
+				subBlockStartIndex = -1;
+			}
+			
+			//	start new sub block (if we get here and have a parent block, we are to start a new sub block)
+			if (pageBlockParent != null) {
+				subBlockList.add(pageBlocks[b]);
+				subBlockParent = pageBlockParent;
+				subBlockStartIndex = b;
+			}
+		}
+		
+		//	mark single-block tables
 		for (int b = 0; b < pageBlocks.length; b++) {
 			if (pageBlocks[b] == null)
 				continue;
@@ -2535,15 +2708,21 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		if (blockRows == null)
 			return false;
 		
-		//	generate test block
+		//	generate test block (middle two thirds of block)
 		int middleBlockTop = (block.bounds.top + ((block.bounds.bottom - block.bounds.top) / 6));
 		int middleBlockBottom = (block.bounds.bottom - ((block.bounds.bottom - block.bounds.top) / 6));
 		ImRegion middleBlock = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(block.bounds.left, block.bounds.right, middleBlockTop, middleBlockBottom), "test");
+		if (DEBUG_IS_TABLE) System.out.println(" - middle block is " + middleBlock.bounds);
 		
 		//	try to get table columns from test block
 		ImRegion[] middleBlockCols = this.getTableColumns(middleBlock, minColMargin);
-		if (middleBlockCols == null)
+		if (middleBlockCols == null) {
+			if (DEBUG_IS_TABLE) System.out.println(" ==> invalid columns in middle block");
 			return false;
+		}
+		if (DEBUG_IS_TABLE) System.out.println(" - middle block columns OK (" + middleBlockCols.length + "):\r\n  " + getRegionBoundList(middleBlockCols));
+		int middleBlockColScore = this.getTableColumnGapScore(middleBlockCols);
+		if (DEBUG_IS_TABLE) System.out.println(" - middle block column score is " + middleBlockColScore);
 		
 		//	compute table top by removing block rows
 		int tableTop = block.bounds.top;
@@ -2551,11 +2730,38 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (middleBlockTop < blockRows[r].bounds.top)
 				return false;
 			ImRegion topBlock = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(block.bounds.left, block.bounds.right, blockRows[r].bounds.top, middleBlockBottom), "test");
-			ImRegion[] topBlockCols = this.getTableColumns(topBlock, minColMargin);
-			if ((topBlockCols != null) && (middleBlockCols.length <= topBlockCols.length)) {
+			if (DEBUG_IS_TABLE) System.out.println(" - testing top block " + topBlock.bounds);
+			
+			//	check if current block top would produce valid columns
+			ImRegion[] topBlockCols = this.getTableColumns(topBlock, minColMargin, middleBlockCols.length);
+			if (topBlockCols == null) {
+				if (DEBUG_IS_TABLE) System.out.println(" --> invalid columns");
+				continue;
+			}
+			if (topBlockCols.length < middleBlockCols.length) {
+				if (DEBUG_IS_TABLE) System.out.println(" --> fewer columns than middle block alone (" + topBlockCols.length + "):\r\n    " + getRegionBoundList(topBlockCols));
+				continue;
+			}
+			int topBlockColScore = this.getTableColumnGapScore(topBlockCols);
+			if ((topBlockColScore * 5) < (middleBlockColScore * 4)) /* allow some 20% loss in column score (column headers might be wider than entries) */ {
+				if (DEBUG_IS_TABLE) System.out.println(" --> loss in column score too high (" + topBlockColScore + " vs. " + middleBlockColScore + "):\r\n    " + getRegionBoundList(topBlockCols));
+				continue;
+			}
+			if (DEBUG_IS_TABLE) System.out.println(" - loss in column score tolerated (" + topBlockColScore + " vs. " + middleBlockColScore + ")");
+			
+			//	check if current block top would produce valid cells (including column headers and row labels)
+			ImRegion[] topBlockRows = this.getTableRows(topBlock, minRowMargin);
+			if (topBlockRows == null) {
+				if (DEBUG_IS_TABLE) System.out.println(" --> invalid rows");
+				continue;
+			}
+			ImRegion[][] topBlockCells = this.getTableCells(page, topBlock, topBlockRows, topBlockCols, true);
+			if (topBlockCells != null) {
 				tableTop = blockRows[r].bounds.top;
+				if (DEBUG_IS_TABLE) System.out.println(" - found table top at " + tableTop);
 				break;
 			}
+			else if (DEBUG_IS_TABLE) System.out.println(" --> invalid cells");
 		}
 		
 		//	compute table bottom by removing block rows
@@ -2602,7 +2808,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		if (DEBUG_IS_TABLE) System.out.println(" ==> contained table found at " + table.bounds);
 		
 		//	try to get table columns
-		ImRegion[] tableCols = this.getTableColumns(table, minColMargin);
+		ImRegion[] tableCols = this.getTableColumns(table, minColMargin, middleBlockCols.length);
 		if (tableCols == null)
 			return false;
 		
@@ -2671,10 +2877,27 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return true;
 	}
 	
+	private static final String getRegionBoundList(ImRegion[] regs) {
+		StringBuffer rbl = new StringBuffer();
+		for (int r = 0; r < regs.length; r++)
+			rbl.append(" " + regs[r].bounds);
+		return rbl.toString();
+	}
+	
+	private int getTableColumnGapScore(ImRegion[] tableCols) {
+		int minColGap = Integer.MAX_VALUE;
+		for (int c = 1; c < tableCols.length; c++)
+			minColGap = Math.min(minColGap, (tableCols[c].bounds.left - tableCols[c-1].bounds.right));
+		return (minColGap * (tableCols.length - 1));
+	}
+	
 	private ImRegion[] getTableColumns(ImRegion block, int minColMargin) {
+		return this.getTableColumns(block, minColMargin, 3);
+	}
+	private ImRegion[] getTableColumns(ImRegion block, int minColMargin, int minColCount) {
 		
 		//	try to get table columns
-		ImRegion[] tableCols = ImUtils.getTableColumns(block, minColMargin, 3);
+		ImRegion[] tableCols = ImUtils.getTableColumns(block, minColMargin, minColCount);
 		if ((tableCols == null) || (tableCols.length < 3)) {
 			if (DEBUG_IS_TABLE) System.out.println(" ==> too few columns");
 			return null;
@@ -2703,9 +2926,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	}
 	
 	private ImRegion[] getTableRows(ImRegion block, int minRowMargin) {
+		return this.getTableRows(block, minRowMargin, 3);
+	}
+	private ImRegion[] getTableRows(ImRegion block, int minRowMargin, int minRowCount) {
 		
 		//	try to get table rows
-		ImRegion[] tableRows = ImUtils.getTableRows(block, minRowMargin, 3);
+		ImRegion[] tableRows = ImUtils.getTableRows(block, minRowMargin, minRowCount);
 		if ((tableRows == null) || (tableRows.length < 3)) {
 			if (DEBUG_IS_TABLE) System.out.println(" ==> too few rows");
 			return null;
@@ -2739,39 +2965,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		//	test if first row (column headers) is fully occupied, safe for first column
 		if (includeCellChecks && !this.checkColumnHeaders(page, tableCols, tableCells))
 			return null;
-//		for (int c = 1; c < tableCells[0].length; c++) {
-//			ImWord[] cellWords = page.getWordsInside(tableCells[0][c].bounds);
-//			if (cellWords.length == 0) {
-//				if (DEBUG_IS_TABLE) System.out.println(" ==> column headers incomplete");
-//				return null;
-//			}
-//		}
 		
 		//	test if first column (row labels) is fully occupied, safe for top row(s)
 		if (includeCellChecks && !this.checkRowLabels(page, tableCells))
 			return null;
-//		for (int r = ((tableCells.length < 15) ? 1 : 2); r < tableCells.length; r++) {
-//			ImWord[] cellWords = page.getWordsInside(tableCells[r][0].bounds);
-//			if (cellWords.length == 0) {
-//				if (DEBUG_IS_TABLE) System.out.println(" ==> row labels incomplete");
-//				return null;
-//			}
-//		}
 		
 		//	test if cells below and right of label rows and column have content
 		if (includeCellChecks && !this.checkTableBody(page, tableCells))
 			return null;
-//		int emptyTableBodyCells = 0;
-//		for (int r = 1; r < tableCells.length; r++)
-//			for (int c = 1; c < tableCells[r].length; c++) {
-//				ImWord[] tableCellWords = page.getWordsInside(tableCells[r][c].bounds);
-//				if (tableCellWords.length == 0)
-//					emptyTableBodyCells++;
-//			}
-//		if ((emptyTableBodyCells * 2) > ((tableRows.length - 1) * (tableCols.length - 1))) {
-//			if (DEBUG_IS_TABLE) System.out.println(" ==> table content extremely sparse, " + emptyTableBodyCells + " empty out of " + ((tableRows.length - 1) * (tableCols.length - 1)));
-//			return null;
-//		}
 		
 		//	these look good
 		return tableCells;
@@ -2843,6 +3044,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		for (int w = 0; w < tableWords.length; w++) {
 			if (tableWords[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
 				tableWords[w].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
+		}
+		
+		//	remove all other regions embedded in table
+		ImRegion[] tableSubRegions = tableRegion.getRegions();
+		for (int r = 0; r < tableSubRegions.length; r++) {
+			if (!tableSubRegions[r].getType().startsWith(ImRegion.TABLE_TYPE))
+				page.removeRegion(tableSubRegions[r]);
 		}
 		
 		//	order words from each cell as a text stream
