@@ -208,7 +208,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		} catch (IOException ioe) {}
 		
 		//	get caption citation handler
-		this.captionCitationHandler = ((CaptionCitationHandler) this.parent.getPlugin(CaptionCitationHandler.class.getName()));
+		if (this.parent == null)
+			this.captionCitationHandler = new CaptionCitationHandler();
+		else this.captionCitationHandler = ((CaptionCitationHandler) this.parent.getPlugin(CaptionCitationHandler.class.getName()));
 	}
 	
 	/* (non-Javadoc)
@@ -2339,8 +2341,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		for (int b = 0; b < pageBlocks.length; b++) {
 			isPageBlockNarrow[b] = (((pageBlocks[b].bounds.right - pageBlocks[b].bounds.left) * 5) < (page.bounds.right - page.bounds.left));
 			pageBlockWords[b] = page.getWordsInside(pageBlocks[b].bounds);
-			if (pageBlockWords[b].length == 0)
+			System.out.println("Testing block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table or table part");
+			if (pageBlockWords[b].length == 0) {
+				System.out.println(" ==> no words");
 				continue;
+			}
 			Arrays.sort(pageBlockWords[b], ImUtils.textStreamOrder);
 			if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[b][0].getTextStreamType()))
 				continue;
@@ -2548,9 +2553,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			pageBlockWords[b] = mergedBlock.getWords();
 			Arrays.sort(pageBlockWords[b], ImUtils.textStreamOrder);
 			isPageBlockNarrow[b] = false;
+			pm.setInfo(" - got merged block " + mergedBlock.bounds);
 		}
 		
-		//	store merged block, and clean up all blocks inside
+		//	merge adjacent sub blocks of same parent block that were not merged to form a table
 		ArrayList subBlockList = new ArrayList();
 		ImRegion subBlockParent = null;
 		int subBlockStartIndex = -1;
@@ -2586,8 +2592,15 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				BoundingBox subBlockWordBounds = ImLayoutObject.getAggregateBox(page.getWordsInside(subBlockBounds));
 				pageBlocks[subBlockStartIndex] = new ImRegion(page, ((subBlockWordBounds == null) ? subBlockBounds : subBlockWordBounds), ImRegion.BLOCK_ANNOTATION_TYPE);
 				
-				for (int c = (subBlockStartIndex + 1); c < b; c++)
+				pageBlockCols[subBlockStartIndex] = null;
+				pageBlockWords[subBlockStartIndex] = page.getWordsInside(pageBlocks[subBlockStartIndex].bounds);
+				Arrays.sort(pageBlockWords[subBlockStartIndex], ImUtils.textStreamOrder);
+				
+				for (int c = (subBlockStartIndex + 1); c < b; c++) {
 					pageBlocks[c] = null;
+					pageBlockCols[c] = null;
+					pageBlockWords[c] = null;
+				}
 				page.removeRegion(subBlockParent);
 				
 				subBlockList.clear();
@@ -2631,16 +2644,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			tableCols = this.getTableColumns(block, minColMargin);
 		if (tableCols == null)
 			return false;
+		if (DEBUG_IS_TABLE) System.out.println(" --> got " + tableCols.length + " columns");
 		
 		//	try to get table rows
 		ImRegion[] tableRows = this.getTableRows(block, minRowMargin);
 		if (tableRows == null)
 			return false;
+		if (DEBUG_IS_TABLE) System.out.println(" --> got " + tableRows.length + " rows");
 		
 		//	get table cells
 		ImRegion[][] tableCells = this.getTableCells(page, block, tableRows, tableCols, false);
 		if (tableCells == null)
 			return false;
+		if (DEBUG_IS_TABLE) System.out.println(" --> got cells");
 		
 		//	large number of rows, but incomplete row labels or sparse table body, try increasing row margin
 		if ((tableRows.length >= 9) && (!this.checkRowLabels(page, tableCells) || !this.checkTableBody(page, tableCells))) {
@@ -3120,7 +3136,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return false;
 	}
 	
-	private static final boolean DEBUG_IS_CAPTION = false;
+	private static final boolean DEBUG_IS_CAPTION = true;
 	private boolean isCaption(ImRegion paragraph, ImWord[] paragraphWords, Pattern[] startPatterns, int minFontSize, int maxFontSize, boolean startIsBold) {
 		
 		//	test bold property and font size first thing
@@ -4090,7 +4106,7 @@ Create HeadingStructureEditor
 		dsdp.debug = true;
 		
 		final String testFileName;
-		testFileName = "zt00872.pdf.imf";
+//		testFileName = "zt00872.pdf.imf";
 //		testFileName = "zt00904.pdf.test.imf";
 //		testFileName = "arac-38-02-328.pdf.imf";
 //		testFileName = "zt03652p155.pdf.imf";
@@ -4101,22 +4117,24 @@ Create HeadingStructureEditor
 //		testFileName = "1_5_Farkac.pdf.imf"; // heading detection and ranking hampered by sloppy layout, pretty rough case this one
 //		testFileName = "zt03911p493.pdf.raw.imf"; // key entries detected as footnotes on page 4 ==> fixed via font size
 //		testFileName = "ZM1967042005.pdf.imf"; // two footnotes not detected on page 0
+		testFileName = "IJSEM/19.full.pdf.raw.imf"; // caption on page 2 mistaken for table
 		FileInputStream fis = new FileInputStream(new File("E:/Testdaten/PdfExtract/" + testFileName));
 		ImDocument doc = ImfIO.loadDocument(fis);
 		fis.close();
 		
 		DocumentStyle.addProvider(new DocumentStyle.Provider() {
 			public Properties getStyleFor(Attributed doc) {
-//				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleManagerData/zootaxa.2007.journal_article.docStyle"));
-				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleManagerData/zootaxa.0000.journal_article.docStyle"));
+//				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/zootaxa.2007.journal_article.docStyle"));
+				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/ijsem.0000.journal_article.docStyle"));
 				return ds.toProperties();
 			}
 		});
 		
 		dsdp.detectDocumentStructure(doc, true, ProgressMonitor.dummy);
-		String[] params = DocumentStyle.getParameterNames();
-		Arrays.sort(params);
-		for (int p = 0; p < params.length; p++)
-			System.out.println(params[p] + " = \"" + DocumentStyle.getParameterValueClass(params[p]).getName() + "\";");
+//		
+//		String[] params = DocumentStyle.getParameterNames();
+//		Arrays.sort(params);
+//		for (int p = 0; p < params.length; p++)
+//			System.out.println(params[p] + " = \"" + DocumentStyle.getParameterValueClass(params[p]).getName() + "\";");
 	}
 }
