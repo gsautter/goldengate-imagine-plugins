@@ -28,7 +28,6 @@
 package de.uka.ipd.idaho.im.imagine.plugins.tables;
 
 import java.awt.Point;
-import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -191,32 +190,32 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			actions.add(new TwoClickSelectionAction("tableExtendRows", "Connect Table Rows", "Connect the rows in this table to those in another table, merging the tables left to right.") {
 				public boolean performAction(ImWord secondWord) {
 					if (start.getTextStreamId().equals(secondWord.getTextStreamId())) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("'" + secondWord.getString() + "' belongs to the same table as '" + start.getString() + "'\nA table cannot be merged with itself"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the same table as '" + start.getString() + "'\nA table cannot be merged with itself"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					ImRegion secondWordTable = getTableAt(secondWord);
 					if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable)) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "The two tables are not compatible; in order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					ImRegion[] startTables = ImUtils.getColumnConnectedTables(startTable);
 					ImRegion[] secondWordTables = ImUtils.getColumnConnectedTables(secondWordTable);
 					if (startTables.length != secondWordTables.length) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					if (startTables.length > 1) {
 						for (int t = 0; t < startTables.length; t++)
 							if (!ImUtils.areTableRowsCompatible(startTables[t], secondWordTables[t])) {
-								JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+								DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 								return false;
 							}
 					}
@@ -225,7 +224,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 						startTables[t].setAttribute("rowsContinueIn", (secondWordTables[t].pageId + "." + secondWordTables[t].bounds));
 						secondWordTables[t].setAttribute("rowsContinueFrom", (startTables[t].pageId + "." + startTables[t].bounds));
 					}
-					JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "Table rows merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Rows Merged", JOptionPane.INFORMATION_MESSAGE);
+					DialogFactory.alert("Table rows merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Rows Merged", JOptionPane.INFORMATION_MESSAGE);
 					return true;
 				}
 				public ImWord getFirstWord() {
@@ -241,32 +240,32 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			actions.add(new TwoClickSelectionAction("tableExtendCols", "Connect Table Columns", "Connect the columns in this table to those in another table, merging the tables top to bottom.") {
 				public boolean performAction(ImWord secondWord) {
 					if (start.getTextStreamId().equals(secondWord.getTextStreamId())) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("'" + secondWord.getString() + "' belongs to the same table as '" + start.getString() + "'\nA table cannot be merged with itself"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the same table as '" + start.getString() + "'\nA table cannot be merged with itself"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					ImRegion secondWordTable = getTableAt(secondWord);
 					if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable)) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "The two tables are not compatible; in order to merge columns, two tables have to have\n- the same number of coumns\n- the same header on each one but the first (row label) column", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have\n- the same number of coumns\n- the same header on each one but the first (row label) column", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					ImRegion[] startTables = ImUtils.getRowConnectedTables(startTable);
 					ImRegion[] secondWordTables = ImUtils.getRowConnectedTables(secondWordTable);
 					if (startTables.length != secondWordTables.length) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
 					if (startTables.length > 1) {
 						for (int t = 0; t < startTables.length; t++)
 							if (!ImUtils.areTableColumnsCompatible(startTables[t], secondWordTables[t])) {
-								JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+								DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 								return false;
 							}
 					}
@@ -275,7 +274,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 						startTables[t].setAttribute("colsContinueIn", (secondWordTables[t].pageId + "." + secondWordTables[t].bounds));
 						secondWordTables[t].setAttribute("colsContinueFrom", (startTables[t].pageId + "." + startTables[t].bounds));
 					}
-					JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "Table columns merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Columns Merged", JOptionPane.INFORMATION_MESSAGE);
+					DialogFactory.alert("Table columns merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Columns Merged", JOptionPane.INFORMATION_MESSAGE);
 					return true;
 				}
 				public ImWord getFirstWord() {
@@ -311,7 +310,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 					}
 					if ((leftTable != null) && (rightTable != null))
 						ImUtils.connectTableRows(leftTable, rightTable);
-					JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "Table rows dissected successfully", "Table Rows Dissected", JOptionPane.INFORMATION_MESSAGE);
+					DialogFactory.alert("Table rows dissected successfully", "Table Rows Dissected", JOptionPane.INFORMATION_MESSAGE);
 					return true;
 				}
 			});
@@ -339,7 +338,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 					}
 					if ((topTable != null) && (bottomTable != null))
 						ImUtils.connectTableColumns(topTable, bottomTable);
-					JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "Table columns dissected successfully", "Table Columns Dissected", JOptionPane.INFORMATION_MESSAGE);
+					DialogFactory.alert("Table columns dissected successfully", "Table Columns Dissected", JOptionPane.INFORMATION_MESSAGE);
 					return true;
 				}
 			});
@@ -1278,7 +1277,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			BoundingBox irBox = new BoundingBox((toSplitCol.bounds.left + relSplitLeft), (toSplitCol.bounds.left + relSplitRight), table.bounds.top, table.bounds.bottom);
 			new ImRegion(table.getPage(), irBox, ImRegion.TABLE_COL_TYPE);
 		}
-		if (relRightSplitLeft < (toSplitCol.bounds.bottom - toSplitCol.bounds.top)) {
+		if (relRightSplitLeft < (toSplitCol.bounds.right - toSplitCol.bounds.left)) {
 			BoundingBox brBox = new BoundingBox((toSplitCol.bounds.left + relRightSplitLeft), toSplitCol.bounds.right, table.bounds.top, table.bounds.bottom);
 			new ImRegion(table.getPage(), brBox, ImRegion.TABLE_COL_TYPE);
 		}
@@ -1401,10 +1400,10 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	}
 	
 	private void copyTableData(ImRegion table, char separator) {
-		Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(ImUtils.getTableData(table, separator)), null);
+		ImUtils.copy(new StringSelection(ImUtils.getTableData(table, separator)));
 	}
 	
 	private void copyTableGridData(ImRegion table, char separator) {
-		Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(ImUtils.getTableGridData(table, separator)), null);
+		ImUtils.copy(new StringSelection(ImUtils.getTableGridData(table, separator)));
 	}
 }
