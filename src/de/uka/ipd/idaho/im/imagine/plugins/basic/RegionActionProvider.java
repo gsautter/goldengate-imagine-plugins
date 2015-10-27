@@ -47,6 +47,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -296,7 +297,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	 */
 	public void regionAdded(ImRegion region, ImDocumentMarkupPanel idmp, boolean allowPrompt) {
 		
-		//	we're only after paragraphs
+		//	we're only interested in paragraphs
 		if (!ImRegion.PARAGRAPH_TYPE.equals(region.getType()))
 			return;
 		
@@ -452,7 +453,9 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					String regionType = ImUtils.promptForObjectType("Enter Region Type", "Enter or select type of region to create", regionTypes, null, true);
 					if (regionType == null)
 						return false;
-					new ImRegion(page, selectedBounds, regionType);
+					ImRegion region = new ImRegion(page, selectedBounds, regionType);
+					if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(regionType))
+						ensureBlockStructure(region);
 					idmp.setRegionsPainted(regionType, true);
 					return true;
 				}
@@ -469,7 +472,9 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						String regionType = ImUtils.promptForObjectType("Enter Region Type", "Enter or select type of region to create", regionTypes, null, true);
 						if (regionType != null) {
 							invoker.beginAtomicAction("Mark '" + regionType + "' Region");
-							new ImRegion(page, selectedBounds, regionType);
+							ImRegion region = new ImRegion(page, selectedBounds, regionType);
+							if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(regionType))
+								ensureBlockStructure(region);
 							invoker.endAtomicAction();
 							invoker.setRegionsPainted(regionType, true);
 							invoker.validate();
@@ -484,7 +489,9 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					mi.addActionListener(new ActionListener() {
 						public void actionPerformed(ActionEvent ae) {
 							invoker.beginAtomicAction("Mark '" + regionType + "' Region");
-							new ImRegion(page, selectedBounds, regionType);
+							ImRegion region = new ImRegion(page, selectedBounds, regionType);
+							if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(regionType))
+								ensureBlockStructure(region);
 							invoker.endAtomicAction();
 							invoker.setRegionsPainted(regionType, true);
 							invoker.validate();
@@ -849,7 +856,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						sortIntoLines(page, blockWords);
 						
 						//	re-detect paragraphs
-						PageAnalysis.splitIntoParagraphs(block, page.getPageImage().currentDpi, null);
+						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
 						
 						//	update text stream structure
 						updateBlockTextStream(block);
@@ -1010,7 +1017,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
 						
 						//	re-detect paragraphs
-						PageAnalysis.splitIntoParagraphs(block, page.getPageImage().currentDpi, null);
+						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
 						
 						//	finally ...
 						Arrays.sort(words, ImUtils.textStreamOrder);
@@ -1108,12 +1115,36 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		Arrays.sort(words, ImUtils.textStreamOrder);
 		
 		//	re-detect lines
+//		int lineStartWordIndex = 0;
+//		for (int w = 0; w < words.length; w++)
+//			if (((w+1) == words.length) || (words[w+1].centerY > words[w].bounds.bottom)) {
+//				new ImRegion(page, ImLayoutObject.getAggregateBox(words, lineStartWordIndex, (w+1)), ImRegion.LINE_ANNOTATION_TYPE);
+//				lineStartWordIndex = (w+1);
+//			}
+		this.markLines(page, words, null);
+	}
+	
+	private void markLines(ImPage page, ImWord[] words, Map existingLines) {
 		int lineStartWordIndex = 0;
-		for (int w = 0; w < words.length; w++)
-			if (((w+1) == words.length) || (words[w+1].centerY > words[w].bounds.bottom)) {
-				new ImRegion(page, ImLayoutObject.getAggregateBox(words, lineStartWordIndex, (w+1)), ImRegion.LINE_ANNOTATION_TYPE);
-				lineStartWordIndex = (w+1);
+		for (int w = 1; w <= words.length; w++)
+			
+			//	end line at downward or leftward jump, and at last word
+			if ((w == words.length) || (words[lineStartWordIndex].bounds.bottom <= words[w].bounds.top) || (words[w].centerX < words[w-1].centerX)) {
+				BoundingBox lBounds = ImLayoutObject.getAggregateBox(words, lineStartWordIndex, w);
+				if (existingLines == null)
+					new ImRegion(page, lBounds, ImRegion.LINE_ANNOTATION_TYPE);
+				else {
+					ImRegion bLine = ((ImRegion) existingLines.remove(lBounds));
+					if (bLine == null)
+						bLine = new ImRegion(page, lBounds, ImRegion.LINE_ANNOTATION_TYPE);
+				}
+				lineStartWordIndex = w;
 			}
+		
+		//	remove now-spurious lines (if any)
+		if (existingLines != null)
+			for (Iterator lbit = existingLines.keySet().iterator(); lbit.hasNext();)
+				page.removeRegion((ImRegion) existingLines.get(lbit.next()));
 	}
 	
 	private void updateBlockTextStream(ImRegion block) {
@@ -1187,6 +1218,78 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			if (DataFlavor.imageFlavor.equals(flavor))
 				return image;
 			else throw new UnsupportedFlavorException(flavor);
+		}
+	}
+	
+	private void ensureBlockStructure(ImRegion block) {
+		
+		//	get words
+		ImWord[] bWords = block.getWords();
+		if (bWords.length == 0)
+			return;
+		
+		//	check if all (non-artifact) words inside lines
+		ImRegion[] bLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE); 
+		int lWordCount = 0;
+		for (int l = 0; l < bLines.length; l++) {
+			ImWord[] lWords = bLines[l].getWords();
+			lWordCount += lWords.length;
+		}
+		
+		//	check if all (non-artifact) words inside paragraphs
+		ImRegion[] bParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE); 
+		int pWordCount = 0;
+		for (int p = 0; p < bParagraphs.length; p++) {
+			ImWord[] pWords = bParagraphs[p].getWords();
+			pWordCount += pWords.length;
+		}
+		
+		//	all words nested properly, we're done here
+		if ((bWords.length <= lWordCount) && (bWords.length <= pWordCount))
+			return;
+		
+		//	get page
+		ImPage page = block.getPage();
+		
+		//	repair line nesting
+		if (lWordCount < bWords.length) {
+			
+			//	index lines by bounding boxes
+			HashMap exLines = new HashMap();
+			for (int l = 0; l < bLines.length; l++)
+				exLines.put(bLines[l].bounds, bLines[l]);
+			
+			//	order words and mark lines
+			ImUtils.sortLeftRightTopDown(bWords);
+			int lStartIndex = 0;
+			for (int w = 1; w <= bWords.length; w++)
+				
+				//	end line at downward or leftward jump, and at last word
+				if ((w == bWords.length) || (bWords[lStartIndex].bounds.bottom <= bWords[w].bounds.top) || (bWords[w].centerX < bWords[w-1].centerX)) {
+					BoundingBox lBounds = ImLayoutObject.getAggregateBox(bWords, lStartIndex, w);
+					ImRegion bLine = ((ImRegion) exLines.remove(lBounds));
+					if (bLine == null)
+						bLine = new ImRegion(page, lBounds, ImRegion.LINE_ANNOTATION_TYPE);
+					lStartIndex = w;
+				}
+			
+			//	remove now-spurious lines
+			for (Iterator lbit = exLines.keySet().iterator(); lbit.hasNext();)
+				page.removeRegion((ImRegion) exLines.get(lbit.next()));
+			
+			//	re-get lines
+			bLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+		}
+		
+		//	repair paragraph nesting
+		if (pWordCount < bWords.length) {
+			
+			//	clean up existing paragraphs
+			for (int p = 0; p < bParagraphs.length; p++)
+				page.removeRegion(bParagraphs[p]);
+			
+			//	re-mark paragraphs
+			PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), ProgressMonitor.dummy);
 		}
 	}
 	
