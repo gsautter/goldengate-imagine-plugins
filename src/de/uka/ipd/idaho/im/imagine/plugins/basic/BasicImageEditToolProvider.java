@@ -56,6 +56,7 @@ import de.uka.ipd.idaho.gamta.TokenSequence;
 import de.uka.ipd.idaho.gamta.Tokenizer;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
+import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImPage;
@@ -523,7 +524,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 						dp.dispose();
 					}
 					catch (Exception e) {
-						JOptionPane.showMessageDialog(dp, "Invalid Rotation Angle", ("'" + angleField.getText() + "' is not a valid angle."), JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert("Invalid Rotation Angle", ("'" + angleField.getText() + "' is not a valid angle."), JOptionPane.ERROR_MESSAGE);
 					}
 				}
 			});

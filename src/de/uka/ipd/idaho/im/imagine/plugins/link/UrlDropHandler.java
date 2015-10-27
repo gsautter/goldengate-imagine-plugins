@@ -45,7 +45,6 @@ import javax.swing.UIManager;
 
 import de.uka.ipd.idaho.easyIO.settings.Settings;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
-import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImWord;
@@ -176,20 +175,20 @@ public class UrlDropHandler extends AbstractGoldenGateImaginePlugin implements I
 					
 					//	no change
 					if (dropData.equals(oldValue)) {
-						JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), (da.annotType + "." + da.attributeName + " unchanged, value is\n  " + dropData), "Attribute Unchanged", JOptionPane.INFORMATION_MESSAGE);
+						DialogFactory.alert((da.annotType + "." + da.attributeName + " unchanged, value is\n  " + dropData), "Attribute Unchanged", JOptionPane.INFORMATION_MESSAGE);
 						return true;
 					}
 					
 					//	set attribute
 					else if (oldValue == null) {
 						annots[a].setAttribute(da.attributeName, dropData);
-						JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), (da.annotType + "." + da.attributeName + " set to\n  " + dropData), "Attribute Set", JOptionPane.INFORMATION_MESSAGE);
+						DialogFactory.alert((da.annotType + "." + da.attributeName + " set to\n  " + dropData), "Attribute Set", JOptionPane.INFORMATION_MESSAGE);
 						return true;
 					}
 					
 					//	ask if attribute should be changes
 					else {
-						if (JOptionPane.showConfirmDialog(DialogPanel.getTopWindow(), (da.annotType + "." + da.attributeName + " already exists, value is\n  " + oldValue.toString() + "\nReplace with new value\n  " + dropData), "Confirm Change Attribute", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE) == JOptionPane.OK_OPTION)
+						if (DialogFactory.confirm((da.annotType + "." + da.attributeName + " already exists, value is\n  " + oldValue.toString() + "\nReplace with new value\n  " + dropData), "Confirm Change Attribute", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE) == JOptionPane.OK_OPTION)
 							annots[a].setAttribute(da.attributeName, dropData);
 						return true;
 					}

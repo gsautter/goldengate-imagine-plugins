@@ -185,14 +185,14 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			
 			//	we work on born-digital documents only
 			if (!idmp.documentBornDigital) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "This document originates from scanned images, no fonts to edit.", "No Fonts to Edit", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("This document originates from scanned images, no fonts to edit.", "No Fonts to Edit", JOptionPane.INFORMATION_MESSAGE);
 				return;
 			}
 			
 			//	get fonts
 			ImFont[] fonts = doc.getFonts();
 			if (fonts.length == 0) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "This document does not contain any fonts with custom characters to transcribe.", "No Fonts to Edit", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("This document does not contain any fonts with custom characters to transcribe.", "No Fonts to Edit", JOptionPane.INFORMATION_MESSAGE);
 				return;
 			}
 			
@@ -204,7 +204,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 	private boolean editFonts(ImDocument doc, ImFont[] fonts) {
 		FontEditorDialog fed = new FontEditorDialog(doc, fonts);
 		if (fed.feps == null) {
-			JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), (((fonts.length == 1) ? "This font does" : "The fonts do") + " not contain any custom characters to transcribe."), "No Characters to Edit", JOptionPane.INFORMATION_MESSAGE);
+			DialogFactory.alert((((fonts.length == 1) ? "This font does" : "The fonts do") + " not contain any custom characters to transcribe."), "No Characters to Edit", JOptionPane.INFORMATION_MESSAGE);
 			return false;
 		}
 		fed.setVisible(true);

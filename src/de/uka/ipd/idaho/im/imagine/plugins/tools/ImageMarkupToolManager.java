@@ -87,6 +87,7 @@ import de.uka.ipd.idaho.gamta.util.gPath.GPathParser;
 import de.uka.ipd.idaho.gamta.util.gPath.types.GPathObject;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.swing.AnnotationDisplayDialog;
+import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager;
 import de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessor;
 import de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessorManager;
@@ -422,7 +423,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 						storeSettingsResource(editor[0].name, editor[0].getSettings());
 					}
 					catch (IOException ioe) {
-						if (JOptionPane.showConfirmDialog(editDialog, (ioe.getClass().getName() + " (" + ioe.getMessage() + ")\nwhile saving file to " + editor[0].name + "\nProceed?"), "Could Not Save Analyzer", JOptionPane.YES_NO_OPTION) == JOptionPane.NO_OPTION) {
+						if (DialogFactory.confirm((ioe.getClass().getName() + " (" + ioe.getMessage() + ")\nwhile saving file to " + editor[0].name + "\nProceed?"), "Could Not Save Image Markup Tool", JOptionPane.YES_NO_OPTION) == JOptionPane.NO_OPTION) {
 							resourceNameList.setSelectedName(editor[0].name);
 							editorPanel.validate();
 							return;
@@ -523,7 +524,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 					}
 					if (idmp == null)
 						return;
-					int choice = JOptionPane.showConfirmDialog(DialogPanel.getTopWindow(), ("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, (isWarning ? JOptionPane.WARNING_MESSAGE : JOptionPane.ERROR_MESSAGE));
+					int choice = DialogFactory.confirm(("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, (isWarning ? JOptionPane.WARNING_MESSAGE : JOptionPane.ERROR_MESSAGE));
 					if (choice != JOptionPane.YES_OPTION)
 						return;
 				}
@@ -1566,12 +1567,12 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				gpe = GPathParser.parseExpression(filter);
 			}
 			catch (Exception e) {
-				JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), ("The filter expression is invalid:\n" + e.getMessage()), "Filter Expression Invalid", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert(("The filter expression is invalid:\n" + e.getMessage()), "Filter Expression Invalid", JOptionPane.ERROR_MESSAGE);
 				return;
 			}
 			
 			GPathObject gpo = GPath.evaluateExpression(gpe, testDoc, null);
-			JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), ("The filter expression " + (gpo.asBoolean().value ? "DOES" : " DOES NOT") + " preclude the current document."), "Filter Match Result", JOptionPane.INFORMATION_MESSAGE);
+			DialogFactory.alert(("The filter expression " + (gpo.asBoolean().value ? "DOES" : " DOES NOT") + " preclude the current document."), "Filter Match Result", JOptionPane.INFORMATION_MESSAGE);
 		}
 		
 		private class ImageMarkupToolPreclusion {
@@ -1826,12 +1827,12 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 					public void actionPerformed(ActionEvent ae) {
 						String filter = getFilter();
 						if (!validateFilter(filter)) {
-							JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), ("'" + filter + "' is not a valid GPath expression or filter name."), "Invalid Filter", JOptionPane.ERROR_MESSAGE);
+							DialogFactory.alert(("'" + filter + "' is not a valid GPath expression or filter name."), "Invalid Filter", JOptionPane.ERROR_MESSAGE);
 							return;
 						}
 						String message = getMessage();
 						if (!validateMessage(message)) {
-							JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), ("'" + message + "' is not a valid mapping message."), "Invalid Message", JOptionPane.ERROR_MESSAGE);
+							DialogFactory.alert(("'" + message + "' is not a valid mapping message."), "Invalid Message", JOptionPane.ERROR_MESSAGE);
 							return;
 						}
 						dispose();
@@ -2121,7 +2122,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				gpe = GPathParser.parseExpression(filter);
 			}
 			catch (Exception e) {
-				JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), ("The filter expression is invalid:\n" + e.getMessage()), "Filter Expression Invalid", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert(("The filter expression is invalid:\n" + e.getMessage()), "Filter Expression Invalid", JOptionPane.ERROR_MESSAGE);
 				return;
 			}
 			
@@ -2286,7 +2287,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 					public void actionPerformed(ActionEvent ae) {
 						String filter = getFilter();
 						if (!validateFilter(filter)) {
-							JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), ("'" + filter + "' is not a valid GPath expression or filter name."), "Invalid Filter", JOptionPane.ERROR_MESSAGE);
+							DialogFactory.alert(("'" + filter + "' is not a valid GPath expression or filter name."), "Invalid Filter", JOptionPane.ERROR_MESSAGE);
 							return;
 						}
 						dispose();

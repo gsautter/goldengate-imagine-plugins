@@ -31,7 +31,6 @@ import java.awt.BorderLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.Point;
-import java.awt.Toolkit;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
 import java.awt.datatransfer.UnsupportedFlavorException;
@@ -161,7 +160,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			
 			//	nothing to work with
 			if (allRegionTypes.isEmpty()) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no regions in this document.", "No Regions", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("There are no regions in this document.", "No Regions", JOptionPane.INFORMATION_MESSAGE);
 				return;
 			}
 			
@@ -244,7 +243,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			
 			//	nothing to work with
 			if (allRegionTypes.isEmpty()) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no regions in this document.", "No Regions", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("There are no regions in this document.", "No Regions", JOptionPane.INFORMATION_MESSAGE);
 				return;
 			}
 			
@@ -531,7 +530,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					
 					//	anything selected at all (too much effort to check in advance)
 					if (Imaging.computeAverageBrightness(selectedIpr) > 125) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "The selection appears to be completely empty and thus cannot be marked as an image.", "Cannot Mark Image", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert("The selection appears to be completely empty and thus cannot be marked as an image.", "Cannot Mark Image", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					
@@ -1091,7 +1090,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 								image = pageImage.image.getSubimage(selectedImage.bounds.left, selectedImage.bounds.top, (selectedImage.bounds.right - selectedImage.bounds.left), (selectedImage.bounds.bottom - selectedImage.bounds.top));
 						}
 						if (image != null)
-							Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new ImageSelection(image), null);
+							ImUtils.copy(new ImageSelection(image));
 						return false;
 					}
 				});
@@ -1258,7 +1257,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		blockSplitOptionPanel.add(singleLineParagraphs);
 		
 		//	prompt user
-		if (JOptionPane.showConfirmDialog(DialogFactory.getTopWindow(), blockSplitOptionPanel, "Select Block Splitting Options", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION)
+		if (DialogFactory.confirm(blockSplitOptionPanel, "Select Block Splitting Options", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION)
 			return false;
 		
 		//	keep track of logical paragraphs at block boundaries

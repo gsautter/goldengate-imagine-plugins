@@ -712,6 +712,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
 		
+		//	TODO detect in-text notes (paragraphs whose average font size is significantly smaller than main text) 
+		
 		//	index paragraph ends (in preparation for paragraph merging)
 		spm.setStep(" - indexing paragraph end words");
 		spm.setBaseProgress(55);
@@ -871,6 +873,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				else imw.setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
 			}
 		}
+		
+		//	TODO add in-text notes residing between table and caption to caption
 		
 		//	collect blocks that might be assigned captions
 		spm.setStep(" - identifying caption target areas");

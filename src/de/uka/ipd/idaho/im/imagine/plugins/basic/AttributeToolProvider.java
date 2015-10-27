@@ -177,7 +177,7 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 		if (targetObjects == null) {
 			String[] types = this.getObjectTypes(doc);
 			if (types.length == 0) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
 				return false;
 			}
 			typeSsl = ssp.addSelector("Object type", types, null, false);
@@ -303,7 +303,7 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 		if (targetObjects == null) {
 			String[] types = this.getObjectTypes(doc);
 			if (types.length == 0) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
 				return false;
 			}
 			typeSsl = ssp.addSelector("Object type", types, null, false);
@@ -483,7 +483,7 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 		if (targetObjects == null) {
 			String[] types = this.getObjectTypes(doc);
 			if (types.length == 0) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("There are no attributed objects in this document.", "No Attributed Objects", JOptionPane.INFORMATION_MESSAGE);
 				return false;
 			}
 			typeSsl = ssp.addSelector("Object type", types, null, false);

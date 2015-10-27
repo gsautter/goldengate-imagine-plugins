@@ -28,7 +28,6 @@
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
 import java.awt.Point;
-import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -167,7 +166,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			
 			//	nothing to work with
 			if (allAnnotTypes.isEmpty()) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no annotations in this document.", "No Annotations", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("There are no annotations in this document.", "No Annotations", JOptionPane.INFORMATION_MESSAGE);
 				return;
 			}
 			
@@ -211,7 +210,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			
 			//	nothing to work with
 			if (allAnnotTypes.isEmpty()) {
-				JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), "There are no annotations in this document.", "No Annotations", JOptionPane.INFORMATION_MESSAGE);
+				DialogFactory.alert("There are no annotations in this document.", "No Annotations", JOptionPane.INFORMATION_MESSAGE);
 				return;
 			}
 			
@@ -614,7 +613,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			actions.add(new TwoClickSelectionAction("annotateTwoClick", "Start Annotation", ("Start annotation from '" + start.getString() + "'")) {
 				public boolean performAction(ImWord secondWord) {
 					if (!start.getTextStreamId().equals(secondWord.getTextStreamId())) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("Cannot annotate from '" + start.getString() + "' to '" + secondWord.getString() + "', they belong to different text streams:\r\n- '" + start.getString() + "': " + start.getTextStreamId() + ", type '" + start.getTextStreamType() + "'\r\n- '" + secondWord.getString() + "': " + secondWord.getTextStreamId() + ", type '" + secondWord.getTextStreamType() + "'"), "Cannot Annotate Across Text Streams", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("Cannot annotate from '" + start.getString() + "' to '" + secondWord.getString() + "', they belong to different text streams:\r\n- '" + start.getString() + "': " + start.getTextStreamId() + ", type '" + start.getTextStreamType() + "'\r\n- '" + secondWord.getString() + "': " + secondWord.getTextStreamId() + ", type '" + secondWord.getTextStreamType() + "'"), "Cannot Annotate Across Text Streams", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", ((String[]) createAnnotTypes.toArray(new String[createAnnotTypes.size()])), null, true);
@@ -716,7 +715,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		if (spanningAnnots.length == 1) {
 			actions.add(new SelectionAction("copyAnnotTXT", ("Copy " + spanningAnnots[0].getType() + " Text"), ("Copy the text annotated as '" + spanningAnnots[0].getType() + "' to the system clipboard")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(ImUtils.getString(spanningAnnots[0].getFirstWord(), spanningAnnots[0].getLastWord(), true)), null);
+					ImUtils.copy(new StringSelection(ImUtils.getString(spanningAnnots[0].getFirstWord(), spanningAnnots[0].getLastWord(), true)));
 					return false;
 				}
 			});
@@ -740,7 +739,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						mi = new JMenuItem("- " + spanningAnnot.getType() + " '" + spanningAnnot.getFirstWord().getString() + "'");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(ImUtils.getString(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord(), true)), null);
+								ImUtils.copy(new StringSelection(ImUtils.getString(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord(), true)));
 							}
 						});
 						pm.add(mi);
@@ -798,7 +797,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		} catch (IOException ioe) {}
 		
 		//	put data in clipboard
-		Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(annotData.toString()), null);
+		ImUtils.copy(new StringSelection(annotData.toString()));
 	}
 	
 	private void annotateAll(ImDocument doc, ImWord start, ImWord end, String annotType) {

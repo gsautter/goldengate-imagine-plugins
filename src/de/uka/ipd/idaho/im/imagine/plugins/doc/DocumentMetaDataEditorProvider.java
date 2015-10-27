@@ -694,7 +694,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			public void actionPerformed(ActionEvent ae) {
 				String[] errors = refEditorPanel.getErrors();
 				if (errors == null)
-					JOptionPane.showMessageDialog(refEditorPanel, "The document meta data is valid.", "Validation Report", JOptionPane.INFORMATION_MESSAGE);
+					DialogFactory.alert("The document meta data is valid.", "Validation Report", JOptionPane.INFORMATION_MESSAGE);
 				else displayErrors(errors, refEditorPanel);
 			}
 		});
@@ -927,7 +927,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	private final void displayErrors(String[] errors, JPanel parent) {
 		StringVector errorMessageBuilder = new StringVector();
 		errorMessageBuilder.addContent(errors);
-		JOptionPane.showMessageDialog(parent, ("The document meta data is not valid. In particular, there are the following errors:\n" + errorMessageBuilder.concatStrings("\n")), "Validation Report", JOptionPane.ERROR_MESSAGE);
+		DialogFactory.alert(("The document meta data is not valid. In particular, there are the following errors:\n" + errorMessageBuilder.concatStrings("\n")), "Validation Report", JOptionPane.ERROR_MESSAGE);
 	}
 	
 	private final RefData searchRefData(JDialog dialog, RefData ref, String docName) {
@@ -958,7 +958,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		//	got something to search for?
 		if ((extId == null) && (author == null) && (title == null) && (year == null) && (origin == null)) {
 			if (dialog != null)
-				JOptionPane.showMessageDialog(dialog, "Please enter some data to search for.\nYou can also use 'View Doc' to copy some data from the document text.", "Cannot Search Document Meta Data", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert("Please enter some data to search for.\nYou can also use 'View Doc' to copy some data from the document text.", "Cannot Search Document Meta Data", JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
 		
@@ -982,7 +982,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		//	did we find anything?
 		if (pss.isEmpty()) {
 			if (dialog != null)
-				JOptionPane.showMessageDialog(dialog, "Your search did not return any results.\nYou can still enter the document meta data manually.", "Document Meta Data Not Fount", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert("Your search did not return any results.\nYou can still enter the document meta data manually.", "Document Meta Data Not Fount", JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
 		

@@ -28,7 +28,6 @@
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
 import java.awt.Point;
-import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -287,7 +286,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			if (start.getTextStreamId().equals(end.getTextStreamId()))
 				actions.add(new SelectionAction("copyWordsTXT", "Copy Text", "Copy the selected words to the system clipboard.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(ImUtils.getString(start, end, false)), null);
+						ImUtils.copy(new StringSelection(ImUtils.getString(start, end, false)));
 						return false;
 					}
 				});
@@ -381,7 +380,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			actions.add(new TwoClickSelectionAction("streamMergeBackward", "Click Predeccessor", "Mark words, and set its predeccessor by clicking another word") {
 				public boolean performAction(ImWord secondWord) {
 					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && ((secondWord.pageId > start.pageId) || ((secondWord.pageId == start.pageId) && (secondWord.getTextStreamPos() >= start.getTextStreamPos())))) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("'" + secondWord.getString() + "' cannot be the predecessor of '" + start.getString() + "'\nThey belong to the same logical text stream,\nand '" + start.getString() + "' is a treansitive predecessor of '" + secondWord.getString() + "'"), "Cannot Set Predecessor", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("'" + secondWord.getString() + "' cannot be the predecessor of '" + start.getString() + "'\nThey belong to the same logical text stream,\nand '" + start.getString() + "' is a treansitive predecessor of '" + secondWord.getString() + "'"), "Cannot Set Predecessor", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					else if (start.getPreviousWord() == secondWord)
@@ -401,7 +400,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			actions.add(new TwoClickSelectionAction("streamMergeForward", "Click Successor", "Mark words, and set its successor by clicking another word") {
 				public boolean performAction(ImWord secondWord) {
 					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && ((secondWord.pageId < start.pageId) || ((secondWord.pageId == start.pageId) && (secondWord.getTextStreamPos() <= start.getTextStreamPos())))) {
-						JOptionPane.showMessageDialog(DialogFactory.getTopWindow(), ("'" + secondWord.getString() + "' cannot be the successor of '" + start.getString() + "'\nThey belong to the same logical text stream,\nand '" + start.getString() + "' is a treansitive successor of '" + secondWord.getString() + "'"), "Cannot Set Successor", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("'" + secondWord.getString() + "' cannot be the successor of '" + start.getString() + "'\nThey belong to the same logical text stream,\nand '" + start.getString() + "' is a treansitive successor of '" + secondWord.getString() + "'"), "Cannot Set Successor", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
 					else if (start.getNextWord() == secondWord)
@@ -600,7 +599,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			});
 			actions.add(new SelectionAction("copyWordsTXT", "Copy Text", "Copy the selected words to the system clipboard.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(ImUtils.getString(start, end, false)), null);
+					ImUtils.copy(new StringSelection(ImUtils.getString(start, end, false)));
 					return false;
 				}
 			});
