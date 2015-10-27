@@ -200,7 +200,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 						return false;
 					}
 					
-					if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable)) {
+					if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable, true)) {
 						DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
@@ -214,7 +214,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 					
 					if (startTables.length > 1) {
 						for (int t = 0; t < startTables.length; t++)
-							if (!ImUtils.areTableRowsCompatible(startTables[t], secondWordTables[t])) {
+							if (!ImUtils.areTableRowsCompatible(startTables[t], secondWordTables[t], true)) {
 								DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 								return false;
 							}
@@ -250,7 +250,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 						return false;
 					}
 					
-					if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable)) {
+					if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable, true)) {
 						DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have\n- the same number of coumns\n- the same header on each one but the first (row label) column", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
@@ -264,7 +264,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 					
 					if (startTables.length > 1) {
 						for (int t = 0; t < startTables.length; t++)
-							if (!ImUtils.areTableColumnsCompatible(startTables[t], secondWordTables[t])) {
+							if (!ImUtils.areTableColumnsCompatible(startTables[t], secondWordTables[t], true)) {
 								DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 								return false;
 							}
