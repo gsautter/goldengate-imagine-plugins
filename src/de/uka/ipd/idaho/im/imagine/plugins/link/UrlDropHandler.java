@@ -48,8 +48,7 @@ import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImWord;
-import de.uka.ipd.idaho.im.imagine.plugins.AbstractGoldenGateImaginePlugin;
-import de.uka.ipd.idaho.im.imagine.plugins.ImageDocumentDropHandler;
+import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageDocumentDropHandler;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 
 /**
@@ -58,7 +57,7 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
  * 
  * @author sautter
  */
-public class UrlDropHandler extends AbstractGoldenGateImaginePlugin implements ImageDocumentDropHandler {
+public class UrlDropHandler extends AbstractImageDocumentDropHandler {
 	
 	private TreeMap dropAcceptorsByType = new TreeMap();
 	
@@ -121,9 +120,9 @@ public class UrlDropHandler extends AbstractGoldenGateImaginePlugin implements I
 	}
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageDocumentDropHandler#handleDrop(de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, de.uka.ipd.idaho.im.ImPage, int, int, java.awt.dnd.DropTargetDropEvent)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageDocumentDropHandler#handleDrop(de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, de.uka.ipd.idaho.im.ImPage, int, int, java.awt.datatransfer.Transferable)
 	 */
-	public boolean handleDrop(ImDocumentMarkupPanel idmp, ImPage page, int pageX, int pageY, DropTargetDropEvent dtde) {
+	public boolean handleDrop(ImDocumentMarkupPanel idmp, ImPage page, int pageX, int pageY, Transferable transfer) {
 		
 		//	get word at drop point
 		ImWord imw = page.getWordAt(pageX, pageY);
@@ -136,7 +135,6 @@ public class UrlDropHandler extends AbstractGoldenGateImaginePlugin implements I
 			return false;
 		
 		//	get transport and data flavors
-		Transferable transfer = dtde.getTransferable();
 		DataFlavor[] dataFlavors = transfer.getTransferDataFlavors();
 		
 		//	try annotations at drop point inmost out
@@ -186,7 +184,7 @@ public class UrlDropHandler extends AbstractGoldenGateImaginePlugin implements I
 						return true;
 					}
 					
-					//	ask if attribute should be changes
+					//	ask if attribute should be changed
 					else {
 						if (DialogFactory.confirm((da.annotType + "." + da.attributeName + " already exists, value is\n  " + oldValue.toString() + "\nReplace with new value\n  " + dropData), "Confirm Change Attribute", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE) == JOptionPane.OK_OPTION)
 							annots[a].setAttribute(da.attributeName, dropData);
