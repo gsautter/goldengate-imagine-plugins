@@ -188,47 +188,14 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	offer merging rows across tables
 		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && !startTable.hasAttribute("rowsContinueIn"))
 			actions.add(new TwoClickSelectionAction("tableExtendRows", "Connect Table Rows", "Connect the rows in this table to those in another table, merging the tables left to right.") {
+				private ImWord artificialStartWord = null;
 				public boolean performAction(ImWord secondWord) {
-					if (start.getTextStreamId().equals(secondWord.getTextStreamId())) {
-						DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the same table as '" + start.getString() + "'\nA table cannot be merged with itself"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					ImRegion secondWordTable = getTableAt(secondWord);
-					if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
-						DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable, true)) {
-						DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					ImRegion[] startTables = ImUtils.getColumnConnectedTables(startTable);
-					ImRegion[] secondWordTables = ImUtils.getColumnConnectedTables(secondWordTable);
-					if (startTables.length != secondWordTables.length) {
-						DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					if (startTables.length > 1) {
-						for (int t = 0; t < startTables.length; t++)
-							if (!ImUtils.areTableRowsCompatible(startTables[t], secondWordTables[t], true)) {
-								DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
-								return false;
-							}
-					}
-					
-					for (int t = 0; t < startTables.length; t++) {
-						startTables[t].setAttribute("rowsContinueIn", (secondWordTables[t].pageId + "." + secondWordTables[t].bounds));
-						secondWordTables[t].setAttribute("rowsContinueFrom", (startTables[t].pageId + "." + startTables[t].bounds));
-					}
-					DialogFactory.alert("Table rows merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Rows Merged", JOptionPane.INFORMATION_MESSAGE);
-					return true;
+					return connectTableRows(startTable, secondWord);
 				}
 				public ImWord getFirstWord() {
-					return start;
+					if (this.artificialStartWord == null)
+						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
+					return this.artificialStartWord;
 				}
 				public String getActiveLabel() {
 					return ("Click some word in the table to connect rows to");
@@ -238,47 +205,14 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	offer merging columns across tables
 		if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && !startTable.hasAttribute("colsContinueIn"))
 			actions.add(new TwoClickSelectionAction("tableExtendCols", "Connect Table Columns", "Connect the columns in this table to those in another table, merging the tables top to bottom.") {
+				private ImWord artificialStartWord = null;
 				public boolean performAction(ImWord secondWord) {
-					if (start.getTextStreamId().equals(secondWord.getTextStreamId())) {
-						DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the same table as '" + start.getString() + "'\nA table cannot be merged with itself"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					ImRegion secondWordTable = getTableAt(secondWord);
-					if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
-						DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable, true)) {
-						DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have\n- the same number of coumns\n- the same header on each one but the first (row label) column", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					ImRegion[] startTables = ImUtils.getRowConnectedTables(startTable);
-					ImRegion[] secondWordTables = ImUtils.getRowConnectedTables(secondWordTable);
-					if (startTables.length != secondWordTables.length) {
-						DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					if (startTables.length > 1) {
-						for (int t = 0; t < startTables.length; t++)
-							if (!ImUtils.areTableColumnsCompatible(startTables[t], secondWordTables[t], true)) {
-								DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
-								return false;
-							}
-					}
-					
-					for (int t = 0; t < startTables.length; t++) {
-						startTables[t].setAttribute("colsContinueIn", (secondWordTables[t].pageId + "." + secondWordTables[t].bounds));
-						secondWordTables[t].setAttribute("colsContinueFrom", (startTables[t].pageId + "." + startTables[t].bounds));
-					}
-					DialogFactory.alert("Table columns merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Columns Merged", JOptionPane.INFORMATION_MESSAGE);
-					return true;
+					return connectTableCols(startTable, secondWord);
 				}
 				public ImWord getFirstWord() {
-					return start;
+					if (this.artificialStartWord == null)
+						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
+					return this.artificialStartWord;
 				}
 				public String getActiveLabel() {
 					return ("Click some word in the table to connect columns to");
@@ -289,57 +223,13 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (startTable.hasAttribute("rowsContinueFrom") || startTable.hasAttribute("rowsContinueIn"))
 			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows", "Disconnect the rows in this table from the other tables they are connected to.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					ImRegion[] tables = ImUtils.getColumnConnectedTables(startTable);
-					ImRegion leftTable = ImUtils.getTableForId(idmp.document, ((String) (startTable.getAttribute("rowsContinueFrom"))));
-					ImRegion[] leftTables = null;
-					if (leftTable != null) {
-						leftTables = ImUtils.getColumnConnectedTables(leftTable);
-						for (int t = 0; t < leftTables.length; t++)
-							leftTables[t].removeAttribute("rowsContinueIn");
-						for (int t = 0; t < tables.length; t++)
-							tables[t].removeAttribute("rowsContinueFrom");
-					}
-					ImRegion rightTable = ImUtils.getTableForId(idmp.document, ((String) (startTable.getAttribute("rowsContinueIn"))));
-					ImRegion[] rightTables = null;
-					if (rightTable != null) {
-						rightTables = ImUtils.getColumnConnectedTables(rightTable);
-						for (int t = 0; t < tables.length; t++)
-							tables[t].removeAttribute("rowsContinueIn");
-						for (int t = 0; t < rightTables.length; t++)
-							rightTables[t].removeAttribute("rowsContinueFrom");
-					}
-					if ((leftTable != null) && (rightTable != null))
-						ImUtils.connectTableRows(leftTable, rightTable);
-					DialogFactory.alert("Table rows dissected successfully", "Table Rows Dissected", JOptionPane.INFORMATION_MESSAGE);
-					return true;
+					return disconnectTableRows(idmp.document, startTable);
 				}
 			});
 		if (startTable.hasAttribute("colsContinueFrom") || startTable.hasAttribute("colsContinueIn"))
 			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns", "Disconnect the columns in this table from the other tables they are connected to.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					ImRegion[] tables = ImUtils.getColumnConnectedTables(startTable);
-					ImRegion topTable = ImUtils.getTableForId(idmp.document, ((String) (startTable.getAttribute("colsContinueFrom"))));
-					ImRegion[] topTables = null;
-					if (topTable != null) {
-						topTables = ImUtils.getRowConnectedTables(topTable);
-						for (int t = 0; t < topTables.length; t++)
-							topTables[t].removeAttribute("colsContinueIn");
-						for (int t = 0; t < tables.length; t++)
-							tables[t].removeAttribute("colsContinueFrom");
-					}
-					ImRegion bottomTable = ImUtils.getTableForId(idmp.document, ((String) (startTable.getAttribute("colsContinueIn"))));
-					ImRegion[] bottomTables = null;
-					if (bottomTable != null) {
-						bottomTables = ImUtils.getRowConnectedTables(bottomTable);
-						for (int t = 0; t < tables.length; t++)
-							tables[t].removeAttribute("colsContinueIn");
-						for (int t = 0; t < bottomTables.length; t++)
-							bottomTables[t].removeAttribute("colsContinueFrom");
-					}
-					if ((topTable != null) && (bottomTable != null))
-						ImUtils.connectTableColumns(topTable, bottomTable);
-					DialogFactory.alert("Table columns dissected successfully", "Table Columns Dissected", JOptionPane.INFORMATION_MESSAGE);
-					return true;
+					return disconnectTableCols(idmp.document, startTable);
 				}
 			});
 		
@@ -347,29 +237,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
 			private ImWord artificialStartWord = null;
 			public boolean performAction(ImWord secondWord) {
-				if (!ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
-					return false;
-				
-				//	find affected caption
-				ImAnnotation[] wordAnnots = idmp.document.getAnnotationsSpanning(secondWord);
-				ArrayList wordCaptions = new ArrayList(2);
-				for (int a = 0; a < wordAnnots.length; a++) {
-					if (ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
-						wordCaptions.add(wordAnnots[a]);
-				}
-				if (wordCaptions.size() != 1)
-					return false;
-				ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
-				
-				//	does this caption match?
-				if (!wordCaption.getFirstWord().getString().toLowerCase().startsWith("tab"))
-					return false;
-				
-				//	set attributes
-				wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, startTable.bounds.toString());
-				wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + startTable.pageId));
-				wordCaption.setAttribute("targetIsTable");
-				return true;
+				return assignTableCaption(idmp.document, startTable, secondWord);
 			}
 			public ImWord getFirstWord() {
 				if (this.artificialStartWord == null)
@@ -404,7 +272,67 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#attributeChanged(de.uka.ipd.idaho.im.ImObject, java.lang.String, java.lang.Object, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
 	 */
-	public void attributeChanged(ImObject object, String attributeName, Object oldValue, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
+	public void attributeChanged(ImObject object, String attributeName, Object oldValue, ImDocumentMarkupPanel idmp, boolean allowPrompt) {
+		
+		//	we're only interested in chunks of text cut off table
+		if (!(object instanceof ImWord) || !ImWord.TEXT_STREAM_TYPE_ATTRIBUTE.equals(attributeName) || !ImWord.TEXT_STREAM_TYPE_TABLE.equals(oldValue))
+			return;
+		
+		//	we're not interested in deletions
+		if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(object.getAttribute(attributeName)) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(object.getAttribute(attributeName)))
+			return;
+		
+		//	get word and page
+		ImWord word = ((ImWord) object);
+		ImPage wordPage = word.getPage();
+		if (wordPage == null)
+			return;
+		
+		//	get table word lies in
+		ImRegion[] wordTable = this.getRegionsOverlapping(wordPage, word.bounds, ImRegion.TABLE_TYPE);
+		if (wordTable.length != 1)
+			return;
+		
+		//	get whole text stream
+		ImWord streamStartWord = word;
+		while (streamStartWord.getPreviousWord() != null) {
+			streamStartWord = streamStartWord.getPreviousWord();
+			if (streamStartWord.pageId != word.pageId)
+				return;
+		}
+		ImWord streamEndWord = word;
+		while (streamEndWord.getNextWord() != null) {
+			streamEndWord = streamEndWord.getNextWord();
+			if (streamEndWord.pageId != word.pageId)
+				return;
+		}
+		
+		//	get bounds of text stream
+		ArrayList streamWords = new ArrayList();
+		for (ImWord imw = streamStartWord; imw != null; imw = imw.getNextWord())
+			streamWords.add(imw);
+		BoundingBox streamBounds = ImLayoutObject.getAggregateBox((ImWord[]) streamWords.toArray(new ImWord[streamWords.size()]));
+		if (!wordTable[0].bounds.overlaps(streamBounds))
+			return;
+		if (wordTable[0].bounds.liesIn(streamBounds, true))
+			return;
+		
+		//	get bounds of remaining table
+		ImWord[] tableWords = wordPage.getWordsInside(wordTable[0].bounds);
+		ArrayList cutTableWords = new ArrayList();
+		for (int w = 0; w < tableWords.length; w++) {
+			if (!streamBounds.includes(tableWords[w].bounds, true))
+				cutTableWords.add(tableWords[w]);
+		}
+		if (cutTableWords.isEmpty())
+			return;
+		BoundingBox cutTableBounds = ImLayoutObject.getAggregateBox((ImWord[]) cutTableWords.toArray(new ImWord[cutTableWords.size()]));
+		if (cutTableBounds.overlaps(streamBounds))
+			return;
+		
+		//	cut marked stream off table, but don't revert it to main text
+		this.cutTable(wordPage, wordTable[0], null, cutTableBounds, streamBounds, idmp);
+	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#regionAdded(de.uka.ipd.idaho.im.ImRegion, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
@@ -438,19 +366,30 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#regionRemoved(de.uka.ipd.idaho.im.ImRegion, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
 	 */
 	public void regionRemoved(ImRegion region, ImDocumentMarkupPanel idmp, boolean allowPrompt) {
+		
+		//	we're only interested in table removals
 		if (!ImRegion.TABLE_TYPE.equals(region.getType()))
 			return;
+		
+		//	clean up table structure
 		ImPage page = idmp.document.getPage(region.pageId);
 		ImRegion[] subRegions = page.getRegionsInside(region.bounds, true);
 		for (int r = 0; r < subRegions.length; r++) {
 			if (ImRegion.TABLE_CELL_TYPE.equals(subRegions[r].getType()) || ImRegion.TABLE_COL_TYPE.equals(subRegions[r].getType()) || ImRegion.TABLE_ROW_TYPE.equals(subRegions[r].getType()))
 				page.removeRegion(subRegions[r]);
 		}
+		
+		//	this one is an internal removal, leave text streams alone
+		if (region.hasAttribute("ignoreWordCleanup"))
+			return;
+		
+		//	revert former table words to main text stream
 		ImWord[] words = page.getWordsInside(region.bounds);
 		if (words.length != 0) {
 			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 			Arrays.sort(words, ImUtils.textStreamOrder);
 			words[0].setTextStreamType(ImWord.TEXT_STREAM_TYPE_MAIN_TEXT);
+			//	TODO also mark block, paragraphs, and lines, or delegate to RegionActionProvider
 		}
 	}
 	
@@ -670,189 +609,490 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return this.getActions(page, selectedWords, selectedBox, idmp);
 	}
 	
-	private SelectionAction[] getActions(final ImPage page, final ImWord[] words, final BoundingBox wordsBox, final ImDocumentMarkupPanel idmp) {
+	private SelectionAction[] getActions(final ImPage page, final ImWord[] selWords, final BoundingBox selWordsBox, final ImDocumentMarkupPanel idmp) {
 		LinkedList actions = new LinkedList();
 		
-		//	get selected table
-		final ImRegion[] tables = this.getRegionsIncluding(page, wordsBox, ImRegion.TABLE_TYPE, true);
+		//	get table(s) overlapping selection, even without center
+		final ImRegion[] selTables = this.getRegionsOverlapping(page, selWordsBox, ImRegion.TABLE_TYPE);
 		
-		//	no table selected, offer marking selected words as a table and analyze table structure
-		if ((tables.length == 0) && (words.length != 0))
-			actions.add(new SelectionAction("markRegionTable", "Mark Table", "Mark selected words as a table and analyze table structure.") {
+		//	if multiple tables selected, offer merging
+		if (selTables.length > 1) {
+			actions.add(new SelectionAction("mergeTable", "Merge Tables", "Merge the selected tables into one.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return markTable(page, words, wordsBox, invoker);
+					
+					//	remove existing tables
+					for (int t = 0; t < selTables.length; t++) {
+						ImRegion[] tableRows = getRegionsInside(page, selTables[t].bounds, ImRegion.TABLE_ROW_TYPE, true);
+						for (int r = 0; r < tableRows.length; r++)
+							page.removeRegion(tableRows[r]);
+						ImRegion[] tableCols = getRegionsInside(page, selTables[t].bounds, ImRegion.TABLE_COL_TYPE, true);
+						for (int c = 0; c < tableCols.length; c++)
+							page.removeRegion(tableCols[c]);
+						selTables[t].setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
+						page.removeRegion(selTables[t]);
+					}
+					
+					//	mark table in convex hull of selected tables
+					BoundingBox mTableBox = ImLayoutObject.getAggregateBox(selTables);
+					ImWord[] mTableWords = page.getWordsInside(mTableBox);
+					return markTable(page, mTableWords, mTableBox, invoker);
+				}
+			});
+			
+			//	little else to do ...
+			return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+		}
+		
+		//	no table selected
+		if (selTables.length == 0) {
+			
+			//	offer marking selected words as a table and analyze table structure
+			if (selWords.length != 0)
+				actions.add(new SelectionAction("markRegionTable", "Mark Table", "Mark selected words as a table and analyze table structure.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return markTable(page, selWords, selWordsBox, invoker);
+					}
+				});
+			
+			//	little else to do ...
+			return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+		}
+		
+		//	get all table words
+		final ImWord[] tableWords = selTables[0].getWords();
+		
+		//	sort selected words inside and outside table
+		ArrayList selTableWordList = new ArrayList();
+		ArrayList selNonTableWordwList = new ArrayList();
+		for (int w = 0; w < selWords.length; w++) {
+			if (selTables[0].bounds.includes(selWords[w].bounds, true))
+				selTableWordList.add(selWords[w]);
+			else selNonTableWordwList.add(selWords[w]);
+		}
+		final ImWord[] selTableWords = ((ImWord[]) selTableWordList.toArray(new ImWord[selTableWordList.size()]));
+		final ImWord[] selNonTableWords = ((ImWord[]) selNonTableWordwList.toArray(new ImWord[selNonTableWordwList.size()]));
+		
+		//	check if selected table words are at some edge, i.e., there are no non-selected table words in the respective direction of the selected table words
+		BoundingBox hStripe = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, Math.max(selWordsBox.top, selTables[0].bounds.top), Math.min(selWordsBox.bottom, selTables[0].bounds.bottom));
+		ImWord[] hStripeWords = page.getWordsInside(hStripe);
+		boolean leftEdge = true;
+		boolean rightEdge = true;
+		for (int w = 0; w < hStripeWords.length; w++) {
+			if (hStripeWords[w].centerX < selWordsBox.left)
+				leftEdge = false;
+			if (hStripeWords[w].centerX >= selWordsBox.right)
+				rightEdge = false;
+		}
+		boolean topTableEdgeSelected = false;
+		boolean bottomTableEdgeSelected = false;
+		if (leftEdge && rightEdge) {
+			topTableEdgeSelected = true;
+			bottomTableEdgeSelected = true;
+			for (int w = 0; w < tableWords.length; w++) {
+				if (tableWords[w].centerY < hStripe.top)
+					topTableEdgeSelected = false;
+				if (tableWords[w].centerY >= hStripe.bottom)
+					bottomTableEdgeSelected = false;
+			}
+		}
+		BoundingBox vStripe = new BoundingBox(Math.max(selWordsBox.left, selTables[0].bounds.left), Math.min(selWordsBox.right, selTables[0].bounds.right), selTables[0].bounds.top, selTables[0].bounds.bottom);
+		ImWord[] vStripeWords = page.getWordsInside(vStripe);
+		boolean topEdge = true;
+		boolean bottomEdge = true;
+		for (int w = 0; w < vStripeWords.length; w++) {
+			if (vStripeWords[w].centerY < selWordsBox.top)
+				topEdge = false;
+			if (vStripeWords[w].centerY >= selWordsBox.bottom)
+				bottomEdge = false;
+		}
+		boolean leftTableEdgeSelected = false;
+		boolean rightTableEdgeSelected = false;
+		if (topEdge && bottomEdge) {
+			leftTableEdgeSelected = true;
+			rightTableEdgeSelected = true;
+			for (int w = 0; w < tableWords.length; w++) {
+				if (tableWords[w].centerX < vStripe.left)
+					leftTableEdgeSelected = false;
+				if (tableWords[w].centerX >= hStripe.right)
+					rightTableEdgeSelected = false;
+			}
+		}
+		final BoundingBox cutTableBox;
+		final BoundingBox cutOffTableBox;
+		final boolean cutFromTable;
+		if ((selTableWords.length != 0) && (selNonTableWords.length == 0) && ((topTableEdgeSelected != bottomTableEdgeSelected) || (leftTableEdgeSelected != rightTableEdgeSelected))) {
+			if (leftTableEdgeSelected) {
+				if (selWordsBox.right < ((selTables[0].bounds.left + selTables[0].bounds.right) / 2)) {
+					cutTableBox = new BoundingBox(selWordsBox.right, selTables[0].bounds.right, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutOffTableBox = new BoundingBox(selTables[0].bounds.left, selWordsBox.right, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutFromTable = true;
+				}
+				else {
+					cutTableBox = new BoundingBox(selTables[0].bounds.left, selWordsBox.right, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutOffTableBox = new BoundingBox(selWordsBox.right, selTables[0].bounds.right, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutFromTable = false;
+				}
+			}
+			else if (rightTableEdgeSelected) {
+				if (selWordsBox.left > ((selTables[0].bounds.left + selTables[0].bounds.right) / 2)) {
+					cutTableBox = new BoundingBox(selTables[0].bounds.left, selWordsBox.left, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutOffTableBox = new BoundingBox(selWordsBox.left, selTables[0].bounds.right, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutFromTable = true;
+				}
+				else {
+					cutTableBox = new BoundingBox(selWordsBox.left, selTables[0].bounds.right, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutOffTableBox = new BoundingBox(selTables[0].bounds.left, selWordsBox.left, selTables[0].bounds.top, selTables[0].bounds.bottom);
+					cutFromTable = false;
+				}
+			}
+			else if (topTableEdgeSelected) {
+				if (selWordsBox.bottom < ((selTables[0].bounds.top + selTables[0].bounds.bottom) / 2)) {
+					cutTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selWordsBox.bottom, selTables[0].bounds.bottom);
+					cutOffTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selTables[0].bounds.top, selWordsBox.bottom);
+					cutFromTable = true;
+				}
+				else {
+					cutTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selTables[0].bounds.top, selWordsBox.bottom);
+					cutOffTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selWordsBox.bottom, selTables[0].bounds.bottom);
+					cutFromTable = false;
+				}
+			}
+			else if (bottomTableEdgeSelected) {
+				if (selWordsBox.top > ((selTables[0].bounds.top + selTables[0].bounds.bottom) / 2)) {
+					cutTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selTables[0].bounds.top, selWordsBox.top);
+					cutOffTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selWordsBox.top, selTables[0].bounds.bottom);
+					cutFromTable = true;
+				}
+				else {
+					cutTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selWordsBox.top, selTables[0].bounds.bottom);
+					cutOffTableBox = new BoundingBox(selTables[0].bounds.left, selTables[0].bounds.right, selTables[0].bounds.top, selWordsBox.top);
+					cutFromTable = false;
+				}
+			}
+			else {
+				cutTableBox = null;
+				cutOffTableBox = null;
+				cutFromTable = false;
+			}
+		}
+		else {
+			cutTableBox = null;
+			cutOffTableBox = null;
+			cutFromTable = false;
+		}
+		
+		//	working on table rows
+		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && (selWords.length != 0)) {
+			final ImRegion[] selectedRows = this.getRegionsInside(page, selWordsBox, ImRegion.TABLE_ROW_TYPE, true);
+			final ImRegion[] partSelectedRows = this.getRegionsIncluding(page, selWordsBox, ImRegion.TABLE_ROW_TYPE, true);
+			
+			//	if multiple table row regions selected, offer merging them, and cells along the way
+			if (selectedRows.length > 1)
+				actions.add(new SelectionAction("tableMergeRows", "Merge Table Rows", "Merge selected table rows.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return mergeTableRows(selTables[0], selectedRows);
+					}
+				});
+			
+			//	if only part of one row selected, offer splitting row
+			else if (partSelectedRows.length == 1) {
+				actions.add(new SelectionAction("tableSplitRow", "Split Table Row", "Split selected table row.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return splitTableRow(selTables[0], partSelectedRows[0], selWordsBox);
+					}
+				});
+				if (!selTables[0].hasAttribute("rowsContinueFrom") && !selTables[0].hasAttribute("rowsContinueIn"))
+					actions.add(new SelectionAction("tableSplitRow", "Split Table Row to Lines", "Split selected table row into individual lines.") {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return splitTableRowToLines(selTables[0], partSelectedRows[0]);
+						}
+					});
+			}
+		}
+		
+		//	working on table columns
+		if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && (selWords.length != 0)) {
+			final ImRegion[] selectedCols = this.getRegionsInside(page, selWordsBox, ImRegion.TABLE_COL_TYPE, true);
+			final ImRegion[] partSelectedCols = this.getRegionsIncluding(page, selWordsBox, ImRegion.TABLE_COL_TYPE, true);
+			
+			//	if multiple table column regions selected, offer merging them, and cells along the way
+			if (selectedCols.length > 1)
+				actions.add(new SelectionAction("tableMergeColumns", "Merge Table Columns", "Merge selected table columns.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return mergeTableCols(selTables[0], selectedCols);
+					}
+				});
+			
+			//	if only part of one column selected, offer splitting column
+			else if (partSelectedCols.length == 1)
+				actions.add(new SelectionAction("tableSplitColumns", "Split Table Column", "Split selected table column.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return splitTableCol(selTables[0], partSelectedCols[0], selWordsBox);
+					}
+				});
+		}
+		
+		//	reduce size of table
+		if ((cutTableBox != null) && (cutOffTableBox != null))
+			actions.add(new SelectionAction("tableCut", "Cut Table", (cutFromTable ? "Cut selected words off table." : "Cut table to selected words.")) {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return cutTable(page, selTables[0], tableWords, cutTableBox, cutOffTableBox, idmp);
 				}
 			});
 		
-		//	one table selected, offer editing structure
-		else if (tables.length == 1) {
-			
-			//	working on table rows
-			if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && (words.length != 0)) {
-				final ImRegion[] selectedRows = this.getRegionsInside(page, wordsBox, ImRegion.TABLE_ROW_TYPE, true);
-				final ImRegion[] partSelectedRows = this.getRegionsIncluding(page, wordsBox, ImRegion.TABLE_ROW_TYPE, true);
-				
-				//	if multiple table row regions selected, offer merging them, and cells along the way
-				if (selectedRows.length > 1)
-					actions.add(new SelectionAction("tableMergeRows", "Merge Table Rows", "Merge selected table rows.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return mergeTableRows(tables[0], selectedRows);
-						}
-					});
-				
-				//	if only part of one row selected, offer splitting row
-				else if (partSelectedRows.length == 1) {
-					actions.add(new SelectionAction("tableSplitRow", "Split Table Row", "Split selected table row.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return splitTableRow(tables[0], partSelectedRows[0], wordsBox);
-						}
-					});
-					if (!tables[0].hasAttribute("rowsContinueFrom") && !tables[0].hasAttribute("rowsContinueIn"))
-						actions.add(new SelectionAction("tableSplitRow", "Split Table Row to Lines", "Split selected table row into individual lines.") {
-							public boolean performAction(ImDocumentMarkupPanel invoker) {
-								return splitTableRowToLines(tables[0], partSelectedRows[0]);
-							}
-						});
-				}
-			}
-			
-			//	working on table columns
-			if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && (words.length != 0)) {
-				final ImRegion[] selectedCols = this.getRegionsInside(page, wordsBox, ImRegion.TABLE_COL_TYPE, true);
-				final ImRegion[] partSelectedCols = this.getRegionsIncluding(page, wordsBox, ImRegion.TABLE_COL_TYPE, true);
-				
-				//	if multiple table column regions selected, offer merging them, and cells along the way
-				if (selectedCols.length > 1)
-					actions.add(new SelectionAction("tableMergeColumns", "Merge Table Columns", "Merge selected table columns.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return mergeTableCols(tables[0], selectedCols);
-						}
-					});
-				
-				//	if only part of one column selected, offer splitting column
-				else if (partSelectedCols.length == 1)
-					actions.add(new SelectionAction("tableSplitColumns", "Split Table Column", "Split selected table column.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return splitTableCol(tables[0], partSelectedCols[0], wordsBox);
-						}
-					});
-			}
-			
-			//	update table structure after manual modifications
-			actions.add(new SelectionAction("tableUpdate", "Update Table", "Update table to reflect manual modifications.") {
+		//	extend table
+		if (selNonTableWords.length != 0)
+			actions.add(new SelectionAction("tableExtend", "Extend Table", "Extend table to include all selected words.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					ImRegion[][] tableCells = markTableCells(page, tables[0]);
-					ImUtils.orderTableWords(tableCells);
-					cleanupTableAnnotations(page.getDocument(), tables[0]);
+					
+					//	compute new table bounds
+					BoundingBox extWordsBox = ImLayoutObject.getAggregateBox(selNonTableWords);
+					BoundingBox extTableBox = new BoundingBox(
+							Math.min(extWordsBox.left, selTables[0].bounds.left),
+							Math.max(extWordsBox.right, selTables[0].bounds.right),
+							Math.min(extWordsBox.top, selTables[0].bounds.top),
+							Math.max(extWordsBox.bottom, selTables[0].bounds.bottom)
+						);
+					
+					//	salvage rows and columns
+					ImRegion[] tableRows = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_ROW_TYPE, true);
+					for (int r = 0; r < tableRows.length; r++)
+						page.removeRegion(tableRows[r]);
+					ImRegion[] tableCols = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_COL_TYPE, true);
+					for (int c = 0; c < tableCols.length; c++)
+						page.removeRegion(tableCols[c]);
+					
+					//	remove old table (no need for cleaning up words, as they all are in new table
+					selTables[0].setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
+					page.removeRegion(selTables[0]);
+					
+					//	mark table (will use existing rows and columns)
+					markTable(page, page.getWordsInside(extTableBox), extTableBox, idmp);
+					
+					//	make sure exiting row gaps are preserved
+					ImRegion[] eTableRows = getRegionsInside(page, extTableBox, ImRegion.TABLE_ROW_TYPE, true);
+					boolean eTableChanged = false;
+					for (int r = 0; r < eTableRows.length; r++) {
+						ArrayList tableRowList = new ArrayList(1);
+						for (int cr = 0; cr < tableRows.length; cr++) {
+							if (tableRows[cr].bounds.overlaps(eTableRows[r].bounds))
+								tableRowList.add(tableRows[cr]);
+						}
+						if (tableRowList.size() < 2)
+							continue;
+						for (int sr = 0; sr < tableRowList.size(); sr++) {
+							ImRegion sTableRow = ((ImRegion) tableRowList.get(sr));
+							BoundingBox sTableRowBox = new BoundingBox(eTableRows[r].bounds.left, eTableRows[r].bounds.right, Math.max(eTableRows[r].bounds.top,  sTableRow.bounds.top), Math.min(eTableRows[r].bounds.bottom, sTableRow.bounds.bottom));
+							ImWord[] sTableRowWords = page.getWordsInside(sTableRowBox);
+							new ImRegion(page, ImLayoutObject.getAggregateBox(sTableRowWords), ImRegion.TABLE_ROW_TYPE);
+						}
+						page.removeRegion(eTableRows[r]);
+						eTableChanged = true;
+					}
+					eTableRows = getRegionsInside(page, extTableBox, ImRegion.TABLE_ROW_TYPE, true);
+					for (int r = 0; r < tableRows.length; r++) {
+						ArrayList tableRowList = new ArrayList(1);
+						for (int cr = 0; cr < eTableRows.length; cr++) {
+							if (tableRows[r].bounds.overlaps(eTableRows[cr].bounds))
+								tableRowList.add(eTableRows[cr]);
+						}
+						if (tableRowList.size() < 2)
+							continue;
+						BoundingBox mTableRowBox = ImLayoutObject.getAggregateBox((ImRegion[]) tableRowList.toArray(new ImRegion[tableRowList.size()]));
+						ImWord[] mTableRowWords = page.getWordsInside(mTableRowBox);
+						new ImRegion(page, ImLayoutObject.getAggregateBox(mTableRowWords), ImRegion.TABLE_ROW_TYPE);
+						for (int mr = 0; mr < tableRowList.size(); mr++)
+							page.removeRegion((ImRegion) tableRowList.get(mr));
+						eTableRows = getRegionsInside(page, extTableBox, ImRegion.TABLE_ROW_TYPE, true);
+						eTableChanged = true;
+					}
+					
+					//	make sure exiting columns gaps are preserved
+					ImRegion[] eTableCols = getRegionsInside(page, extTableBox, ImRegion.TABLE_COL_TYPE, true);
+					for (int c = 0; c < eTableCols.length; c++) {
+						ArrayList tableColList = new ArrayList(1);
+						for (int cc = 0; cc < tableRows.length; cc++) {
+							if (tableRows[cc].bounds.overlaps(eTableCols[c].bounds))
+								tableColList.add(tableRows[cc]);
+						}
+						if (tableColList.size() < 2)
+							continue;
+						for (int sc = 0; sc < tableColList.size(); sc++) {
+							ImRegion sTabeCol = ((ImRegion) tableColList.get(sc));
+							BoundingBox sTableColBox = new BoundingBox(Math.max(eTableCols[c].bounds.left,  sTabeCol.bounds.left), Math.min(eTableCols[c].bounds.right, sTabeCol.bounds.right), eTableCols[c].bounds.top, eTableCols[c].bounds.bottom);
+							ImWord[] sTableColWords = page.getWordsInside(sTableColBox);
+							new ImRegion(page, ImLayoutObject.getAggregateBox(sTableColWords), ImRegion.TABLE_COL_TYPE);
+						}
+						page.removeRegion(eTableCols[c]);
+						eTableChanged = true;
+					}
+					eTableCols = getRegionsInside(page, extTableBox, ImRegion.TABLE_COL_TYPE, true);
+					for (int c = 0; c < tableCols.length; c++) {
+						ArrayList tableColList = new ArrayList(1);
+						for (int cc = 0; cc < eTableCols.length; cc++) {
+							if (tableRows[c].bounds.overlaps(eTableCols[cc].bounds))
+								tableColList.add(eTableCols[cc]);
+						}
+						if (tableColList.size() < 2)
+							continue;
+						BoundingBox mTableColBox = ImLayoutObject.getAggregateBox((ImRegion[]) tableColList.toArray(new ImRegion[tableColList.size()]));
+						ImWord[] mTableColWords = page.getWordsInside(mTableColBox);
+						new ImRegion(page, ImLayoutObject.getAggregateBox(mTableColWords), ImRegion.TABLE_COL_TYPE);
+						for (int mc = 0; mc < tableColList.size(); mc++)
+							page.removeRegion((ImRegion) tableColList.get(mc));
+						eTableCols = getRegionsInside(page, extTableBox, ImRegion.TABLE_COL_TYPE, true);
+						eTableChanged = true;
+					}
+					
+					//	update table cells if required
+					if (eTableChanged)
+						markTableCells(page, selTables[0]);
+					
+					//	finally ...
 					return true;
 				}
 			});
-			
-			//	offer assigning caption with second click
-			actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
+		
+		//	update table structure after manual modifications
+		actions.add(new SelectionAction("tableUpdate", "Update Table", "Update table to reflect manual modifications.") {
+			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				ImRegion[][] tableCells = markTableCells(page, selTables[0]);
+				ImUtils.orderTableWords(tableCells);
+				cleanupTableAnnotations(page.getDocument(), selTables[0]);
+				return true;
+			}
+		});
+		
+		//	offer assigning caption with second click
+		actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
+			private ImWord artificialStartWord = null;
+			public boolean performAction(ImWord secondWord) {
+				return assignTableCaption(idmp.document, selTables[0], secondWord);
+			}
+			public ImWord getFirstWord() {
+				if (this.artificialStartWord == null)
+					this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
+				return this.artificialStartWord;
+			}
+			public String getActiveLabel() {
+				return ("Click on a caption to assign it to the table at " + selTables[0].bounds.toString() + " on page " + (selTables[0].pageId + 1));
+			}
+		});
+		
+		//	offer merging rows across tables
+		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && !selTables[0].hasAttribute("rowsContinueIn"))
+			actions.add(new TwoClickSelectionAction("tableExtendRows", "Connect Table Rows", "Connect the rows in this table to those in another table, merging the tables left to right.") {
 				private ImWord artificialStartWord = null;
 				public boolean performAction(ImWord secondWord) {
-					if (!ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
-						return false;
-					
-					//	find affected caption
-					ImAnnotation[] wordAnnots = idmp.document.getAnnotationsSpanning(secondWord);
-					ArrayList wordCaptions = new ArrayList(2);
-					for (int a = 0; a < wordAnnots.length; a++) {
-						if (ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
-							wordCaptions.add(wordAnnots[a]);
-					}
-					if (wordCaptions.size() != 1)
-						return false;
-					ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
-					
-					//	does this caption match?
-					if (!wordCaption.getFirstWord().getString().toLowerCase().startsWith("tab"))
-						return false;
-					
-					//	set attributes
-					wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, tables[0].bounds.toString());
-					wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + tables[0].pageId));
-					wordCaption.setAttribute("targetIsTable");
-					return true;
+					return connectTableRows(selTables[0], secondWord);
 				}
 				public ImWord getFirstWord() {
 					if (this.artificialStartWord == null)
-						this.artificialStartWord = new ImWord(tables[0].getDocument(), tables[0].pageId, tables[0].bounds, "TABLE");
+						this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
 					return this.artificialStartWord;
 				}
 				public String getActiveLabel() {
-					return ("Click on a caption to assign it to the table at " + tables[0].bounds.toString() + " on page " + (tables[0].pageId + 1));
+					return ("Click some word in the table to connect rows to");
 				}
 			});
-			
-			//	offer exporting tables as CSV
-			actions.add(new SelectionAction("tableCopySingle", "Copy Table Data", "Copy the data in the table to the clipboard.") {
+		
+		//	offer merging columns across tables
+		if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && !selTables[0].hasAttribute("colsContinueIn"))
+			actions.add(new TwoClickSelectionAction("tableExtendCols", "Connect Table Columns", "Connect the columns in this table to those in another table, merging the tables top to bottom.") {
+				private ImWord artificialStartWord = null;
+				public boolean performAction(ImWord secondWord) {
+					return connectTableCols(selTables[0], secondWord);
+				}
+				public ImWord getFirstWord() {
+					if (this.artificialStartWord == null)
+						this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
+					return this.artificialStartWord;
+				}
+				public String getActiveLabel() {
+					return ("Click some word in the table to connect columns to");
+				}
+			});
+		
+		//	offer dissecting as rows and columns
+		if (selTables[0].hasAttribute("rowsContinueFrom") || selTables[0].hasAttribute("rowsContinueIn"))
+			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows", "Disconnect the rows in this table from the other tables they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableRows(idmp.document, selTables[0]);
+				}
+			});
+		if (selTables[0].hasAttribute("colsContinueFrom") || selTables[0].hasAttribute("colsContinueIn"))
+			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns", "Disconnect the columns in this table from the other tables they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableCols(idmp.document, selTables[0]);
+				}
+			});
+		
+		//	offer exporting tables as CSV
+		actions.add(new SelectionAction("tableCopySingle", "Copy Table Data", "Copy the data in the table to the clipboard.") {
+			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				return false;
+			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenu pm = new JMenu("Copy Table Data ...");
+				JMenuItem mi;
+				mi = new JMenuItem("- CSV (comma separated)");
+				mi.addActionListener(new ActionListener() {
+					public void actionPerformed(ActionEvent ae) {
+						copyTableData(selTables[0], ',');
+					}
+				});
+				pm.add(mi);
+				mi = new JMenuItem("- Excel (semicolon separated)");
+				mi.addActionListener(new ActionListener() {
+					public void actionPerformed(ActionEvent ae) {
+						copyTableData(selTables[0], ';');
+					}
+				});
+				pm.add(mi);
+				mi = new JMenuItem("- Text (tab separated)");
+				mi.addActionListener(new ActionListener() {
+					public void actionPerformed(ActionEvent ae) {
+						copyTableData(selTables[0], '\t');
+					}
+				});
+				pm.add(mi);
+				return pm;
+			}
+		});
+		
+		//	offer exporting grid of connected tables as CSV
+		if (selTables[0].hasAttribute("rowsContinueIn") || selTables[0].hasAttribute("rowsContinueFrom") || selTables[0].hasAttribute("colsContinueIn") || selTables[0].hasAttribute("colsContinueFrom"))
+			actions.add(new SelectionAction("tableCopyGrid", "Copy Table Grid Data", "Copy the data in the table and all connected tables to the clipboard.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
 				}
 				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-					JMenu pm = new JMenu("Copy Table Data ...");
+					JMenu pm = new JMenu("Copy Table Grid Data ...");
 					JMenuItem mi;
 					mi = new JMenuItem("- CSV (comma separated)");
 					mi.addActionListener(new ActionListener() {
 						public void actionPerformed(ActionEvent ae) {
-							copyTableData(tables[0], ',');
+							copyTableGridData(selTables[0], ',');
 						}
 					});
 					pm.add(mi);
 					mi = new JMenuItem("- Excel (semicolon separated)");
 					mi.addActionListener(new ActionListener() {
 						public void actionPerformed(ActionEvent ae) {
-							copyTableData(tables[0], ';');
+							copyTableGridData(selTables[0], ';');
 						}
 					});
 					pm.add(mi);
 					mi = new JMenuItem("- Text (tab separated)");
 					mi.addActionListener(new ActionListener() {
 						public void actionPerformed(ActionEvent ae) {
-							copyTableData(tables[0], '\t');
+							copyTableGridData(selTables[0], '\t');
 						}
 					});
 					pm.add(mi);
 					return pm;
 				}
 			});
-			
-			//	offer exporting grid of connected tables as CSV
-			if (tables[0].hasAttribute("rowsContinueIn") || tables[0].hasAttribute("rowsContinueFrom") || tables[0].hasAttribute("colsContinueIn") || tables[0].hasAttribute("colsContinueFrom"))
-				actions.add(new SelectionAction("tableCopyGrid", "Copy Table Grid Data", "Copy the data in the table and all connected tables to the clipboard.") {
-					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return false;
-					}
-					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-						JMenu pm = new JMenu("Copy Table Grid Data ...");
-						JMenuItem mi;
-						mi = new JMenuItem("- CSV (comma separated)");
-						mi.addActionListener(new ActionListener() {
-							public void actionPerformed(ActionEvent ae) {
-								copyTableGridData(tables[0], ',');
-							}
-						});
-						pm.add(mi);
-						mi = new JMenuItem("- Excel (semicolon separated)");
-						mi.addActionListener(new ActionListener() {
-							public void actionPerformed(ActionEvent ae) {
-								copyTableGridData(tables[0], ';');
-							}
-						});
-						pm.add(mi);
-						mi = new JMenuItem("- Text (tab separated)");
-						mi.addActionListener(new ActionListener() {
-							public void actionPerformed(ActionEvent ae) {
-								copyTableGridData(tables[0], '\t');
-							}
-						});
-						pm.add(mi);
-						return pm;
-					}
-				});
-		}
 		
 		//	TODO_once_example_available if multiple table cell regions selected, offer merging them, setting colspan and rowspan
 		
@@ -1379,6 +1619,275 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return cells;
 	}
 	
+	private boolean cutTable(ImPage page, ImRegion table, ImWord[] tableWords, BoundingBox cutTableBox, BoundingBox cutOffTableBox, ImDocumentMarkupPanel idmp) {
+		
+		//	compute new table bounds
+		ImWord[] cTableWords = page.getWordsInside(cutTableBox);
+		BoundingBox cTableBox = ImLayoutObject.getAggregateBox(cTableWords);
+		
+		//	salvage rows and columns
+		ImRegion[] tableRows = getRegionsInside(page, cTableBox, ImRegion.TABLE_ROW_TYPE, true);
+		for (int r = 0; r < tableRows.length; r++)
+			page.removeRegion(tableRows[r]);
+		ImRegion[] tableCols = getRegionsInside(page, cTableBox, ImRegion.TABLE_COL_TYPE, true);
+		for (int c = 0; c < tableCols.length; c++)
+			page.removeRegion(tableCols[c]);
+		
+		//	remove old table, and clean up words
+		table.setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
+		page.removeRegion(table);
+		if ((tableWords != null) && (tableWords.length != 0)) {
+			ImUtils.orderStream(tableWords, ImUtils.leftRightTopDownOrder);
+			Arrays.sort(tableWords, ImUtils.textStreamOrder);
+			tableWords[0].setTextStreamType(ImWord.TEXT_STREAM_TYPE_MAIN_TEXT);
+		}
+		
+		//	add rows and columns that lie in new table, maybe shrinking them
+		for (int r = 0; r < tableRows.length; r++) {
+			if (!tableRows[r].bounds.liesIn(cTableBox, true))
+				continue;
+			BoundingBox cTableRowBox = new BoundingBox(
+					Math.max(cTableBox.left, tableRows[r].bounds.left),
+					Math.min(cTableBox.right, tableRows[r].bounds.right),
+					Math.max(cTableBox.top, tableRows[r].bounds.top),
+					Math.min(cTableBox.bottom, tableRows[r].bounds.bottom)
+				);
+			tableRows[r] = new ImRegion(page, ImLayoutObject.getAggregateBox(page.getWordsInside(cTableRowBox)), ImRegion.TABLE_ROW_TYPE);
+		}
+		for (int c = 0; c < tableCols.length; c++) {
+			if (!tableCols[c].bounds.liesIn(cTableBox, true))
+				continue;
+			BoundingBox cTableColBox = new BoundingBox(
+					Math.max(cTableBox.left, tableCols[c].bounds.left),
+					Math.min(cTableBox.right, tableCols[c].bounds.right),
+					Math.max(cTableBox.top, tableCols[c].bounds.top),
+					Math.min(cTableBox.bottom, tableCols[c].bounds.bottom)
+				);
+			tableCols[c] = new ImRegion(page, ImLayoutObject.getAggregateBox(page.getWordsInside(cTableColBox)), ImRegion.TABLE_COL_TYPE);
+		}
+		
+		//	mark table (will use existing rows and columns)
+		markTable(page, cTableWords, cTableBox, idmp);
+		
+		//	enclose cut-off words in block TODO maybe delegate this to RegionActionProvider
+		ImWord[] coTableWords = page.getWordsInside(cutOffTableBox);
+		ImUtils.orderStream(coTableWords, ImUtils.leftRightTopDownOrder);
+		new ImRegion(page, ImLayoutObject.getAggregateBox(coTableWords), ImRegion.BLOCK_ANNOTATION_TYPE);
+		
+		//	finally ...
+		return true;
+	}
+	
+	private boolean assignTableCaption(ImDocument doc, ImRegion table, ImWord captionWord) {
+		if (!ImWord.TEXT_STREAM_TYPE_CAPTION.equals(captionWord.getTextStreamType()))
+			return false;
+		
+		//	find affected caption
+		ImAnnotation[] wordAnnots = doc.getAnnotationsSpanning(captionWord);
+		ArrayList wordCaptions = new ArrayList(2);
+		for (int a = 0; a < wordAnnots.length; a++) {
+			if (ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
+				wordCaptions.add(wordAnnots[a]);
+		}
+		if (wordCaptions.size() != 1)
+			return false;
+		ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
+		
+		//	does this caption match?
+		if (!wordCaption.getFirstWord().getString().toLowerCase().startsWith("tab"))
+			return false;
+		
+		//	set attributes
+		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, table.bounds.toString());
+		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + table.pageId));
+		wordCaption.setAttribute("targetIsTable");
+		return true;
+	}
+	
+	private boolean connectTableRows(ImRegion startTable, ImWord secondWord) {
+		ImRegion secondWordTable = getTableAt(secondWord);
+		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
+			DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		if ((startTable.pageId == secondWordTable.pageId) && startTable.bounds.equals(secondWordTable.bounds)) {
+			DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the to-merge table\nA table cannot be merged with itself"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+//		if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable, true)) {
+//			DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+//			return false;
+//		}
+		if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable, false)) {
+			DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have the same number of rows", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		String[] labels1 = ImUtils.getTableRowLabels(startTable);
+		String[] labels2 = ImUtils.getTableRowLabels(secondWordTable);
+		if ((labels1 == null) || (labels2 == null) || (labels1.length != labels2.length)) {
+			DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have the same number of rows", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		StringVector misMatchLabels = null;
+		for (int l = 1; l < labels1.length; l++) {
+			if (labels1[l].equals(labels2[l]))
+				continue;
+			if (misMatchLabels == null)
+				misMatchLabels = new StringVector();
+			if (misMatchLabels.size() < 5)
+				misMatchLabels.addElementIgnoreDuplicates(labels1[l] + "    " + labels2[l]);
+			else misMatchLabels.addElementIgnoreDuplicates("...");
+		}
+		if (misMatchLabels != null) {
+			int choice = DialogFactory.confirm(("The row labels of the two tables are not the same:\r\n  " + misMatchLabels.concatStrings("\r\n  ") + "\r\nMerge table rows anyway?"), "Row Labels Not Matching", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+			if (choice != JOptionPane.YES_OPTION)
+				return false;
+		}
+		
+		ImRegion[] startTables = ImUtils.getColumnConnectedTables(startTable);
+		ImRegion[] secondWordTables = ImUtils.getColumnConnectedTables(secondWordTable);
+		if (startTables.length != secondWordTables.length) {
+			DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		if (startTables.length > 1) {
+			for (int t = 0; t < startTables.length; t++)
+				if (!ImUtils.areTableRowsCompatible(startTables[t], secondWordTables[t], true)) {
+					DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+					return false;
+				}
+		}
+		
+		for (int t = 0; t < startTables.length; t++) {
+			startTables[t].setAttribute("rowsContinueIn", (secondWordTables[t].pageId + "." + secondWordTables[t].bounds));
+			secondWordTables[t].setAttribute("rowsContinueFrom", (startTables[t].pageId + "." + startTables[t].bounds));
+		}
+		DialogFactory.alert("Table rows merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Rows Merged", JOptionPane.INFORMATION_MESSAGE);
+		return true;
+	}
+	
+	private boolean disconnectTableRows(ImDocument doc, ImRegion table) {
+		ImRegion[] conTables = ImUtils.getColumnConnectedTables(table);
+		ImRegion leftTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("rowsContinueFrom"))));
+		ImRegion[] leftTables = null;
+		if (leftTable != null) {
+			leftTables = ImUtils.getColumnConnectedTables(leftTable);
+			for (int t = 0; t < leftTables.length; t++)
+				leftTables[t].removeAttribute("rowsContinueIn");
+			for (int t = 0; t < conTables.length; t++)
+				conTables[t].removeAttribute("rowsContinueFrom");
+		}
+		ImRegion rightTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("rowsContinueIn"))));
+		ImRegion[] rightTables = null;
+		if (rightTable != null) {
+			rightTables = ImUtils.getColumnConnectedTables(rightTable);
+			for (int t = 0; t < conTables.length; t++)
+				conTables[t].removeAttribute("rowsContinueIn");
+			for (int t = 0; t < rightTables.length; t++)
+				rightTables[t].removeAttribute("rowsContinueFrom");
+		}
+		if ((leftTable != null) && (rightTable != null))
+			ImUtils.connectTableRows(leftTable, rightTable);
+		DialogFactory.alert("Table rows dissected successfully", "Table Rows Dissected", JOptionPane.INFORMATION_MESSAGE);
+		return true;
+	}
+	
+	private boolean connectTableCols(ImRegion startTable, ImWord secondWord) {
+		ImRegion secondWordTable = getTableAt(secondWord);
+		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
+			DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		if ((startTable.pageId == secondWordTable.pageId) && startTable.bounds.equals(secondWordTable.bounds)) {
+			DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the to-merge table\nA table cannot be merged with itself"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+//		if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable, true)) {
+//			DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have\n- the same number of coumns\n- the same header on each one but the first (row label) column", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+//			return false;
+//		}
+		if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable, false)) {
+			DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have the same number of columns", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		String[] labels1 = ImUtils.getTableColumnHeaders(startTable);
+		String[] labels2 = ImUtils.getTableColumnHeaders(secondWordTable);
+		if ((labels1 == null) || (labels2 == null) || (labels1.length != labels2.length)) {
+			DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have the same number of columns", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		StringVector misMatchHeaders = null;
+		for (int l = 1; l < labels1.length; l++) {
+			if (labels1[l].equals(labels2[l]))
+				continue;
+			if (misMatchHeaders == null)
+				misMatchHeaders = new StringVector();
+			if (misMatchHeaders.size() < 5)
+				misMatchHeaders.addElementIgnoreDuplicates(labels1[l] + "    " + labels2[l]);
+			else misMatchHeaders.addElementIgnoreDuplicates("...");
+		}
+		if (misMatchHeaders != null) {
+			int choice = DialogFactory.confirm(("The column headers of the two tables are not the same:\r\n  " + misMatchHeaders.concatStrings("\r\n  ") + "\r\nMerge table columns anyway?"), "Column Headers Not Matching", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+			if (choice != JOptionPane.YES_OPTION)
+				return false;
+		}
+		
+		ImRegion[] startTables = ImUtils.getRowConnectedTables(startTable);
+		ImRegion[] secondWordTables = ImUtils.getRowConnectedTables(secondWordTable);
+		if (startTables.length != secondWordTables.length) {
+			DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		if (startTables.length > 1) {
+			for (int t = 0; t < startTables.length; t++)
+				if (!ImUtils.areTableColumnsCompatible(startTables[t], secondWordTables[t], true)) {
+					DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+					return false;
+				}
+		}
+		
+		for (int t = 0; t < startTables.length; t++) {
+			startTables[t].setAttribute("colsContinueIn", (secondWordTables[t].pageId + "." + secondWordTables[t].bounds));
+			secondWordTables[t].setAttribute("colsContinueFrom", (startTables[t].pageId + "." + startTables[t].bounds));
+		}
+		DialogFactory.alert("Table columns merged successfully; you can copy the whole grid of connected tables via 'Copy Table Grid Data'", "Table Columns Merged", JOptionPane.INFORMATION_MESSAGE);
+		return true;
+	}
+	
+	private boolean disconnectTableCols(ImDocument doc, ImRegion table) {
+		ImRegion[] conTables = ImUtils.getColumnConnectedTables(table);
+		ImRegion topTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("colsContinueFrom"))));
+		ImRegion[] topTables = null;
+		if (topTable != null) {
+			topTables = ImUtils.getRowConnectedTables(topTable);
+			for (int t = 0; t < topTables.length; t++)
+				topTables[t].removeAttribute("colsContinueIn");
+			for (int t = 0; t < conTables.length; t++)
+				conTables[t].removeAttribute("colsContinueFrom");
+		}
+		ImRegion bottomTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("colsContinueIn"))));
+		ImRegion[] bottomTables = null;
+		if (bottomTable != null) {
+			bottomTables = ImUtils.getRowConnectedTables(bottomTable);
+			for (int t = 0; t < conTables.length; t++)
+				conTables[t].removeAttribute("colsContinueIn");
+			for (int t = 0; t < bottomTables.length; t++)
+				bottomTables[t].removeAttribute("colsContinueFrom");
+		}
+		if ((topTable != null) && (bottomTable != null))
+			ImUtils.connectTableColumns(topTable, bottomTable);
+		DialogFactory.alert("Table columns dissected successfully", "Table Columns Dissected", JOptionPane.INFORMATION_MESSAGE);
+		return true;
+	}
+	
 	private ImRegion[] getRegionsInside(ImPage page, BoundingBox box, String type, boolean fuzzy) {
 		ImRegion[] regions = page.getRegionsInside(box, fuzzy);
 		ArrayList regionList = new ArrayList();
@@ -1394,6 +1903,16 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		ArrayList regionList = new ArrayList();
 		for (int r = 0; r < regions.length; r++) {
 			if (type.equals(regions[r].getType()))
+				regionList.add(regions[r]);
+		}
+		return ((ImRegion[]) regionList.toArray(new ImRegion[regionList.size()]));
+	}
+	
+	private ImRegion[] getRegionsOverlapping(ImPage page, BoundingBox box, String type) {
+		ImRegion[] regions = page.getRegions(type);
+		ArrayList regionList = new ArrayList();
+		for (int r = 0; r < regions.length; r++) {
+			if (regions[r].bounds.overlaps(box))
 				regionList.add(regions[r]);
 		}
 		return ((ImRegion[]) regionList.toArray(new ImRegion[regionList.size()]));
