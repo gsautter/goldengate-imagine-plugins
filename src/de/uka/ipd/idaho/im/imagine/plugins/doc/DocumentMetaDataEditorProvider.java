@@ -37,12 +37,14 @@ import java.awt.event.ActionListener;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.io.BufferedInputStream;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.Reader;
 import java.io.StringReader;
 import java.io.Writer;
 import java.util.ArrayList;
@@ -446,6 +448,24 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 					if (this.ref != null)
 						storeRefData(doc, this.ref);
 				}
+				public Reader getViewBasePage() {
+					//	try configured base page first ...
+					try {
+						return new BufferedReader(new InputStreamReader(dataProvider.getInputStream("webView.html"), "UTF-8"));
+					}
+					catch (IOException ioe) {
+						ioe.printStackTrace(System.out);
+					}
+					//	... and then build-in one ...
+					try {
+						return new BufferedReader(new InputStreamReader(this.getClass().getClassLoader().getResourceAsStream("webView.html"), "UTF-8"));
+					}
+					catch (IOException ioe) {
+						ioe.printStackTrace(System.out);
+					}
+					//	... before falling back to default
+					return super.getViewBasePage();
+				}
 				public HtmlPageBuilder getViewPageBuilder(HtmlPageBuilderHost host, HttpServletRequest request, HttpServletResponse response) throws IOException {
 					
 					//	wait for pre-processing to finish (we can do that without locking, as pre-processing is quick)
@@ -464,7 +484,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 						}
 						protected void include(String type, String tag) throws IOException {
 							if ("includeBody".equals(type)) {
-								this.writeLine("<div class=\"bibDataDialog\" style=\"width: 600px;\">");
+								this.writeLine("<div class=\"bibDataDialog\">");
 								
 								//	add title
 								this.writeLine("<div class=\"bibDataTitle\" style=\"font-weight: bold; text-align: center;\">Edit Document Metadata</div>");
@@ -521,14 +541,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 								this.writeLine("  for (var an in ref)");
 								this.writeLine("    params += ('&' + an + '=' + encodeURIComponent(ref[an]));");
 								this.writeLine("  if (params == '') {");
-								this.writeLine("    alert('Please specify one or more attributes as search values.\\r\\nA part of the title or last name of a author will do,\\r\\nas will the journal name and year, or one of the identifiers.');");
+								this.writeLine("    showAlertDialog(('Please specify one or more attributes as search values.\\r\\nA part of the title or last name of a author will do,\\r\\nas will the journal name and year, or one of the identifiers.'), 'No Attributes To Search For', 0);");
 								this.writeLine("    return;");
 								this.writeLine("  }");
-								//	TODO put styles in template page
 								this.writeLine("  var searchRefDataTitle = newElement('div', null, 'bibDataSearchTitle', 'Search Bibliographic Data');");
 								this.writeLine("  searchRefDataLabel = newElement('div', null, 'bibDataSearchLabel', 'Searching ...');");
 								this.writeLine("  searchRefDataResultList = newElement('div', null, 'bibDataSearchResultList', null);");
-								this.writeLine("  setAttribute(searchRefDataDialog, 'style', 'height: 300px; cursor: default; overflow: auto;');");
 								this.writeLine("  searchRefDataResultList.appendChild(searchRefDataLabel);");
 								this.writeLine("  var searchRefDataCancel = newElement('button', null, 'bibDataSearchCancel', 'Cancel');");
 								this.writeLine("  searchRefDataCancel.onclick = function() {");
@@ -541,7 +559,6 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 								this.writeLine("  var searchRefDataButtons = newElement('div', null, 'bibDataSearchButtons', null);");
 								this.writeLine("  searchRefDataButtons.appendChild(searchRefDataCancel);");
 								this.writeLine("  searchRefDataDialog = newElement('div', null, 'bibDataSearchResultDialog', null);");
-								this.writeLine("  setAttribute(searchRefDataDialog, 'style', 'position: fixed; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(255, 255, 255, 0.75); cursor: default; overflow: auto;');");
 								this.writeLine("  searchRefDataDialog.appendChild(searchRefDataTitle);");
 								this.writeLine("  searchRefDataDialog.appendChild(searchRefDataResultList);");
 								this.writeLine("  searchRefDataDialog.appendChild(searchRefDataButtons);");
