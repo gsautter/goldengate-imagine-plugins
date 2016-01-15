@@ -60,6 +60,7 @@ import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.basic.RegionActionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
@@ -82,6 +83,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	private static final String CUT_TO_START_OPERATION = "cutToStart";
 	private static final String CUT_TO_END_OPERATION = "cutToEnd";
 	private Properties annotTypeOperations = new Properties();
+	
+	private RegionActionProvider regionActionProvider;
 	
 	//	example with multi-line cells (in-cell line margin about 5 pixels, row margin about 15 pixels): zt00904.pdf, page 6
 	
@@ -120,6 +123,11 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 					this.annotTypeOperations.setProperty(typeAndOperation[0], typeAndOperation[1]);
 			}
 		} catch (IOException ioe) {}
+		
+		//	get region action provider
+		if (this.parent == null)
+			this.regionActionProvider = new RegionActionProvider();
+		else this.regionActionProvider = ((RegionActionProvider) this.parent.getPlugin(RegionActionProvider.class.getName()));
 	}
 	
 	/* (non-Javadoc)
@@ -331,7 +339,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			return;
 		
 		//	cut marked stream off table, but don't revert it to main text
-		this.cutTable(wordPage, wordTable[0], null, cutTableBounds, streamBounds, idmp);
+		this.cutTable(wordPage, wordTable[0], cutTableBounds, streamBounds, null, idmp);
 	}
 	
 	/* (non-Javadoc)
@@ -388,8 +396,9 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (words.length != 0) {
 			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 			Arrays.sort(words, ImUtils.textStreamOrder);
-			words[0].setTextStreamType(ImWord.TEXT_STREAM_TYPE_MAIN_TEXT);
-			//	TODO also mark block, paragraphs, and lines, or delegate to RegionActionProvider
+			if (words[0].getPreviousWord() == null)
+				words[0].setTextStreamType(ImWord.TEXT_STREAM_TYPE_MAIN_TEXT);
+			this.regionActionProvider.markBlock(page, ImLayoutObject.getAggregateBox(words));
 		}
 	}
 	
@@ -836,7 +845,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if ((cutTableBox != null) && (cutOffTableBox != null))
 			actions.add(new SelectionAction("tableCut", "Cut Table", (cutFromTable ? "Cut selected words off table." : "Cut table to selected words.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return cutTable(page, selTables[0], tableWords, cutTableBox, cutOffTableBox, idmp);
+					return cutTable(page, selTables[0], cutTableBox, cutOffTableBox, ImWord.TEXT_STREAM_TYPE_MAIN_TEXT, idmp);
 				}
 			});
 		
@@ -1619,7 +1628,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return cells;
 	}
 	
-	private boolean cutTable(ImPage page, ImRegion table, ImWord[] tableWords, BoundingBox cutTableBox, BoundingBox cutOffTableBox, ImDocumentMarkupPanel idmp) {
+	private boolean cutTable(ImPage page, ImRegion table, BoundingBox cutTableBox, BoundingBox cutOffTableBox, String cutOffTextStreamType, ImDocumentMarkupPanel idmp) {
 		
 		//	compute new table bounds
 		ImWord[] cTableWords = page.getWordsInside(cutTableBox);
@@ -1634,13 +1643,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			page.removeRegion(tableCols[c]);
 		
 		//	remove old table, and clean up words
-		table.setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
+		table.setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away, and take care of the leftovers ourselves
 		page.removeRegion(table);
-		if ((tableWords != null) && (tableWords.length != 0)) {
-			ImUtils.orderStream(tableWords, ImUtils.leftRightTopDownOrder);
-			Arrays.sort(tableWords, ImUtils.textStreamOrder);
-			tableWords[0].setTextStreamType(ImWord.TEXT_STREAM_TYPE_MAIN_TEXT);
-		}
 		
 		//	add rows and columns that lie in new table, maybe shrinking them
 		for (int r = 0; r < tableRows.length; r++) {
@@ -1669,10 +1673,13 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	mark table (will use existing rows and columns)
 		markTable(page, cTableWords, cTableBox, idmp);
 		
-		//	enclose cut-off words in block TODO maybe delegate this to RegionActionProvider
+		//	enclose cut-off words in block
 		ImWord[] coTableWords = page.getWordsInside(cutOffTableBox);
 		ImUtils.orderStream(coTableWords, ImUtils.leftRightTopDownOrder);
-		new ImRegion(page, ImLayoutObject.getAggregateBox(coTableWords), ImRegion.BLOCK_ANNOTATION_TYPE);
+		Arrays.sort(coTableWords, ImUtils.textStreamOrder);
+		if ((coTableWords[0].getPreviousWord() == null) && (cutOffTextStreamType != null))
+			coTableWords[0].setTextStreamType(cutOffTextStreamType);
+		this.regionActionProvider.markBlock(page, ImLayoutObject.getAggregateBox(coTableWords));
 		
 		//	finally ...
 		return true;
