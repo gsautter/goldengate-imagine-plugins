@@ -320,6 +320,12 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		//	check text stream order
 		ImUtils.orderStream(pWords, ImUtils.leftRightTopDownOrder);
 		
+		//	remove internal paragraph breaks
+		for (int w = 0; w < (pWords.length - 1); w++) {
+			if (pWords[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+				pWords[w].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
+		}
+		
 		//	if predecessor of first word is further up on same page, mark logical paragraph break if nothing in between
 		ImWord startWordPrev = pWords[0].getPreviousWord();
 		if ((startWordPrev != null) && (startWordPrev.pageId == pWords[0].pageId) && (startWordPrev.centerY < pWords[0].bounds.top) && (startWordPrev.getNextRelation() != ImWord.NEXT_RELATION_PARAGRAPH_END)) {
@@ -826,7 +832,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				if (blockLines.length > 1)
 					actions.add(new SelectionAction("paragraphsInBlock", "Revise Block Paragraphs", "Revise the grouping of the lines in the block into paragraphs.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return splitBlock(page, block, block.getRegions(ImRegion.PARAGRAPH_TYPE), blockLines, idmp.getMaxPageImageDpi());
+							return restructureBlock(page, block, block.getRegions(ImRegion.PARAGRAPH_TYPE), blockLines, idmp.getMaxPageImageDpi());
 						}
 					});
 			}
@@ -871,157 +877,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				final ImRegion block = ((ImRegion) ((LinkedList) contextRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE)).getFirst());
 				actions.add(new SelectionAction("paragraphsInBlock", "Split Block", "Split selected block, re-detect lines, and group them into paragraphs.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						
-						//	sort block words into top, left, right, and bottom of as well as inside selection
-						ImWord[] blockWords = block.getWords();
-						ArrayList aboveWords = new ArrayList();
-						ArrayList belowWords = new ArrayList();
-						ArrayList leftWords = new ArrayList();
-						ArrayList rightWords = new ArrayList();
-						ArrayList selectedWords = new ArrayList();
-						for (int w = 0; w < blockWords.length; w++) {
-							if (blockWords[w].centerY < selectedBounds.top)
-								aboveWords.add(blockWords[w]);
-							else if (selectedBounds.bottom <= blockWords[w].centerY)
-								belowWords.add(blockWords[w]);
-							else if (blockWords[w].centerX < selectedBounds.left)
-								leftWords.add(blockWords[w]);
-							else if (selectedBounds.right <= blockWords[w].centerX)
-								rightWords.add(blockWords[w]);
-							else selectedWords.add(blockWords[w]);
-						}
-						
-						//	anything selected, everything selected?
-						if (selectedWords.isEmpty() || (selectedWords.size() == blockWords.length))
-							return false;
-						
-						//	get existing paragraphs and lines
-						ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
-						ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
-						
-						//	if we have a plain top-bottom split, we can retain lines and word order, and likely most paragraphs
-						if (leftWords.isEmpty() && rightWords.isEmpty()) {
-							
-							//	split up paragraphs that intersect with the selection
-							for (int p = 0; p < blockParagraphs.length; p++) {
-								if (!blockParagraphs[p].bounds.overlaps(selectedBounds))
-									continue;
-								else if (blockParagraphs[p].bounds.liesIn(selectedBounds, false))
-									continue;
-								ImRegion[] paragraphLines = blockParagraphs[p].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
-								if (sortLinesIntoParagraphs(page, paragraphLines, selectedBounds))
-									page.removeRegion(blockParagraphs[p]);
-							}
-							
-							//	split the block proper
-							if (aboveWords.size() != 0) {
-								ImRegion aboveBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) aboveWords.toArray(new ImWord[aboveWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
-								updateBlockTextStream(aboveBlock);
-							}
-							ImRegion selectedBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) selectedWords.toArray(new ImWord[selectedWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
-							updateBlockTextStream(selectedBlock);
-							if (belowWords.size() != 0) {
-								ImRegion belowBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) belowWords.toArray(new ImWord[belowWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
-								updateBlockTextStream(belowBlock);
-							}
-							page.removeRegion(block);
-							
-							//	indicate we've done something
-							return true;
-						}
-						
-						//	remove old lines and paragraphs
-						for (int p = 0; p < blockParagraphs.length; p++)
-							page.removeRegion(blockParagraphs[p]);
-						for (int l = 0; l < blockLines.length; l++)
-							page.removeRegion(blockLines[l]);
-						
-						//	get last external predecessor and first external successor
-						Arrays.sort(blockWords, ImUtils.textStreamOrder);
-						ImWord blockPrevWord = blockWords[0].getPreviousWord();
-						ImWord blockNextWord = blockWords[blockWords.length-1].getNextWord();
-						
-						//	cut out block words to avoid conflicts while re-chaining
-						if (blockPrevWord != null)
-							blockPrevWord.setNextWord(null);
-						if (blockNextWord != null)
-							blockNextWord.setPreviousWord(null);
-						
-						//	collect block words in order of chaining
-						ArrayList blockWordLists = new ArrayList();
-						
-						//	if we have a plain left-right split, chain blocks left to right
-						if (aboveWords.isEmpty() && belowWords.isEmpty()) {
-							if (leftWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, leftWords));
-							if (selectedWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, selectedWords));
-							if (rightWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, rightWords));
-						}
-						
-						//	selection cut out on top left corner
-						else if (aboveWords.isEmpty() && leftWords.isEmpty()) {
-							if (selectedWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, selectedWords));
-							if (rightWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, rightWords));
-							if (belowWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, belowWords));
-						}
-						
-						//	selection cut out in some other place
-						else {
-							if (aboveWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, aboveWords));
-							if (leftWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, leftWords));
-							if (rightWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, rightWords));
-							if (belowWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, belowWords));
-							if (selectedWords.size() != 0)
-								blockWordLists.add(this.markBlock(page, selectedWords));
-						}
-						
-						//	chain block text streams (only if text stream types match, however)
-						for (int b = 0; b < blockWordLists.size(); b++) {
-							ImWord[] imws = ((ImWord[]) blockWordLists.get(b));
-							if (imws.length == 0)
-								continue;
-							if ((blockPrevWord != null) && !blockPrevWord.getTextStreamType().endsWith(imws[0].getTextStreamType()))
-								continue;
-							if (blockPrevWord != null)
-								blockPrevWord.setNextWord(imws[0]);
-							blockPrevWord = imws[imws.length - 1];
-						}
-						if ((blockPrevWord != null) && (blockNextWord != null))
-							blockPrevWord.setNextWord(blockNextWord);
-						
-						//	remove the split block
-						page.removeRegion(block);
-						
-						//	indicate we've done something
-						return true;
-					}
-					private ImWord[] markBlock(ImPage page, ArrayList wordList) {
-						ImWord[] words = ((ImWord[]) wordList.toArray(new ImWord[wordList.size()]));
-						if (words.length == 0)
-							return words;
-						
-						//	mark lines
-						ImUtils.makeStream(words, words[0].getTextStreamType(), null);
-						sortIntoLines(page, words);
-						
-						//	mark block proper
-						ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
-						
-						//	re-detect paragraphs
-						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
-						
-						//	finally ...
-						Arrays.sort(words, ImUtils.textStreamOrder);
-						return words;
+						return splitBlock(page, block, selectedBounds);
 					}
 				});
 			}
@@ -1108,6 +964,178 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
+	/**
+	 * Split a block region, marking paragraphs and lines. The argument block
+	 * region has to be attached to the page it refers to, and the argument
+	 * selection box has to overlap with the argument block.
+	 * @param block the block to split
+	 * @param splitBounds the bounding box to perform the split with
+	 * @return true if the block was split, false otherwise
+	 */
+	public boolean splitBlock(ImRegion block, BoundingBox splitBounds) {
+		if (!block.bounds.overlaps(splitBounds))
+			return false;
+		ImPage page = block.getPage();
+		if (page == null)
+			return false;
+		return this.splitBlock(page, block, splitBounds);
+	}
+	
+	private boolean splitBlock(ImPage page, ImRegion block, BoundingBox selectedBounds) {
+		
+		//	sort block words into top, left, right, and bottom of as well as inside selection
+		ImWord[] blockWords = block.getWords();
+		ArrayList aboveWords = new ArrayList();
+		ArrayList belowWords = new ArrayList();
+		ArrayList leftWords = new ArrayList();
+		ArrayList rightWords = new ArrayList();
+		ArrayList selectedWords = new ArrayList();
+		for (int w = 0; w < blockWords.length; w++) {
+			if (blockWords[w].centerY < selectedBounds.top)
+				aboveWords.add(blockWords[w]);
+			else if (selectedBounds.bottom <= blockWords[w].centerY)
+				belowWords.add(blockWords[w]);
+			else if (blockWords[w].centerX < selectedBounds.left)
+				leftWords.add(blockWords[w]);
+			else if (selectedBounds.right <= blockWords[w].centerX)
+				rightWords.add(blockWords[w]);
+			else selectedWords.add(blockWords[w]);
+		}
+		
+		//	anything selected, everything selected?
+		if (selectedWords.isEmpty() || (selectedWords.size() == blockWords.length))
+			return false;
+		
+		//	get existing paragraphs and lines
+		ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
+		ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+		
+		//	if we have a plain top-bottom split, we can retain lines and word order, and likely most paragraphs
+		if (leftWords.isEmpty() && rightWords.isEmpty()) {
+			
+			//	split up paragraphs that intersect with the selection
+			for (int p = 0; p < blockParagraphs.length; p++) {
+				if (!blockParagraphs[p].bounds.overlaps(selectedBounds))
+					continue;
+				else if (blockParagraphs[p].bounds.liesIn(selectedBounds, false))
+					continue;
+				ImRegion[] paragraphLines = blockParagraphs[p].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+				if (sortLinesIntoParagraphs(page, paragraphLines, selectedBounds))
+					page.removeRegion(blockParagraphs[p]);
+			}
+			
+			//	split the block proper
+			if (aboveWords.size() != 0) {
+				ImRegion aboveBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) aboveWords.toArray(new ImWord[aboveWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
+				updateBlockTextStream(aboveBlock);
+			}
+			ImRegion selectedBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) selectedWords.toArray(new ImWord[selectedWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
+			updateBlockTextStream(selectedBlock);
+			if (belowWords.size() != 0) {
+				ImRegion belowBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) belowWords.toArray(new ImWord[belowWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
+				updateBlockTextStream(belowBlock);
+			}
+			page.removeRegion(block);
+			
+			//	indicate we've done something
+			return true;
+		}
+		
+		//	remove old lines and paragraphs
+		for (int p = 0; p < blockParagraphs.length; p++)
+			page.removeRegion(blockParagraphs[p]);
+		for (int l = 0; l < blockLines.length; l++)
+			page.removeRegion(blockLines[l]);
+		
+		//	get last external predecessor and first external successor
+		Arrays.sort(blockWords, ImUtils.textStreamOrder);
+		ImWord blockPrevWord = blockWords[0].getPreviousWord();
+		ImWord blockNextWord = blockWords[blockWords.length-1].getNextWord();
+		
+		//	cut out block words to avoid conflicts while re-chaining
+		if (blockPrevWord != null)
+			blockPrevWord.setNextWord(null);
+		if (blockNextWord != null)
+			blockNextWord.setPreviousWord(null);
+		
+		//	collect block words in order of chaining
+		ArrayList blockWordLists = new ArrayList();
+		
+		//	if we have a plain left-right split, chain blocks left to right
+		if (aboveWords.isEmpty() && belowWords.isEmpty()) {
+			if (leftWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, leftWords));
+			if (selectedWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, selectedWords));
+			if (rightWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, rightWords));
+		}
+		
+		//	selection cut out on top left corner
+		else if (aboveWords.isEmpty() && leftWords.isEmpty()) {
+			if (selectedWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, selectedWords));
+			if (rightWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, rightWords));
+			if (belowWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, belowWords));
+		}
+		
+		//	selection cut out in some other place
+		else {
+			if (aboveWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, aboveWords));
+			if (leftWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, leftWords));
+			if (rightWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, rightWords));
+			if (belowWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, belowWords));
+			if (selectedWords.size() != 0)
+				blockWordLists.add(this.markBlock(page, selectedWords));
+		}
+		
+		//	chain block text streams (only if text stream types match, however)
+		for (int b = 0; b < blockWordLists.size(); b++) {
+			ImWord[] imws = ((ImWord[]) blockWordLists.get(b));
+			if (imws.length == 0)
+				continue;
+			if ((blockPrevWord != null) && !blockPrevWord.getTextStreamType().endsWith(imws[0].getTextStreamType()))
+				continue;
+			if (blockPrevWord != null)
+				blockPrevWord.setNextWord(imws[0]);
+			blockPrevWord = imws[imws.length - 1];
+		}
+		if ((blockPrevWord != null) && (blockNextWord != null))
+			blockPrevWord.setNextWord(blockNextWord);
+		
+		//	remove the split block
+		page.removeRegion(block);
+		
+		//	indicate we've done something
+		return true;
+	}
+	
+	private ImWord[] markBlock(ImPage page, ArrayList wordList) {
+		ImWord[] words = ((ImWord[]) wordList.toArray(new ImWord[wordList.size()]));
+		if (words.length == 0)
+			return words;
+		
+		//	mark lines
+		ImUtils.makeStream(words, words[0].getTextStreamType(), null);
+		sortIntoLines(page, words);
+		
+		//	mark block proper
+		ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
+		
+		//	re-detect paragraphs
+		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+		
+		//	finally ...
+		Arrays.sort(words, ImUtils.textStreamOrder);
+		return words;
+	}
+	
 	private void sortIntoLines(ImPage page, ImWord[] words) {
 		
 		//	order text stream
@@ -1115,13 +1143,35 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		Arrays.sort(words, ImUtils.textStreamOrder);
 		
 		//	re-detect lines
-//		int lineStartWordIndex = 0;
-//		for (int w = 0; w < words.length; w++)
-//			if (((w+1) == words.length) || (words[w+1].centerY > words[w].bounds.bottom)) {
-//				new ImRegion(page, ImLayoutObject.getAggregateBox(words, lineStartWordIndex, (w+1)), ImRegion.LINE_ANNOTATION_TYPE);
-//				lineStartWordIndex = (w+1);
-//			}
 		this.markLines(page, words, null);
+	}
+	
+	/**
+	 * Mark a block region, including paragraphs and lines. This method also
+	 * orders the text stream. If the argument bounding box does not contain
+	 * any words, this method returns null.
+	 * @param page the page the block belongs to
+	 * @param blockBounds the bounding box of the block to create
+	 * @return the newly marked block
+	 */
+	public ImRegion markBlock(ImPage page, BoundingBox blockBounds) {
+		ImWord[] words = page.getWordsInside(blockBounds);
+		if (words.length == 0)
+			return null;
+		
+		//	mark lines
+		ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+		Arrays.sort(words, ImUtils.textStreamOrder);
+		this.markLines(page, words, null);
+		
+		//	mark block proper
+		ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
+		
+		//	re-detect paragraphs
+		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+		
+		//	finally ...
+		return block;
 	}
 	
 	private void markLines(ImPage page, ImWord[] words, Map existingLines) {
@@ -1293,7 +1343,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		}
 	}
 	
-	private boolean splitBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines, int dpi) {
+	private boolean restructureBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines, int dpi) {
 		
 		//	make sure block lines come top-down
 		Arrays.sort(blockLines, ImUtils.topDownOrder);
