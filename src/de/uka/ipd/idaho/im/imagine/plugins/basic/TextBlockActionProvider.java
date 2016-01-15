@@ -138,33 +138,32 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				
 				//	assign target
 				Arrays.sort(targets, ImUtils.topDownOrder);
-				PageImage pi = page.getImage();
-				for (int i = 0; i < targets.length; i++) {
+				for (int t = 0; t < targets.length; t++) {
 					
 					//	check vertical alignment
-					if (!isTableCaption && (captionBox.top < targets[i].bounds.bottom))
+					if (!isTableCaption && (captionBox.top < targets[t].bounds.bottom))
 						break; // due to top-down sort order, we won't find any matches from here onward
 					
-					//	TODO also search left and right if no images at all above and below
-					
 					//	check general alignment
-					if (!ImUtils.isCaptionBelowTargetMatch(captionBox, targets[i].bounds, pi.currentDpi) && (!isTableCaption || !ImUtils.isCaptionAboveTargetMatch(captionBox, targets[i].bounds, pi.currentDpi)))
-						continue;
+					if (ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, page.getImageDPI())) {}
+					else if (isTableCaption && ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, page.getImageDPI())) {}
+					else if (!isTableCaption && ImUtils.isCaptionBesideTargetMatch(captionBox, targets[t].bounds, page.getImageDPI())) {}
+					else continue;
 					
 					//	check size and words if using block fallback
-					if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(targets[i].getType())) {
-						if ((targets[i].bounds.right - targets[i].bounds.left) < pi.currentDpi)
+					if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(targets[t].getType())) {
+						if ((targets[t].bounds.right - targets[t].bounds.left) < page.getImageDPI())
 							continue;
-						if ((targets[i].bounds.bottom - targets[i].bounds.top) < pi.currentDpi)
+						if ((targets[t].bounds.bottom - targets[t].bounds.top) < page.getImageDPI())
 							continue;
-						ImWord[] imageWords = targets[i].getWords();
+						ImWord[] imageWords = targets[t].getWords();
 						if (imageWords.length != 0)
 							continue;
 					}
 					
-					//	link image to caption
-					caption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + targets[i].pageId));
-					caption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, targets[i].bounds.toString());
+					//	link caption to target
+					caption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + targets[t].pageId));
+					caption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, targets[t].bounds.toString());
 					if (isTableCaption)
 						caption.setAttribute("targetIsTable");
 					break;
@@ -183,6 +182,43 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				ImAnnotation footnote = words[0].getDocument().addAnnotation(words[0], words[words.length-1], FOOTNOTE_TYPE);
 				footnote.getLastWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
 				invoker.setAnnotationsPainted(FOOTNOTE_TYPE, true);
+				return true;
+			}
+		});
+		
+		//	mark selected words as a table note
+		actions.add(new SelectionAction("markRegionTableNote", "Mark Table Note", "Mark selected words as a table note, i.e., explanatory text associated with a table.") {
+			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				
+				//	cut out and mark table note
+				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_TABLE_NOTE, null);
+				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+				ImAnnotation tableNote = words[0].getDocument().addAnnotation(words[0], words[words.length-1], TABLE_NOTE_TYPE);
+				tableNote.getLastWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+				invoker.setAnnotationsPainted(TABLE_NOTE_TYPE, true);
+				BoundingBox tableNoteBox = ImLayoutObject.getAggregateBox(words);
+				
+				//	find possible targets
+				ImRegion[] tables = page.getRegions(ImRegion.TABLE_TYPE);
+				if (tables.length == 0)
+					return true;
+				
+				//	assign target
+				Arrays.sort(tables, ImUtils.topDownOrder);
+				for (int t = 0; t < tables.length; t++) {
+					
+					//	check general alignment
+					if (ImUtils.isCaptionBelowTargetMatch(tableNoteBox, tables[t].bounds, page.getImageDPI())) {}
+					else if (ImUtils.isCaptionAboveTargetMatch(tableNoteBox, tables[t].bounds, page.getImageDPI())) {}
+					else continue;
+					
+					//	link table note to target
+					tableNote.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + tables[t].pageId));
+					tableNote.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, tables[t].bounds.toString());
+					break;
+				}
+				
+				//	finally ...
 				return true;
 			}
 		});
