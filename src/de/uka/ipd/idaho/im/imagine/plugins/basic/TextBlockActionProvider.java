@@ -248,12 +248,18 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		});
 		
 		//	mark selected words as an artifact
-		actions.add(new SelectionAction("markRegionArtifact", "Mark Artifact", "Mark selected words as an OCR or layout artifact.") {
+		actions.add(new SelectionAction("markRegionArtifact", "Mark Artifact", "Mark selected words as an OCR or layout artifact, and remove them.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				
+				//	remove words
 				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
 				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 				for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord())
 					imw.setNextWord(null);
+				for (int w = 0; w < words.length; w++)
+					page.removeWord(words[w], true);
+				
+				//	indicate change
 				return true;
 			}
 		});

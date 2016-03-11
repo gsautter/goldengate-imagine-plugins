@@ -96,6 +96,8 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 	private static final int MODE_WORD_BOUNDARY_SENSITIVE = 8;
 	
 	private int matchMode = 0;
+//	private int actionCallCount = 0;
+//	private int lastNavActionUseCallCount = 0;
 	
 	/** zero-argument constructor for class loading */
 	public NavigationActionProvider() {}
@@ -126,7 +128,7 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentClosed(java.lang.String)
 	 */
 	public void documentClosed(String docId) {
-		ImDocumentIndex docIndex = ((ImDocumentIndex) this.docIndexesByDocID.get(docId));
+		ImDocumentIndex docIndex = ((ImDocumentIndex) this.docIndexesByDocID.remove(docId));
 		if (docIndex != null)
 			docIndex.invalidateIndex();
 	}
@@ -159,6 +161,7 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider#getActions(de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
 	public SelectionAction[] getActions(final ImWord start, final ImWord end, final ImDocumentMarkupPanel idmp) {
+//		this.actionCallCount++;
 		
 		//	searching only makes sense in a single logical text stream
 		if (!start.getTextStreamId().equals(end.getTextStreamId()))
@@ -169,13 +172,61 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 		String wsLabelStr = wsStr;
 		if ((wsLabelStr.length() > 20) && (start != end) && (start.getNextWord() != end))
 			wsLabelStr = (start.getString() + " ... " + end.getString());
+//		
+//		//	was there any navigation recently (last 3 or so clicks)?
+//		final boolean navigating = ((this.lastNavActionUseCallCount + 3) >= this.actionCallCount);
 		
 		//	collect actions
 		LinkedList actions = new LinkedList();
 		
+		//	TODO offer all option on top level only if last selection action was navigation ...
+		//	TODO ... and put them in 'Find' sub menu otherwise
+		//	==> TODO keep track of when asked for actions, and which ones are selected
+		
+		//	go to predecessor or successor
+		if (start == end) {
+			ImWord startPrev = start.getPreviousWord();
+			if (startPrev == null) {}
+			else if (startPrev.pageId != start.pageId) {}
+			else if (startPrev.bounds.top > start.centerY) {}
+			else if (startPrev.bounds.bottom < start.centerY) {}
+			else startPrev = null;
+			if (startPrev != null)
+				actions.add(new SelectionAction("navGoPrev", ("Go To Predecessor '" + startPrev.getString() + "'"), ("Move to logical predecessor of '" + start.getString() + "'")) {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+//						lastNavActionUseCallCount = actionCallCount;
+						SwingUtilities.invokeLater(new Runnable() {
+							public void run() {
+								idmp.setWordSelection(start.getPreviousWord());
+							}
+						});
+						return false; // we're not changing anything
+					}
+				});
+			ImWord endNext = end.getNextWord();
+			if (endNext == null) {}
+			else if (end.pageId != endNext.pageId) {}
+			else if (end.bounds.top > endNext.centerY) {}
+			else if (end.bounds.bottom < endNext.centerY) {}
+			else endNext = null;
+			if (endNext != null)
+				actions.add(new SelectionAction("navGoNext", ("Go To Successor '" + endNext.getString() + "'"), ("Move to logical successor of '" + end.getString() + "'")) {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+//						lastNavActionUseCallCount = actionCallCount;
+						SwingUtilities.invokeLater(new Runnable() {
+							public void run() {
+								idmp.setWordSelection(end.getNextWord());
+							}
+						});
+						return false; // we're not changing anything
+					}
+				});
+		}
+		
 		//	find next forward
 		actions.add(new SelectionAction("navFindNext", ("Find Next '" + wsLabelStr + "'"), ("Find (and move to) next occurrence of '" + wsLabelStr + "'")) {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+//				lastNavActionUseCallCount = actionCallCount;
 				final ImWord[] next = find(wsStr, matchMode, start, false, idmp);
 				if (next != null)
 					SwingUtilities.invokeLater(new Runnable() {
@@ -191,6 +242,7 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 		//	find next backward
 		actions.add(new SelectionAction("navFindPrev", ("Find Previous '" + wsLabelStr + "'"), ("Find (and move to) previous occurrence of '" + wsLabelStr + "'")) {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+//				lastNavActionUseCallCount = actionCallCount;
 				final ImWord[] prev = find(wsStr, matchMode, start, true, idmp);
 				if (prev != null)
 					SwingUtilities.invokeLater(new Runnable() {
@@ -206,6 +258,7 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 		//	provide 'Find <selected> ...' function, opening modal dialog with match options
 		actions.add(new SelectionAction("navFind", ("Find '" + wsLabelStr + "' ..."), ("Find (and move to) occurrences of '" + wsLabelStr + "', customizing match mode")) {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+//				lastNavActionUseCallCount = actionCallCount;
 				
 				//	TODO maybe add tools menu entry to open dialog without word clicks
 				
@@ -218,6 +271,7 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 		//	provide 'List All <selected>' function, opening non-modal navigation dialog
 		actions.add(new SelectionAction("navList", ("List '" + wsLabelStr + "' ..."), ("List all occurrences of '" + wsLabelStr + "'")) {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+//				lastNavActionUseCallCount = actionCallCount;
 				if (DEBUG_FIND) System.out.println("Listing occurrences of '" + wsStr + "' from " + start.getLocalID());
 				ImWord[] match = {start, end};
 				ArrayList matchList = new ArrayList();

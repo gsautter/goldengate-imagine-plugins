@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -66,10 +67,10 @@ import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.util.CaptionCitationHandler;
+import de.uka.ipd.idaho.im.util.ImDocumentIO;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImUtils;
-import de.uka.ipd.idaho.im.util.ImfIO;
 import de.uka.ipd.idaho.stringUtils.StringVector;
 import de.uka.ipd.idaho.stringUtils.regExUtils.RegExUtils;
 
@@ -528,6 +529,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			public void doFor(int p) throws Exception {
 				spm.setProgress((p * 100) / pages.length);
 				detectTables(pages[p], pageImageDpi, minTableColMargin, minTableRowMargin, spm);
+//				try {
+//					detectTablesTest(pages[p], pageImageDpi, minTableColMargin, minTableRowMargin, spm);
+//				} catch (Exception e) {
+//					// TODO Auto-generated catch block
+//					e.printStackTrace(System.out);
+//				}
 				//	TODO figure out what layout hints might be useful for tables
 				
 				/* TODO restrict table detection:
@@ -542,8 +549,23 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				 * 
 				 * - grid.horizontal: boolean indicating if there are horizontal grid lines, prevents left and right merging beyond widest block
 				 * - grid.vertical: boolean indicating if there are vertical grid lines, prevents up and down merging beyond highest block
-				 * - grid.fram: boolean indicating outside frame, prevents any merging
+				 * - grid.frame: boolean indicating outside frame, prevents any merging
 				 * ==> not sure whether or not to use these booleans, as we do want to keep grid lines (and anything but words in general) out of block detection
+				 */
+				
+				/* TODO consider using word density in block for table detection
+				 * - far fewer words per area in table than in main text
+				 *   ==> try and measure this to get an idea
+				 * - also measure regularity of spaces in lines / rows
+				 *   - should be far less regular in table than in main text
+				 *   - average it out for each block ...
+				 *   - ... and find regularity distribution in document
+				 *     ==> top outliers are potential tables (pending all the other checks, like column headers and row labels)
+				 *   ==> try and measure this to get an idea
+				 * - also make use of column anchor points (already outlined below)
+				 *   - left and right aligned anchor points have to match closely ...
+				 *   - ... center anchor points overlap maybe with central third or quarter
+				 * ==> anchor points (and in particular their violation) might well help to chop captions off the top of tables
 				 */
 			}
 		}, pages.length, (this.debug ? 1 : -1));
@@ -1464,12 +1486,24 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 	}
 	
+	/* TODO allow single-line headings to be split off the top of blocks or even paragraphs
+	 * - introduce isBlockTopHeading property ...
+	 * - ... and apply to first line in block exclusively
+	 * ==> should help get treatment headings off LSIDs, figure references, and more exotic sub-title style appendages
+	 * ==> make sure to split paragraph if first line not a paragraph in itself
+	 * ==> use with care !!!
+	 */
+	
 	private static class HeadingStyleDefined {
 		final int level;
 		int minFontSize;
 		int maxFontSize;
+		int maxLineCount;
+		boolean isBlock;
 		boolean isBold;
+		boolean startIsBold;
 		boolean isAllCaps;
+		boolean startIsAllCaps;
 		Pattern[] startPatterns;
 		boolean isLeftAligned;
 		boolean isRightAligned;
@@ -1478,8 +1512,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			int fontSize = style.getIntProperty((this.level + ".fontSize"), -1);
 			this.minFontSize = style.getIntProperty((this.level + ".minFontSize"), ((fontSize == -1) ? 0 : fontSize));
 			this.maxFontSize = style.getIntProperty((this.level + ".maxFontSize"), ((fontSize == -1) ? 72 : fontSize));
+			this.maxLineCount = style.getIntProperty((this.level + ".maxLineCount"), 0);
+			this.isBlock = !style.getBooleanProperty((this.level + ".isNonBlock"), false); // we need to use inversion here, as styles save only 'true'
 			this.isBold = style.getBooleanProperty((this.level + ".isBold"), false);
+			this.startIsBold = style.getBooleanProperty((this.level + ".startIsBold"), false);
 			this.isAllCaps = style.getBooleanProperty((this.level + ".isAllCaps"), false);
+			this.startIsAllCaps = style.getBooleanProperty((this.level + ".startIsAllCaps"), false);
 			String[] startPatternStrs = style.getListProperty((this.level + ".startPatterns"), null, " ");
 			if (startPatternStrs != null) try {
 				Pattern[] startPatterns = new Pattern[startPatternStrs.length];
@@ -1488,10 +1526,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				this.startPatterns = startPatterns;
 			} catch (PatternSyntaxException pse) {}
 			String alignment = style.getProperty((this.level + ".alignment"), "");
-			this.isLeftAligned = "left".equals(alignment);
-			this.isRightAligned = "right".equals(alignment);
+			this.isLeftAligned = ("left".equals(alignment) || "justified".equals(alignment));
+			this.isRightAligned = ("right".equals(alignment) || "justified".equals(alignment));
 		}
-		boolean matches(ImRegion line, ImWord[] lineWords, boolean isFlushLeft, boolean isFlushRight) {
+		boolean matches(ImRegion line, ImWord[] lineWords, int blockLinePos, int blockLineCount, boolean isFlushLeft, boolean isFlushRight) {
 			
 			//	check alignment first
 			if (this.isLeftAligned && !isFlushLeft)
@@ -1499,6 +1537,28 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (this.isRightAligned && !isFlushRight)
 				return false;
 			if (!this.isLeftAligned && !this.isRightAligned && (isFlushLeft != isFlushRight))
+				return false;
+			
+			//	check line count and position
+			if (this.maxLineCount > 0) {
+				
+				//	headings are in their own blocks, check block size
+				if (this.isBlock) {
+					if (blockLineCount > this.maxLineCount)
+						return false;
+				}
+				
+				//	headings sit atop a text block, all we can check is line position
+				else {
+					if (blockLinePos >= this.maxLineCount)
+						return false;
+				}
+			}
+			
+			//	check start style
+			if ((this.isBold || this.startIsBold) && !lineWords[0].hasAttribute(ImWord.BOLD_ATTRIBUTE))
+				return false;
+			if ((this.isAllCaps || this.startIsAllCaps) && !lineWords[0].getString().equals(lineWords[0].getString().toUpperCase()))
 				return false;
 			
 			//	concatenate words, checking style along the way
@@ -1630,6 +1690,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			pm.setInfo("Assessing lines in block " + pageBlocks[b].bounds);
 			pm.setInfo(" - parent column is " + blockParentColumns[b].bounds + ("blockColumn".equals(blockParentColumns[b].getType()) ? " (synthesized)" : ""));
 			ImRegion[] blockLines = pageBlocks[b].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+			if (blockLines.length == 0)
+				continue;
 			Arrays.sort(blockLines, ImUtils.topDownOrder);
 			
 			//	measure line positions
@@ -1649,8 +1711,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				//	assess line position and length (center alignment against surrounding column to catch short blocks)
 				int leftDist = (blockLines[l].bounds.left - blockParentColumns[b].bounds.left);
 				lineIsFlushLeft[l] = ((leftDist * 25) < pageImageDpi);
+				if (lineIsFlushLeft[l])
+					pm.setInfo(" --> flush left");
 				int rightDist = (blockParentColumns[b].bounds.right - blockLines[l].bounds.right);
 				lineIsFlushRight[l] = ((rightDist * 25) < pageImageDpi);
+				if (lineIsFlushRight[l])
+					pm.setInfo(" --> flush right");
 				lineIsShort[l] = (((blockLines[l].bounds.right - blockLines[l].bounds.left) * 3) < (mainTextBlockWidthA * 2));
 				if (lineIsShort[l])
 					pm.setInfo(" --> short");
@@ -1668,84 +1734,86 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					continue;
 				if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(lineWords[l][0].getTextStreamType()))
 					continue;
+				pm.setInfo(" - line " + blockLines[l].bounds + ": " + ImUtils.getString(lineWords[l][0], lineWords[l][lineWords[l].length-1], true));
 				
 				//	check against styles
 				for (int s = 0; s < headingStyles.length; s++)
-					if (headingStyles[s].matches(blockLines[l], lineWords[l], lineIsFlushLeft[l], lineIsFlushRight[l])) {
+					if (headingStyles[s].matches(blockLines[l], lineWords[l], l, blockLines.length, lineIsFlushLeft[l], lineIsFlushRight[l])) {
 						lineHeadingStyles[l] = headingStyles[s];
+						pm.setInfo(" --> match at level " + lineHeadingStyles[l].level);
 						break;
 					}
 				
 				//	no use looking for headings below non-headings
-				if (lineHeadingStyles[l] == null)
+				if (lineHeadingStyles[l] == null) {
+					pm.setInfo(" --> no style match");
 					break;
+				}
 			}
 			
-			//	annotate headings (subsequent lines with same heading reason together, unless line is short)
-			ImWord headingStart = null;
-			ImWord headingEnd = null;
-			HeadingStyleDefined headingStyle = null;
-			int headingStartLineIndex = -1;
-			for (int l = 0; l < Math.min(blockLines.length, 4); l++) {
-				if ((l == 0) && (lineHeadingStyles[l] == null))
-					break;
+			//	no use looking any further if block doesn't start with a heading
+			if (lineHeadingStyles[0] == null)
+				continue;
+			
+			//	is we have a full block heading (not block-top), refuse match if block has further lines
+			if (lineHeadingStyles[0].isBlock && (lineHeadingStyles[lineHeadingStyles.length-1] == null))
+				continue;
+			
+			//	annotate headings (subsequent lines with same heading style together, unless line is short)
+			ImWord headingStart = lineWords[0][0];
+			ImWord headingEnd = lineWords[0][lineWords[0].length-1];
+			HeadingStyleDefined headingStyle = lineHeadingStyles[0];
+			int headingStartLineIndex = 0;
+			boolean headingEndLineShort = lineIsShort[0];
+			for (int l = 1; l < Math.min(blockLines.length, 4); l++) {
 				if (lineWords[l].length == 0)
 					continue;
 				if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(lineWords[l][0].getTextStreamType()))
 					continue;
-				if (l == 0) {
-					headingStart = lineWords[l][0];
-					headingEnd = lineWords[l][lineWords[l].length-1];
-					headingStyle = lineHeadingStyles[l];
-					headingStartLineIndex = l;
-				}
-				else if ((lineHeadingStyles[l] == lineHeadingStyles[l-1]) && !lineIsShort[l-1])
-					headingEnd = lineWords[l][lineWords[l].length-1];
-				else {
-					if (headingStyle != null) {
-						ImAnnotation heading = page.getDocument().addAnnotation(headingStart, headingEnd, ImAnnotation.HEADING_TYPE);
-						heading.setAttribute("reason", ("" + headingStyle.level));
-						heading.setAttribute("level", ("" + headingStyle.level));
-						if (!lineIsFlushLeft[headingStartLineIndex] && !lineIsFlushRight[headingStartLineIndex])
-							heading.setAttribute(ImAnnotation.TEXT_ORIENTATION_CENTERED);
-						if (headingStyle.isAllCaps)
-							heading.setAttribute(ImAnnotation.ALL_CAPS_ATTRIBUTE);
-						if (headingStyle.isBold)
-							heading.setAttribute(ImAnnotation.BOLD_ATTRIBUTE);
-						if (((headingStyle.minFontSize + headingStyle.maxFontSize) / 2) > 6)
-							heading.setAttribute(ImAnnotation.FONT_SIZE_ATTRIBUTE, ("" + ((headingStyle.minFontSize + headingStyle.maxFontSize) / 2)));
-						this.straightenHeadingStreamStructure(heading);
-						pm.setInfo(" ==> marked heading level " + headingStyle.level + ": " + ImUtils.getString(heading.getFirstWord(), heading.getLastWord(), true));
-					}
-					headingStart = lineWords[l][0];
-					headingEnd = lineWords[l][lineWords[l].length-1];
-					headingStyle = lineHeadingStyles[l];
-					headingStartLineIndex = l;
-				}
-				if (lineHeadingStyles[l] == null) {
-					headingStart = null;
-					headingEnd = null;
-					headingStyle = null;
-					headingStartLineIndex = -1;
+				if (lineHeadingStyles[l] == null)
 					break;
+				
+				//	extend in same heading style unless line is short
+				if ((lineHeadingStyles[l] == lineHeadingStyles[l-1]) && !lineIsShort[l-1]) {
+					headingEnd = lineWords[l][lineWords[l].length-1];
+					headingEndLineShort = lineIsShort[l];
+				}
+				
+				//	mark heading in current style and start new one in new style
+				else {
+					this.markHeading(page, headingStart, headingEnd, headingStyle, lineIsFlushLeft[headingStartLineIndex], lineIsFlushRight[headingStartLineIndex], headingEndLineShort, pm);
+					headingStart = lineWords[l][0];
+					headingEnd = lineWords[l][lineWords[l].length-1];
+					headingStyle = lineHeadingStyles[l];
+					headingStartLineIndex = l;
+					headingEndLineShort = lineIsShort[l];
 				}
 			}
-			if (headingStyle != null) {
-				ImAnnotation heading = page.getDocument().addAnnotation(headingStart, headingEnd, ImAnnotation.HEADING_TYPE);
-				heading.setAttribute("reason", ("" + headingStyle.level));
-				heading.setAttribute("level", ("" + headingStyle.level));
-				if (!lineIsFlushLeft[headingStartLineIndex] && !lineIsFlushRight[headingStartLineIndex])
-					heading.setAttribute(ImAnnotation.TEXT_ORIENTATION_CENTERED);
-				if (headingStyle.isAllCaps)
-					heading.setAttribute(ImAnnotation.ALL_CAPS_ATTRIBUTE);
-				if (headingStyle.isBold)
-					heading.setAttribute(ImAnnotation.BOLD_ATTRIBUTE);
-				if (((headingStyle.minFontSize + headingStyle.maxFontSize) / 2) > 6)
-					heading.setAttribute(ImAnnotation.FONT_SIZE_ATTRIBUTE, ("" + ((headingStyle.minFontSize + headingStyle.maxFontSize) / 2)));
-				this.straightenHeadingStreamStructure(heading);
-				pm.setInfo(" ==> marked heading level " + headingStyle.level + ": " + ImUtils.getString(heading.getFirstWord(), heading.getLastWord(), true));
-			}
+			if (headingStyle != null)
+				this.markHeading(page, headingStart, headingEnd, headingStyle, lineIsFlushLeft[headingStartLineIndex], lineIsFlushRight[headingStartLineIndex], headingEndLineShort, pm);
 		}
+	}
+	
+	private void markHeading(ImPage page, ImWord headingStart, ImWord headingEnd, HeadingStyleDefined headingStyle, boolean startLineFlushLeft, boolean startLineFlushRight, boolean endLineShort, ProgressMonitor pm) {
+		
+		//	accept non-block heading only if (a) it is bold or all-caps as a whole or (b) it (its last line) is short
+		if (!headingStyle.isBlock && !endLineShort && !headingStyle.isBold && !headingStyle.isAllCaps)
+			return;
+		
+		//	mark heading, including all the attributes
+		ImAnnotation heading = page.getDocument().addAnnotation(headingStart, headingEnd, ImAnnotation.HEADING_TYPE);
+		heading.setAttribute("reason", ("" + headingStyle.level));
+		heading.setAttribute("level", ("" + headingStyle.level));
+		if (!startLineFlushLeft && !startLineFlushRight)
+			heading.setAttribute(ImAnnotation.TEXT_ORIENTATION_CENTERED);
+		if (headingStyle.isAllCaps)
+			heading.setAttribute(ImAnnotation.ALL_CAPS_ATTRIBUTE);
+		if (headingStyle.isBold)
+			heading.setAttribute(ImAnnotation.BOLD_ATTRIBUTE);
+		if (((headingStyle.minFontSize + headingStyle.maxFontSize) / 2) > 6)
+			heading.setAttribute(ImAnnotation.FONT_SIZE_ATTRIBUTE, ("" + ((headingStyle.minFontSize + headingStyle.maxFontSize) / 2)));
+		this.straightenHeadingStreamStructure(heading);
+		pm.setInfo(" ==> marked heading level " + headingStyle.level + ": " + ImUtils.getString(heading.getFirstWord(), heading.getLastWord(), true));
 	}
 	
 	private static class HeadingStyleObserved {
@@ -2238,6 +2306,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return false;
 	}
 	
+	//	TODO copy from here
 	private void detectTables(ImPage page, int pageImageDpi, int minColMargin, int minRowMargin, ProgressMonitor pm) {
 		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 		Arrays.sort(pageBlocks, ImUtils.topDownOrder);
@@ -3129,11 +3198,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		if (DEBUG_IS_FOOTNOTE) System.out.println(" - footnote test first line is " + paragraphFirstLine);
 		
 		//	test paragraph start against detector patterns
-		for (int p = 0; p < startPatterns.length; p++)
-			if (startPatterns[p].matcher(paragraphFirstLine).matches()) {
+		for (int p = 0; p < startPatterns.length; p++) {
+			Matcher startMatcher = startPatterns[p].matcher(paragraphFirstLine);
+			if (startMatcher.find() && (startMatcher.start() == 0)) {
 				if (DEBUG_IS_FOOTNOTE) System.out.println(" ==> pattern match");
 				return true;
 			}
+		}
 		
 		//	no match found
 		if (DEBUG_IS_FOOTNOTE) System.out.println(" ==> no pattern match");
@@ -3190,54 +3261,97 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	test first line against detector patterns
 		boolean noCaptionStart = true;
-		for (int p = 0; p < startPatterns.length; p++)
-			if (startPatterns[p].matcher(paragraphFirstLine).matches()) {
+		for (int p = 0; p < startPatterns.length; p++) {
+			Matcher startMatcher = startPatterns[p].matcher(paragraphFirstLine);
+			if (startMatcher.find() && (startMatcher.start() == 0)) {
 				noCaptionStart = false;
 				break;
 			}
+		}
 		if (noCaptionStart) {
 			if (DEBUG_IS_CAPTION) System.out.println(" ==> no pattern match");
 			return false;
 		}
 		
 		//	count words and numbers in first line
-		int firstLineWordCount = 0;
-		int firstLineNumberCount = 0;
+		int wordCount = 0;
+		int numberCountArabic = 0;
+		int numberCountRomanSecure = 0;
+		int numberCountRomanUpper = 0;
+		int numberCountRomanLower = 0;
+		int indexLetterCountUpper = 0;
+		int indexLetterCountLower = 0;
 		for (int w = 1; w < paragraphWords.length; w++) {
 			String wordString = paragraphWords[w].getString();
 			if ((wordString == null) || (wordString.length() == 0))
 				continue;
 			if (Gamta.isNumber(wordString)) {
 				if (wordString.length() < 4)
-					firstLineNumberCount++;
-				else firstLineWordCount++;
+					numberCountArabic++;
+				else wordCount++;
 			}
-			if (Gamta.isRomanNumber(wordString))
-				firstLineNumberCount++;
-			if (Gamta.isWord(wordString)) {
+			else if (Gamta.isRomanNumber(wordString)) {
+				if (wordString.equals(wordString.toLowerCase()))
+					numberCountRomanLower++;
+				else if (wordString.equals(wordString.toUpperCase()))
+					numberCountRomanUpper++;
 				if (wordString.length() > 1)
-					firstLineWordCount++;
-				else if (wordString.matches("[a-zA-Z]"))
-					firstLineNumberCount++;
+					numberCountRomanSecure++;
+			}
+			else if (Gamta.isWord(wordString)) {
+				if (wordString.length() > 1)
+					wordCount++;
+				else if (wordString.matches("[a-z]"))
+					indexLetterCountLower++;
+				else if (wordString.matches("[A-Z]"))
+					indexLetterCountUpper++;
 			}
 			if (paragraphWords[w] == firstLineEnd)
 				break;
 		}
 		
-		//	more numbers than words ==> reference to caption
-		if (firstLineNumberCount == 0) {
+		//	if we have Roman numbers, they are (presumably) consistent regarding case
+		int numberCountRoman = Math.max(numberCountRomanUpper, numberCountRomanLower);
+		wordCount += Math.min(numberCountRomanUpper, numberCountRomanLower);
+		
+		//	no numbers at all, with universal patterns ==> not a caption
+		if ((startPatterns == this.captionStartPatterns) && ((numberCountArabic + numberCountRoman) == 0)) {
 			if (DEBUG_IS_CAPTION) System.out.println(" ==> no numbers at all, not a caption");
 			return false;
 		}
 		
-		//	more numbers than words ==> reference to caption (we can cut some more slack if we have other clues)
-		if ((startIsBold || (startPatterns != this.captionStartPatterns)) ? ((firstLineWordCount * 3) < (firstLineNumberCount * 2)) : (firstLineWordCount < firstLineNumberCount)) {
-			if (DEBUG_IS_CAPTION) System.out.println(" ==> " + firstLineWordCount + " words vs. " + firstLineNumberCount + " numbers, caption reference");
+		//	index letters are either lower or upper case, but (presumably) never mixed
+		int indexLetterCount = Math.max(indexLetterCountLower, indexLetterCountUpper);
+		wordCount += Math.min(indexLetterCountLower, indexLetterCountUpper);
+		
+		//	if we have multiple Roman numbers, it's extremely unlikely they are all single-lettered
+		if ((numberCountRoman > 1) && (numberCountRomanSecure == 0)) {
+			indexLetterCount += (numberCountRoman - 1);
+			numberCountRoman = 1;
+		}
+		
+		//	we have at most two levels of numbering, the third is actually words
+		int[] numberingCounts = {
+			numberCountArabic,
+			numberCountRoman,
+			indexLetterCount
+		};
+		Arrays.sort(numberingCounts);
+		wordCount += numberingCounts[0];
+		int numberingCount = (numberingCounts[1] + numberingCounts[2]);
+		
+		//	more numbering than words ==> reference to caption (we can cut some more slack if we have other clues)
+		boolean isCaptionReference;
+		if (startIsBold || (startPatterns != this.captionStartPatterns))
+			isCaptionReference = ((wordCount * 3) < (numberingCount * 2));
+		else isCaptionReference = (wordCount < numberingCount);
+		if (isCaptionReference) {
+			if (DEBUG_IS_CAPTION) System.out.println(" ==> " + wordCount + " words vs. " + numberingCount + " numbers, caption reference");
 			return false;
 		}
 		
-		//	more words than numbers ==> actual caption
-		if (DEBUG_IS_CAPTION) System.out.println(" ==> " + firstLineWordCount + " words vs. " + firstLineNumberCount + " numbers, caption");
+		//	more words than numbering ==> actual caption
+		if (DEBUG_IS_CAPTION) System.out.println(" ==> " + wordCount + " words vs. " + numberingCount + " numbers, caption");
 		return true;
 	}
 	
@@ -4121,9 +4235,27 @@ Create HeadingStructureEditor
 //		testFileName = "1_5_Farkac.pdf.imf"; // heading detection and ranking hampered by sloppy layout, pretty rough case this one
 //		testFileName = "zt03911p493.pdf.raw.imf"; // key entries detected as footnotes on page 4 ==> fixed via font size
 //		testFileName = "ZM1967042005.pdf.imf"; // two footnotes not detected on page 0
-		testFileName = "IJSEM/19.full.pdf.raw.imf"; // caption on page 2 mistaken for table
+//		testFileName = "IJSEM/19.full.pdf.raw.imf"; // caption on page 2 mistaken for table
+		
+//		testFileName = "RSZ_2015_122_181-184_RihaFarkac.pdf" // TODO caption block on page 1: 10 single-line captions in one block, referring to single image with 10 numbered parts ==> needs to be single caption, treated like "Figures 1-10".
+		
+//		testFileName = "29882.pdf"; // TODO figures come in horizontal stripes, bundle images
+		
+		testFileName = "zt03881p227.pdf.imf"; // fails to detect full-page table on page 5
+//		testFileName = "zt03881p227.pdf.imf"; // cuts off column headers on page 8 due to too narrow column gap
+		/* TODO revisit table extraction, try this:
+		 * - cut blocks into individual lines altogether
+		 * - for each line, collect
+		 *   - above-average gaps as possible column gaps
+		 *   - column anchors: left edge, center, and right edge of word blocks separated by these gaps
+		 * - sort lines top-down
+		 * - assemble tables from lines, scoring by compatibility of column gap and column anchor points
+		 * ==> exploits alignment of column content
+		 * ==> more versatile than mere column gap approach
+		 * ==> can handle column gap constrictions due to wide values
+		 */
 		FileInputStream fis = new FileInputStream(new File("E:/Testdaten/PdfExtract/" + testFileName));
-		ImDocument doc = ImfIO.loadDocument(fis);
+		ImDocument doc = ImDocumentIO.loadDocument(fis);
 		fis.close();
 		
 		DocumentStyle.addProvider(new DocumentStyle.Provider() {
@@ -4140,5 +4272,558 @@ Create HeadingStructureEditor
 //		Arrays.sort(params);
 //		for (int p = 0; p < params.length; p++)
 //			System.out.println(params[p] + " = \"" + DocumentStyle.getParameterValueClass(params[p]).getName() + "\";");
+	}
+	
+	private void detectTablesTest(ImPage page, int pageImageDpi, int minColMargin, int minRowMargin, ProgressMonitor pm) {
+		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+		Arrays.sort(pageBlocks, ImUtils.topDownOrder);
+		
+		//	split blocks with varying line distances (might be tables with multi-line rows) at larger line gaps, and let merging do its magic
+		ArrayList pageBlockList = new ArrayList();
+		HashMap pageBlocksBySubBlocks = new HashMap();
+		for (int b = 0; b < pageBlocks.length; b++) {
+			if (DEBUG_IS_TABLE) System.out.println("Testing irregular line gap split in block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table detection");
+			
+			//	get block lines
+			ImRegion[] blockLines = pageBlocks[b].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+			if (blockLines.length < 5) {
+				pageBlockList.add(pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" ==> too few lines to assess gaps");
+				continue;
+			}
+			Arrays.sort(blockLines, ImUtils.topDownOrder);
+			if (DEBUG_IS_TABLE) System.out.println(" --> got " + blockLines.length + " lines");
+			
+			//	compute line gaps
+			int minLineGap = (pageBlocks[b].bounds.bottom - pageBlocks[b].bounds.top);
+			int maxLineGap = 0;
+			int lineGapCount = 0;
+			int lineGapSum = 0;
+			for (int l = 1; l < blockLines.length; l++) {
+				int lineGap = (blockLines[l].bounds.top - blockLines[l-1].bounds.bottom);
+				if (lineGap < 0)
+					continue;
+				minLineGap = Math.min(minLineGap, lineGap);
+				maxLineGap = Math.max(maxLineGap, lineGap);
+				lineGapSum += lineGap;
+				lineGapCount++;
+			}
+			if (lineGapCount < 4) {
+				pageBlockList.add(pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" ==> too few non-overlapping lines to assess gaps");
+				continue;
+			}
+			int avgLineGap = ((lineGapSum + (lineGapCount / 2)) / lineGapCount);
+			if (DEBUG_IS_TABLE) System.out.println(" --> measured " + lineGapCount + " line gaps, min is " + minLineGap + ", max is " + maxLineGap + ", avg is " + avgLineGap);
+			
+			//	line gaps too regular to use, split at all gaps if large enough, or not at all
+			if ((minLineGap * 4) > (maxLineGap * 3)) {
+				if (minLineGap > (page.getImageDPI() / 13)) {
+					avgLineGap = (minLineGap -1);
+					if (DEBUG_IS_TABLE) System.out.println(" --> line gaps too regular, splitting at all gaps using minimum " + avgLineGap);
+				}
+				else {
+					pageBlockList.add(pageBlocks[b]);
+					if (DEBUG_IS_TABLE) System.out.println(" ==> line gaps too regular");
+					continue;
+				}
+			}
+			
+			//	count above-average line gaps
+			int aboveAvgLineGapCount = 0;
+			for (int l = 1; l < blockLines.length; l++) {
+				int lineGap = (blockLines[l].bounds.top - blockLines[l-1].bounds.bottom);
+				if (lineGap > avgLineGap)
+					aboveAvgLineGapCount++;
+			}
+			
+			//	too few above-average line gaps
+			if ((aboveAvgLineGapCount * 5) < blockLines.length) {
+				pageBlockList.add(pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" ==> too few above-average line gaps");
+				continue;
+			}
+			
+			//	create sub blocks at above-average line gaps
+			int subBlockStartLine = 0;
+			for (int l = 1; l < blockLines.length; l++) {
+				int lineGap = (blockLines[l].bounds.top - blockLines[l-1].bounds.bottom);
+				if (lineGap < avgLineGap)
+					continue;
+				ImRegion subBlock = new ImRegion(pageBlocks[b].getDocument(), pageBlocks[b].pageId, new BoundingBox(pageBlocks[b].bounds.left, pageBlocks[b].bounds.right, blockLines[subBlockStartLine].bounds.top, blockLines[l-1].bounds.bottom), ImRegion.BLOCK_ANNOTATION_TYPE);
+				pageBlockList.add(subBlock);
+				pageBlocksBySubBlocks.put(subBlock, pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" --> got sub block at " + subBlock.bounds + " with " + (l - subBlockStartLine) + " lines");
+				subBlockStartLine = l;
+			}
+			if (subBlockStartLine != 0) {
+				ImRegion subBlock = new ImRegion(pageBlocks[b].getDocument(), pageBlocks[b].pageId, new BoundingBox(pageBlocks[b].bounds.left, pageBlocks[b].bounds.right, blockLines[subBlockStartLine].bounds.top, pageBlocks[b].bounds.bottom), ImRegion.BLOCK_ANNOTATION_TYPE);
+				pageBlockList.add(subBlock);
+				pageBlocksBySubBlocks.put(subBlock, pageBlocks[b]);
+				if (DEBUG_IS_TABLE) System.out.println(" --> got sub block at " + subBlock.bounds + " with " + (blockLines.length - subBlockStartLine) + " lines");
+			}
+			
+			//	increase minimum row margin to average line gap TODO_ne assess if this doesn't wreck havoc in some situations ==> seems OK with line gap width distribution catch
+			minRowMargin = Math.max(minRowMargin, avgLineGap);
+		}
+		
+		//	update page blocks if sub blocks added (do NOT re-sort, so sub blocks of same original block stay together)
+		if (pageBlocks.length < pageBlockList.size())
+			pageBlocks = ((ImRegion[]) pageBlockList.toArray(new ImRegion[pageBlockList.size()]));
+		
+		/* TODO revisit table extraction, try this:
+		 * - for each line, collect
+		 *   - above-average gaps as possible column gaps
+		 *   - column anchors: left edge, center, and right edge of word blocks separated by these gaps
+		 * - sort lines top-down
+		 * - assemble tables from lines, scoring by compatibility of column gap and column anchor points
+		 * ==> exploits alignment of column content
+		 * ==> more versatile than mere column gap approach
+		 * ==> can handle column gap constrictions due to wide values
+		 */
+		
+		//	collect words and columns for each block, and measure width
+		boolean[] isPageBlockNarrow = new boolean[pageBlocks.length];
+		ImWord[][] pageBlockWords = new ImWord[pageBlocks.length][];
+		ImRegion[][] pageBlockCols = new ImRegion[pageBlocks.length][];
+		ImRegion[][] pageBlockRows = new ImRegion[pageBlocks.length][];
+		TableColGap[][] pageBlockColGaps = new TableColGap[pageBlocks.length][];
+		TableColAnchor[][] pageBlockColAnchors = new TableColAnchor[pageBlocks.length][];
+		for (int b = 0; b < pageBlocks.length; b++) {
+			isPageBlockNarrow[b] = (((pageBlocks[b].bounds.right - pageBlocks[b].bounds.left) * 5) < (page.bounds.right - page.bounds.left));
+			pageBlockWords[b] = page.getWordsInside(pageBlocks[b].bounds);
+			System.out.println("Testing block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table or table part");
+			if (pageBlockWords[b].length == 0) {
+				System.out.println(" ==> no words");
+				continue;
+			}
+			Arrays.sort(pageBlockWords[b], ImUtils.textStreamOrder);
+			if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[b][0].getTextStreamType()))
+				continue;
+			pm.setInfo("Testing block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table or table part");
+			pageBlockCols[b] = this.getTableColumns(pageBlocks[b], minColMargin);
+			if (pageBlockCols[b] != null)
+				pm.setInfo(" ==> columns OK");
+			pageBlockRows[b] = this.getTableRows(pageBlocks[b], minRowMargin);
+			
+			//	assess row occupancy, and compute average word height
+			int[] colWordRows = new int[pageBlocks[b].bounds.right - pageBlocks[b].bounds.left];
+			int wordHeightSum = 0;
+			Arrays.fill(colWordRows, 0);
+			for (int w = 0; w < pageBlockWords[b].length; w++) {
+				for (int c = Math.max(pageBlocks[b].bounds.left, pageBlockWords[b][w].bounds.left); c < Math.min(pageBlocks[b].bounds.right, pageBlockWords[b][w].bounds.right); c++)
+					colWordRows[c - pageBlocks[b].bounds.left] += (pageBlockWords[b][w].bounds.bottom - pageBlockWords[b][w].bounds.top);
+				wordHeightSum += (pageBlockWords[b][w].bounds.bottom - pageBlockWords[b][w].bounds.top);
+			}
+			int avgWordHeight = ((wordHeightSum + (pageBlockWords[b].length / 2)) / pageBlockWords[b].length);
+			
+			//	fill in gaps that are too small (considerably simplifies gap and anchor collection logic)
+			int start = 0;
+			for (int c = 1; c <= colWordRows.length; c++) {
+				if ((c != colWordRows.length) && ((colWordRows[c] == 0) == (colWordRows[c-1] == 0)))
+					continue;
+				if ((colWordRows[c-1] == 0) && ((c - start) < (avgWordHeight / 2))) {
+					for (int f = start; f < c; f++)
+						colWordRows[f] = 1;
+				}
+				start = c;
+			}
+			
+			//	collect gaps and column anchors
+			ArrayList colGaps = new ArrayList();
+			ArrayList colAnchors = new ArrayList();
+			for (int c = 0; c <= colWordRows.length; c++) {
+				if ((c != 0) && (c != colWordRows.length) && ((colWordRows[c] == 0) == (colWordRows[c-1] == 0)))
+					continue;
+				if (c != 0) {
+					if (colWordRows[c-1] == 0)
+						colGaps.add(new TableColGap((start + pageBlocks[b].bounds.left), (c + pageBlocks[b].bounds.left)));
+					else {
+						colAnchors.add(new TableColAnchor((((c + start) / 2) + pageBlocks[b].bounds.left), 'C'));
+						colAnchors.add(new TableColAnchor((c + pageBlocks[b].bounds.left), 'R'));
+					}
+				}
+				if (c != colWordRows.length) {
+					if (colWordRows[c] != 0)
+						colAnchors.add(new TableColAnchor((c + pageBlocks[b].bounds.left), 'L'));
+				}
+				start = c;
+			}
+			System.out.println("Column Gaps: " + colGaps.toString());
+			System.out.println("Column Anchors: " + colAnchors.toString());
+		}
+		
+		//	assess possible block mergers
+		for (int b = 0; b < pageBlocks.length; b++) {
+			if (pageBlocks[b] == null)
+				continue;
+			if ((pageBlockWords[b].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[b][0].getTextStreamType()))
+				continue;
+			
+			//	collect merge result
+			ImRegion mergedBlock = null;
+			ImRegion[] mergedBlockCols = null;
+			int mergedBlockRowCount = 3;
+			int mergedBlockCellCount = 0;
+			
+			//	try merging downward from narrow block (might be table column cut off others)
+			if (isPageBlockNarrow[b]) {
+				
+				//	find block with columns
+				int mergeBlockIndex = -1;
+				for (int l = (b+1); l < pageBlocks.length; l++) {
+					if (pageBlocks[l] == null)
+						continue;
+					if ((pageBlockWords[l].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[l][0].getTextStreamType()))
+						continue;
+					if (isPageBlockNarrow[l])
+						continue;
+					if (pageBlocks[l].bounds.top < pageBlocks[b].bounds.bottom)
+						continue;
+					if (pageBlockCols[l] != null)
+						mergeBlockIndex = l;
+					break;
+				}
+				if (mergeBlockIndex == -1)
+					continue;
+				
+				//	attempt merger
+				pm.setInfo("Attempting merger of " + pageBlocks[b].bounds + " and " + pageBlocks[mergeBlockIndex].bounds + " (" + pageBlockCols[mergeBlockIndex].length + " columns)");
+				BoundingBox mergeTestBlockBounds = new BoundingBox(Math.min(pageBlocks[b].bounds.left, pageBlocks[mergeBlockIndex].bounds.left), Math.max(pageBlocks[b].bounds.right, pageBlocks[mergeBlockIndex].bounds.right), pageBlocks[b].bounds.top, pageBlocks[mergeBlockIndex].bounds.bottom);
+				int mtbbLeft = mergeTestBlockBounds.left;
+				int mtbbRight = mergeTestBlockBounds.right;
+				for (int tb = 0; tb < pageBlocks.length; tb++) {
+					if (pageBlocks[tb] == null)
+						continue;
+					if (pageBlocks[tb].bounds.liesIn(mergeTestBlockBounds, false))
+						continue;
+					if (!pageBlocks[tb].bounds.liesIn(mergeTestBlockBounds, true))
+						continue;
+					mtbbLeft = Math.min(mtbbLeft, pageBlocks[tb].bounds.left);
+					mtbbRight = Math.max(mtbbRight, pageBlocks[tb].bounds.right);
+				}
+				if ((mtbbLeft < mergeTestBlockBounds.left) || (mergeTestBlockBounds.right < mtbbRight))
+					mergeTestBlockBounds = new BoundingBox(mtbbLeft, mtbbRight, mergeTestBlockBounds.top, mergeTestBlockBounds.bottom);
+				ImRegion mergeTestBlock = new ImRegion(page.getDocument(), page.pageId, mergeTestBlockBounds, ImRegion.BLOCK_ANNOTATION_TYPE);
+				pm.setInfo(" - merged block is " + mergeTestBlock.bounds);
+				ImRegion[] mergeTestBlockCols = this.getTableColumns(mergeTestBlock, minColMargin);
+				if (mergeTestBlockCols == null) {
+					pm.setInfo(" ==> foo few columns");
+					continue;
+				}
+				
+				//	allow tolerance of one column lost if 9 or more columns in main block ...
+				if (mergeTestBlockCols.length < pageBlockCols[mergeBlockIndex].length) {
+					if ((pageBlockCols[mergeBlockIndex].length > 8) && ((mergeTestBlockCols.length + 1) == pageBlockCols[mergeBlockIndex].length))
+						pm.setInfo(" - one column loss tolerated");
+					else {
+						pm.setInfo(" ==> too few columns (" + mergeTestBlockCols.length + ")");
+						break;
+					}
+				}
+				pm.setInfo(" - columns OK");
+				ImRegion[] mergeTestBlockRows = this.getTableRows(mergeTestBlock, minRowMargin);
+				if (mergeTestBlockRows == null) {
+					pm.setInfo(" ==> too few rows");
+					continue;
+				}
+				pm.setInfo(" - rows OK");
+				
+				//	... but only if more total cells in merge result than in main block
+				if ((pageBlockRows[mergeBlockIndex] != null) && ((mergeTestBlockCols.length * mergeTestBlockRows.length) < (pageBlockCols[mergeBlockIndex].length * pageBlockCols[mergeBlockIndex].length))) {
+					pm.setInfo(" ==> too few cells (1, " + mergeTestBlockCols.length + "x" + mergeTestBlockRows.length + " vs. " + pageBlockCols[b].length + "x" + pageBlockRows[b].length + ")");
+					continue;
+				}
+				else if ((mergeTestBlockCols.length * mergeTestBlockRows.length) < mergedBlockCellCount) {
+					pm.setInfo(" ==> too few cells (2, " + mergeTestBlockCols.length + "x" +  mergeTestBlockRows.length + " vs. " + mergedBlockCellCount + ")");
+					continue;
+				}
+				ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols, true);
+				if (mergeTestBlockCells == null) {
+					pm.setInfo(" ==> cells incomplete");
+					continue;
+				}
+				pm.setInfo(" - cells OK");
+				mergedBlock = mergeTestBlock;
+				mergedBlockCols = mergeTestBlockCols;
+				mergedBlockCellCount = (mergeTestBlockCols.length * mergeTestBlockRows.length);
+			}
+			
+			//	try merging downward from block with viable column gaps
+			else if (pageBlockCols[b] != null) {
+				
+				//	try merging downward
+				for (int l = (b+1); l < pageBlocks.length; l++) {
+					if (pageBlocks[l] == null)
+						continue;
+					if ((pageBlockWords[l].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[l][0].getTextStreamType()))
+						continue;
+					if (pageBlocks[l].bounds.top < pageBlocks[b].bounds.bottom)
+						continue;
+					
+					//	attempt merger
+					pm.setInfo("Attempting merger of " + pageBlocks[b].bounds + " (" + pageBlockCols[b].length + " columns) and " + pageBlocks[l].bounds);
+					BoundingBox mergeTestBlockBounds = new BoundingBox(Math.min(pageBlocks[b].bounds.left, pageBlocks[l].bounds.left), Math.max(pageBlocks[b].bounds.right, pageBlocks[l].bounds.right), pageBlocks[b].bounds.top, pageBlocks[l].bounds.bottom);
+					int mtbbLeft = mergeTestBlockBounds.left;
+					int mtbbRight = mergeTestBlockBounds.right;
+					for (int tb = 0; tb < pageBlocks.length; tb++) {
+						if (pageBlocks[tb] == null)
+							continue;
+						if (pageBlocks[tb].bounds.liesIn(mergeTestBlockBounds, false))
+							continue;
+						if (!pageBlocks[tb].bounds.liesIn(mergeTestBlockBounds, true))
+							continue;
+						mtbbLeft = Math.min(mtbbLeft, pageBlocks[tb].bounds.left);
+						mtbbRight = Math.max(mtbbRight, pageBlocks[tb].bounds.right);
+					}
+					if ((mtbbLeft < mergeTestBlockBounds.left) || (mergeTestBlockBounds.right < mtbbRight))
+						mergeTestBlockBounds = new BoundingBox(mtbbLeft, mtbbRight, mergeTestBlockBounds.top, mergeTestBlockBounds.bottom);
+					ImRegion mergeTestBlock = new ImRegion(page.getDocument(), page.pageId, mergeTestBlockBounds, ImRegion.BLOCK_ANNOTATION_TYPE);
+					pm.setInfo(" - merged block is " + mergeTestBlock.bounds);
+					ImRegion[] mergeTestBlockCols = this.getTableColumns(mergeTestBlock, minColMargin);
+					if (mergeTestBlockCols == null) {
+						pm.setInfo(" ==> too few columns");
+						break;
+					}
+					
+					//	allow tolerance of one column lost if 9 or more columns in main block ...
+					if (mergeTestBlockCols.length < pageBlockCols[b].length) {
+						if ((pageBlockCols[b].length > 8) && ((mergeTestBlockCols.length + 1) == pageBlockCols[b].length))
+							pm.setInfo(" - one column loss tolerated");
+						else {
+							pm.setInfo(" ==> too few columns (" + mergeTestBlockCols.length + ")");
+							break;
+						}
+					}
+					else pm.setInfo(" - columns OK");
+					ImRegion[] mergeTestBlockRows = this.getTableRows(mergeTestBlock, minRowMargin, mergedBlockRowCount);
+					if (mergeTestBlockRows == null) {
+						pm.setInfo(" ==> too few rows");
+						continue;
+					}
+					pm.setInfo(" - rows OK");
+					
+					//	... but only if more total cells in merge result than in main block
+					if ((pageBlockRows[b] != null) && ((mergeTestBlockCols.length * mergeTestBlockRows.length) < (pageBlockCols[b].length * pageBlockRows[b].length))) {
+						pm.setInfo(" ==> too few cells (1, " + mergeTestBlockCols.length + "x" + mergeTestBlockRows.length + " vs. " + pageBlockCols[b].length + "x" + pageBlockRows[b].length + ")");
+						continue;
+					}
+					else if ((mergeTestBlockCols.length * mergeTestBlockRows.length) < mergedBlockCellCount) {
+						pm.setInfo(" ==> too few cells (2, " + mergeTestBlockCols.length + "x" +  mergeTestBlockRows.length + " vs. " + mergedBlockCellCount + ")");
+						continue;
+					}
+					ImRegion[][] mergeTestBlockCells = this.getTableCells(page, mergeTestBlock, mergeTestBlockRows, mergeTestBlockCols, true);
+					if (mergeTestBlockCells == null) {
+						pm.setInfo(" ==> cells incomplete");
+						continue;
+					}
+					pm.setInfo(" - cells OK");
+					mergedBlock = mergeTestBlock;
+					mergedBlockCols = mergeTestBlockCols;
+					mergedBlockRowCount = mergeTestBlockRows.length;
+					mergedBlockCellCount = (mergeTestBlockCols.length * mergeTestBlockRows.length);
+				}
+			}
+			
+			//	any success?
+			if (mergedBlock == null)
+				continue;
+			
+			//	store merged block, and clean up all blocks inside
+			for (int c = 0; c < pageBlocks.length; c++) {
+				if (pageBlocks[c] == null)
+					continue;
+				if (!mergedBlock.bounds.includes(pageBlocks[c].bounds, true))
+					continue;
+				page.removeRegion(pageBlocks[c]);
+				pageBlocksBySubBlocks.remove(pageBlocks[c]);
+				pageBlocks[c] = null;
+				pageBlockCols[c] = null;
+				pageBlockWords[c] = null;
+				isPageBlockNarrow[c] = false;
+			}
+			
+			//	add merged block
+			page.addRegion(mergedBlock);
+			pageBlocks[b] = mergedBlock;
+			pageBlockCols[b] = mergedBlockCols;
+			pageBlockWords[b] = mergedBlock.getWords();
+			Arrays.sort(pageBlockWords[b], ImUtils.textStreamOrder);
+			isPageBlockNarrow[b] = false;
+			pm.setInfo(" - got merged block " + mergedBlock.bounds);
+		}
+		
+		//	merge adjacent sub blocks of same parent block that were not merged to form a table
+		ArrayList subBlockList = new ArrayList();
+		ImRegion subBlockParent = null;
+		int subBlockStartIndex = -1;
+		for (int b = 0; b <= pageBlocks.length; b++) {
+			if ((b < pageBlocks.length) && (pageBlocks[b] == null))
+				continue;
+			
+			//	get parent block to assess what to do
+			ImRegion pageBlockParent = null;
+			
+			//	we're in the last run, just end whatever we have
+			if (b == pageBlocks.length) {}
+			
+			//	this one's original, or a merger result, just end whatever we have
+			else if (pageBlocks[b].getPage() != null) {}
+			
+			//	we have a sub block
+			else {
+				pageBlockParent = ((ImRegion) pageBlocksBySubBlocks.remove(pageBlocks[b]));
+				if (pageBlockParent == null)
+					continue; // highly unlikely, but let's have this safety net
+				
+				//	same parent as previous sub block(s), add to list
+				if (subBlockParent == pageBlockParent) {
+					subBlockList.add(pageBlocks[b]);
+					continue;
+				}
+			}
+			
+			//	merge collected sub blocks and clean up (if we get here, we're not continuing current sub block)
+			if (subBlockList.size() != 0) {
+				BoundingBox subBlockBounds = ImLayoutObject.getAggregateBox((ImRegion[]) subBlockList.toArray(new ImRegion[subBlockList.size()]));
+				BoundingBox subBlockWordBounds = ImLayoutObject.getAggregateBox(page.getWordsInside(subBlockBounds));
+				pageBlocks[subBlockStartIndex] = new ImRegion(page, ((subBlockWordBounds == null) ? subBlockBounds : subBlockWordBounds), ImRegion.BLOCK_ANNOTATION_TYPE);
+				
+				pageBlockCols[subBlockStartIndex] = null;
+				pageBlockWords[subBlockStartIndex] = page.getWordsInside(pageBlocks[subBlockStartIndex].bounds);
+				Arrays.sort(pageBlockWords[subBlockStartIndex], ImUtils.textStreamOrder);
+				
+				for (int c = (subBlockStartIndex + 1); c < b; c++) {
+					pageBlocks[c] = null;
+					pageBlockCols[c] = null;
+					pageBlockWords[c] = null;
+				}
+				page.removeRegion(subBlockParent);
+				
+				subBlockList.clear();
+				subBlockParent = null;
+				subBlockStartIndex = -1;
+			}
+			
+			//	start new sub block (if we get here and have a parent block, we are to start a new sub block)
+			if (pageBlockParent != null) {
+				subBlockList.add(pageBlocks[b]);
+				subBlockParent = pageBlockParent;
+				subBlockStartIndex = b;
+			}
+		}
+		
+		//	mark single-block tables
+		for (int b = 0; b < pageBlocks.length; b++) {
+			if (pageBlocks[b] == null)
+				continue;
+			if ((pageBlockWords[b].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(pageBlockWords[b][0].getTextStreamType()))
+				continue;
+			pm.setInfo("Testing block " + pageBlocks[b].bounds + " on page " + page.pageId + " for table");
+			if (this.markIfIsTable(page, pageBlocks[b], pageBlockCols[b], pageBlockWords[b], pageImageDpi, minColMargin, minRowMargin)) {
+				pm.setInfo(" ==> table detected");
+				page.removeRegion(pageBlocks[b]);
+			}
+			else if (this.markIfContainsTable(page, pageBlocks[b], pageBlockWords[b], pageImageDpi, minColMargin, minRowMargin)) {
+				pm.setInfo(" ==> table extracted");
+				page.removeRegion(pageBlocks[b]);
+			}
+			else pm.setInfo(" ==> not a table");
+		}
+	}
+	
+	private static class TableColGap implements Comparable {
+		final int left;
+		final int right;
+		TableColGap(int left, int right) {
+			this.left = left;
+			this.right = right;
+		}
+		boolean isCompatibleWith(TableColGap tcg) {
+			return ((this.left < tcg.right) && (tcg.left < this.right));
+		}
+		TableColGap joinWith(TableColGap tcg) {
+			return new TableColGap(Math.max(this.left, tcg.left), Math.min(this.right, tcg.right));
+		}
+		public String toString() {
+			return ("" + this.left + "-" + this.right);
+		}
+		public boolean equals(Object obj) {
+			return this.toString().equals(obj.toString());
+		}
+		public int compareTo(Object obj) {
+			TableColGap tcg = ((TableColGap) obj);
+			return ((this.left == tcg.left) ? (tcg.right - this.right) : (this.left - tcg.left));
+//			if (obj instanceof TableColGap) {
+//				TableColGap tcg = ((TableColGap) obj);
+//				return ((this.left == tcg.left) ? (tcg.right - this.right) : (this.left - tcg.left));
+//			}
+//			else return -1;
+		}
+	}
+//	
+//	private static Comparator tableColGapOrder = new Comparator() {
+//		public int compare(Object obj1, Object obj2) {
+//			TableColGap tcg1 = ((TableColGap) obj1);
+//			TableColGap tcg2 = ((TableColGap) obj2);
+//			return ((tcg1.left == tcg2.left) ? (tcg2.right - tcg1.right) : (tcg1.left - tcg2.left));
+//		}
+//	};
+	
+	private static ArrayList joinTableColGaps(ArrayList gaps1, ArrayList gaps2) {
+		ArrayList gaps = new ArrayList();
+		for (int g = 0; g < gaps1.size(); g++) {
+			TableColGap tcg = ((TableColGap) gaps1.get(g));
+			for (int jg = 0; jg < gaps2.size(); jg++) {
+				TableColGap jTcg = ((TableColGap) gaps2.get(jg));
+				if (tcg.isCompatibleWith(jTcg)) {
+					System.out.println("Joining " + tcg + " with " + jTcg + " ==> " + tcg.joinWith(jTcg));
+					gaps.add(tcg.joinWith(jTcg));
+				}
+			}
+		}
+		Collections.sort(gaps);
+		return gaps;
+	}
+	
+	private static class TableColAnchor implements Comparable {
+		final int anchor;
+		final char type;
+		TableColAnchor(int anchor, char type) {
+			this.anchor = anchor;
+			this.type = type;
+		}
+		boolean isCompatibleWith(TableColAnchor tca, int dpi) {
+			return ((this.type == tca.type) && (Math.abs(this.anchor - tca.anchor) < (dpi / ((this.type == 'C') ? 20 : 50))));
+		}
+		TableColAnchor joinWith(TableColAnchor tca) {
+			return new TableColAnchor(((this.anchor + tca.anchor) / 2), this.type);
+		}
+		public String toString() {
+			return ("" + this.anchor + "-" + this.type);
+		}
+		public boolean equals(Object obj) {
+			return this.toString().equals(obj.toString());
+		}
+		public int compareTo(Object obj) {
+			return (this.anchor - ((TableColAnchor) obj).anchor);
+//			if (obj instanceof TableColAnchor)
+//				return (this.anchor - ((TableColAnchor) obj).anchor);
+//			else return -1;
+		}
+	}
+	
+	private static ArrayList joinTableColAnchors(ArrayList anchors1, ArrayList anchors2, int dpi) {
+		ArrayList anchors = new ArrayList();
+		for (int a = 0; a < anchors1.size(); a++) {
+			TableColAnchor tca = ((TableColAnchor) anchors1.get(a));
+			for (int ja = 0; ja < anchors2.size(); ja++) {
+				TableColAnchor jTca = ((TableColAnchor) anchors2.get(ja));
+				if (tca.isCompatibleWith(jTca, dpi))
+					anchors.add(tca.joinWith(jTca));
+			}
+		}
+		Collections.sort(anchors);
+		return anchors;
 	}
 }

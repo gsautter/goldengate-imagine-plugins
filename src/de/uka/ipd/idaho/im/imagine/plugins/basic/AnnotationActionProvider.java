@@ -31,14 +31,21 @@ import java.awt.Point;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.Reader;
 import java.io.StringWriter;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
+import java.util.Properties;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -77,14 +84,33 @@ import de.uka.ipd.idaho.stringUtils.StringVector;
  * @author sautter
  */
 public class AnnotationActionProvider extends AbstractSelectionActionProvider implements ImageMarkupToolProvider {
-	
 	private static final String ANNOT_RETYPER_IMT_NAME = "RetypeAnnots";
 	private static final String ANNOT_REMOVER_IMT_NAME = "RemoveAnnots";
 	private static final String ANNOT_DUPLICATE_REMOVER_IMT_NAME = "RemoveDuplicateAnnots";
+	private static final String ANNOT_NESTING_CHECKER_IMT_NAME = "CheckAnnotNesting";
 	
 	private ImageMarkupTool annotRetyper = new AnnotRetyper();
 	private ImageMarkupTool annotRemover = new AnnotRemover();
 	private ImageMarkupTool annotDuplicateRemover = new AnnotDuplicateRemover();
+	private ImageMarkupTool annotNestingChecker = new AnnotNestingEnforcer();
+	
+	private static final String SPLIT_OPERATION = "split";
+	private static final String REMOVE_OPERATION = "remove";
+	private static final String CUT_TO_START_OPERATION = "cutToStart";
+	private static final String CUT_TO_END_OPERATION = "cutToEnd";
+	
+	private static final String EXTEND_FIRST_OPERATION = "extendFirst";
+	private static final String SPLIT_FIRST_OPERATION = "splitFirst";
+	private static final String REMOVE_FIRST_OPERATION = "removeFirst";
+	private static final String CUT_FIRST_TO_START_OPERATION = "cutFirstToStart";
+	private static final String CUT_FIRST_TO_END_OPERATION = "cutFirstToEnd";
+	private static final String EXTEND_SECOND_OPERATION = "extendSecond";
+	private static final String SPLIT_SECOND_OPERATION = "splitSecond";
+	private static final String REMOVE_SECOND_OPERATION = "removeSecond";
+	private static final String CUT_SECOND_TO_START_OPERATION = "cutSecondToStart";
+	private static final String CUT_SECOND_TO_END_OPERATION = "cutSecondToEnd";
+	
+	private Properties annotTypeOperations = new Properties();
 	
 	private TreeSet annotTypes = new TreeSet(String.CASE_INSENSITIVE_ORDER);
 	
@@ -112,6 +138,23 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					this.annotTypes.add(annotType);
 			}
 		} catch (IOException ioe) {}
+		
+		//	read cleanup operations for individual annotation types
+		try {
+			Reader tor = new BufferedReader(new InputStreamReader(this.dataProvider.getInputStream("annotationCleanupOptions.cnfg")));
+			StringVector typeOperationList = StringVector.loadList(tor);
+			tor.close();
+			for (int t = 0; t < typeOperationList.size(); t++) {
+				String typeOperation = typeOperationList.get(t).trim();
+				if (typeOperation.length() == 0)
+					continue;
+				if (typeOperation.startsWith("//"))
+					continue;
+				String[] typeAndOperation = typeOperation.split("\\s+");
+				if (typeAndOperation.length == 2)
+					this.annotTypeOperations.setProperty(typeAndOperation[0], typeAndOperation[1]);
+			}
+		} catch (IOException ioe) {}
 	}
 	
 	/* (non-Javadoc)
@@ -126,7 +169,8 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getToolsMenuItemNames()
 	 */
 	public String[] getToolsMenuItemNames() {
-		return null;
+		String[] tmins = {ANNOT_NESTING_CHECKER_IMT_NAME};
+		return tmins;
 	}
 	
 	/* (non-Javadoc)
@@ -139,6 +183,8 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			return this.annotRemover;
 		else if (ANNOT_DUPLICATE_REMOVER_IMT_NAME.equals(name))
 			return this.annotDuplicateRemover;
+		else if (ANNOT_NESTING_CHECKER_IMT_NAME.equals(name))
+			return this.annotNestingChecker;
 		else return null;
 	}
 	
@@ -241,6 +287,293 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			doc.cleanupAnnotations();
 		}
 	}
+	
+	private class AnnotNestingEnforcer implements ImageMarkupTool {
+		public String getLabel() {
+			return "Check Annotation Nesting";
+		}
+		public String getTooltip() {
+			return "Check the nesting of annotations in the document, and cut interleaving ones.";
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			
+			//	we only process the document as a whole
+			if (annot != null)
+				return;
+			
+			//	get document annotations
+			ImAnnotation[] annots = doc.getAnnotations();
+			
+			//	investigate annotations
+			HashMap annotsByTextStream = new LinkedHashMap();
+			for (int a = 0; a < annots.length; a++) {
+				
+				//	sort annotations by text stream ID ...
+				String annotTextStreamId = annots[a].getFirstWord().getTextStreamId();
+				if (annotTextStreamId.equals(annots[a].getLastWord().getTextStreamId())) {
+					ArrayList textStreamAnnots = ((ArrayList) annotsByTextStream.get(annotTextStreamId));
+					if (textStreamAnnots == null) {
+						textStreamAnnots = new ArrayList();
+						annotsByTextStream.put(annotTextStreamId, textStreamAnnots);
+					}
+					textStreamAnnots.add(annots[a]);
+				}
+				
+				//	... and remove annotations whose start and end word belong to different logical text streams
+				else {
+					doc.removeAnnotation(annots[a]);
+					annots[a] = null;
+				}
+			}
+			
+			//	process annotations of each text stream
+			for (Iterator tsidit = annotsByTextStream.keySet().iterator(); tsidit.hasNext();) {
+				String textStreamId = ((String) tsidit.next());
+				ArrayList textStreamAnnots = ((ArrayList) annotsByTextStream.get(textStreamId));
+				this.processAnnots(doc, ((ImAnnotation[]) textStreamAnnots.toArray(new ImAnnotation[textStreamAnnots.size()])), pm);
+			}
+		}
+		
+		private void processAnnots(ImDocument doc, ImAnnotation[] annots, ProgressMonitor pm) {
+			
+			//	anything to do?
+			if (annots.length < 2)
+				return;
+			
+			//	sort annotations
+			Arrays.sort(annots, annotationOrder);
+			
+			//	group annotations into structure (comprising whole paragraphs) and details
+			//	chop up (or cut) detail level annotations inconsistent with paragraph breaks
+			ArrayList structAnnotList = new ArrayList();
+			ArrayList detailAnnotList = new ArrayList();
+			for (int a = 0; a < annots.length; a++) {
+				
+				//	check if annotation spans paragraphs
+				ImWord firstWord = annots[a].getFirstWord();
+				boolean firstIsParaStart = ((firstWord.getPreviousWord() == null) || (firstWord.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+				ImWord lastWord = annots[a].getLastWord();
+				boolean lastIsParaEnd = ((lastWord.getNextWord() == null) || (lastWord.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+				if (firstIsParaStart && lastIsParaEnd) {
+					structAnnotList.add(annots[a]);
+					continue;
+				}
+				
+				//	TODO some structure annotations might end short of paragraph end, extend them
+				
+				//	check annotation for inner paragraph breaks
+				for (ImWord imw = firstWord; imw != null; imw = imw.getNextWord()) {
+					if (imw == lastWord)
+						break;
+					boolean isParaEnd = ((imw.getNextWord() == null) || (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+					if (!isParaEnd)
+						continue;
+					
+					//	perform cleanup operation
+					String operation = annotTypeOperations.getProperty(annots[a].getType(), CUT_TO_START_OPERATION);
+					if (CUT_TO_START_OPERATION.equals(operation)) {
+						annots[a].setLastWord(imw);
+						break; // we're done, no more cuts to come
+					}
+					else if (CUT_TO_END_OPERATION.equals(operation)) {
+						if (imw.getNextWord() != null)
+							annots[a].setFirstWord(imw.getNextWord());
+						// need to keep on looking for further paragraph breaks
+					}
+					else if (SPLIT_OPERATION.equals(operation)) {
+						ImAnnotation splitAnnot = doc.addAnnotation(annots[a].getFirstWord(), imw, annots[a].getType());
+						splitAnnot.copyAttributes(annots[a]);
+						detailAnnotList.add(splitAnnot); // store first part
+						if (imw.getNextWord() != null)
+							annots[a].setFirstWord(imw.getNextWord()); // proceed with remainder
+					}
+					else if (REMOVE_OPERATION.equals(operation)) {
+						doc.removeAnnotation(annots[a]);
+						annots[a] = null;
+						break; // we're done, this one's out altogether
+					}
+				}
+				
+				//	this one came all the way through, store it
+				if (annots[a] != null)
+					detailAnnotList.add(annots[a]);
+			}
+			
+			//	clean up structural annotations
+			this.cleanUpInterleavingAnnots(doc, structAnnotList);
+			this.cleanUpInterleavingAnnots(doc, detailAnnotList);
+		}
+		
+		private void cleanUpInterleavingAnnots(ImDocument doc, ArrayList annotList) {
+			boolean annotsChanged;
+			int minFirstAnnotIndex = 0;
+			do {
+				annotsChanged = false;
+				
+				//	(re-)sort annotations
+				Collections.sort(annotList, annotationOrder);
+				
+				//	go annotation by annotation ...
+				for (int fa = minFirstAnnotIndex; fa < annotList.size(); fa++) {
+					ImAnnotation fAnnot = ((ImAnnotation) annotList.get(fa));
+//					System.out.println("Checking nesting on '" + fAnnot.getType() + "' " + getAnnotationValue(fAnnot));
+					
+					//	... looking for the next conflicts
+					for (int sa = (fa+1); sa < annotList.size(); sa++) {
+						ImAnnotation sAnnot = ((ImAnnotation) annotList.get(sa));
+//						System.out.println(" - comparing to '" + sAnnot.getType() + "' " + getAnnotationValue(sAnnot));
+						
+						//	this one starts after first annotation ends, we're done
+						if (ImUtils.textStreamOrder.compare(fAnnot.getLastWord(), sAnnot.getFirstWord()) < 0) {
+//							System.out.println(" ==> start after end, we're done");
+							break;
+						}
+						
+						//	this one ends before or where first annotation ends, not a nesting problem
+						if (ImUtils.textStreamOrder.compare(fAnnot.getLastWord(), sAnnot.getLastWord()) >= 0) {
+//							System.out.println(" ==> completely inside, we're OK");
+							continue;
+						}
+						
+						//	get and perform cleanup operation
+						String operation = annotTypeOperations.getProperty((fAnnot.getType() + ">" + sAnnot.getType()), CUT_SECOND_TO_START_OPERATION);
+//						System.out.println(" ==> conflict, operation is " + operation + " for " + (fAnnot.getType() + ">" + sAnnot.getType()));
+						if (CUT_FIRST_TO_START_OPERATION.equals(operation)) {
+							fAnnot.setLastWord(sAnnot.getFirstWord().getPreviousWord());
+//							System.out.println("   - cut to " + getAnnotationValue(fAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (CUT_FIRST_TO_END_OPERATION.equals(operation)) {
+							fAnnot.setFirstWord(sAnnot.getFirstWord());
+//							System.out.println("   - cut to " + getAnnotationValue(fAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (EXTEND_FIRST_OPERATION.equals(operation)) {
+							fAnnot.setLastWord(sAnnot.getLastWord());
+//							System.out.println("   - extended to " + getAnnotationValue(fAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (SPLIT_FIRST_OPERATION.equals(operation)) {
+							ImAnnotation splitAnnot = doc.addAnnotation(fAnnot.getFirstWord(), sAnnot.getFirstWord().getPreviousWord(), fAnnot.getType());
+							splitAnnot.copyAttributes(fAnnot);
+							annotList.add(splitAnnot);
+//							System.out.println("   - first part of split is " + getAnnotationValue(splitAnnot));
+							fAnnot.setFirstWord(sAnnot.getFirstWord());
+//							System.out.println("   - second part of split is " + getAnnotationValue(fAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (REMOVE_FIRST_OPERATION.equals(operation)) {
+							doc.removeAnnotation(fAnnot);
+//							System.out.println("   - removed");
+							annotList.remove(fa--);
+							annotsChanged = true;
+							sa = annotList.size(); // no use testing against this one any further
+						}
+						else if (CUT_SECOND_TO_START_OPERATION.equals(operation)) {
+							sAnnot.setLastWord(fAnnot.getLastWord());
+//							System.out.println("   - cut to " + getAnnotationValue(sAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (CUT_SECOND_TO_END_OPERATION.equals(operation)) {
+							sAnnot.setFirstWord(fAnnot.getLastWord().getNextWord());
+//							System.out.println("   - cut to " + getAnnotationValue(sAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (EXTEND_SECOND_OPERATION.equals(operation)) {
+							sAnnot.setFirstWord(fAnnot.getFirstWord());
+//							System.out.println("   - extended to " + getAnnotationValue(sAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (SPLIT_SECOND_OPERATION.equals(operation)) {
+							ImAnnotation splitAnnot = doc.addAnnotation(sAnnot.getFirstWord(), fAnnot.getLastWord(), sAnnot.getType());
+							splitAnnot.copyAttributes(sAnnot);
+							annotList.add(splitAnnot);
+//							System.out.println("   - first part of split is " + getAnnotationValue(splitAnnot));
+							sAnnot.setFirstWord(fAnnot.getLastWord().getNextWord());
+//							System.out.println("   - second part of split is " + getAnnotationValue(sAnnot));
+							annotsChanged = true;
+							fa = annotList.size(); // start all over, sort order likely broken
+							sa = annotList.size();
+						}
+						else if (REMOVE_SECOND_OPERATION.equals(operation)) {
+							doc.removeAnnotation(sAnnot);
+//							System.out.println("   - removed");
+							annotList.remove(sa--);
+							annotsChanged = true;
+						}
+					}
+					
+					//	no changes thus far, we can start here when we start over
+					if (!annotsChanged)
+						minFirstAnnotIndex = fa;
+				}
+			}
+			while (annotsChanged);
+		}
+	}
+//	
+//	private static String getAnnotationValue(ImAnnotation annot) {
+//		
+//		//	count out annotation length
+//		int annotChars = 0;
+//		for (ImWord imw = annot.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+//			annotChars += imw.getString().length();
+//			if (imw == annot.getLastWord())
+//				break;
+//		}
+//		
+//		//	this one's short enough
+//		if (annotChars <= 40)
+//			return ImUtils.getString(annot.getFirstWord(), annot.getLastWord(), true);
+//		
+//		//	get end of head
+//		ImWord headEnd = annot.getFirstWord();
+//		int headChars = 0;
+//		for (; headEnd != null; headEnd = headEnd.getNextWord()) {
+//			headChars += headEnd.getString().length();
+//			if (headChars >= 20)
+//				break;
+//			if (headEnd == annot.getLastWord())
+//				break;
+//		}
+//		
+//		//	get start of tail
+//		ImWord tailStart = annot.getLastWord();
+//		int tailChars = 0;
+//		for (; tailStart != null; tailStart = tailStart.getPreviousWord()) {
+//			tailChars += tailStart.getString().length();
+//			if (tailChars >= 20)
+//				break;
+//			if (tailStart == annot.getFirstWord())
+//				break;
+//			if (tailStart == headEnd)
+//				break;
+//		}
+//		
+//		//	met in the middle, use whole string
+//		if ((headEnd == tailStart) || (headEnd.getNextWord() == tailStart) || (headEnd.getNextWord() == tailStart.getPreviousWord()))
+//			return ImUtils.getString(annot.getFirstWord(), annot.getLastWord(), true);
+//		
+//		//	give head and tail only if annotation too long
+//		else return (ImUtils.getString(annot.getFirstWord(), headEnd, true) + " ... " + ImUtils.getString(tailStart, annot.getLastWord(), true));
+//	}
 	
 	private static final Comparator annotationOrder = new Comparator() {
 		public int compare(Object obj1, Object obj2) {

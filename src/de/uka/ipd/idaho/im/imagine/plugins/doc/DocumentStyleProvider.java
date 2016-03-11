@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
@@ -282,18 +283,39 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 	}
 	
 	static boolean anchorMatches(ImDocument doc, BoundingBox area, int minFontSize, int maxFontSize, boolean isBold, boolean isItalics, boolean isAllCaps, String pattern) {
+		return anchorMatches(doc, area, minFontSize, maxFontSize, isBold, isItalics, isAllCaps, pattern, null);
+	}
+	
+	static boolean anchorMatches(ImDocument doc, BoundingBox area, int minFontSize, int maxFontSize, boolean isBold, boolean isItalics, boolean isAllCaps, String pattern, List matchLog) {
 		
 		//	get page and scale bounding box
 		ImPage page = doc.getPage(0);
 		area = DocumentStyle.scaleBox(area, 72, page.getImageDPI());
+		if (matchLog != null)
+			matchLog.add(" - area scaled to " + page.getImageDPI() + " DPI: " + area.toString());
 		
 		//	get words in area
 		ImWord[] words = doc.getPage(0).getWordsInside(area);
-		if (words.length == 0)
+		if (words.length == 0) {
+			if (matchLog != null)
+				matchLog.add(" ==> no words found in area, mismatch");
 			return false;
+		}
+		if (matchLog != null)
+			matchLog.add(" - found " + words.length + " words in area");
 		
 		//	filter words by font properties
 		ArrayList wordList = new ArrayList();
+		if (matchLog != null) {
+			matchLog.add(" - applying font property filter:");
+			if (isBold)
+				matchLog.add("   - bold");
+			if (isItalics)
+				matchLog.add("   - italics");
+			if (isAllCaps)
+				matchLog.add("   - all-caps");
+			matchLog.add("   - font size " + minFontSize + ((maxFontSize == minFontSize) ? "" : ("-" + maxFontSize)));
+		}
 		for (int w = 0; w < words.length; w++) {
 			if (isBold && !words[w].hasAttribute(ImWord.BOLD_ATTRIBUTE))
 				continue;
@@ -310,19 +332,33 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 			} catch (NumberFormatException nfe) {}
 			wordList.add(words[w]);
 		}
-		if (wordList.isEmpty())
+		if (wordList.isEmpty()) {
+			if (matchLog != null)
+				matchLog.add(" ==> no words left after font property filter, mismatch");
 			return false;
+		}
 		else if (wordList.size() < words.length)
 			words = ((ImWord[]) wordList.toArray(new ImWord[wordList.size()]));
+		if (matchLog != null)
+			matchLog.add(" - " + words.length + " words left after font property filter");
 		
 		//	sort words and create normalized string
 		ImUtils.sortLeftRightTopDown(words);
 		StringBuffer wordStr = new StringBuffer();
 		for (int w = 0; w < words.length; w++)
 			wordStr.append(normalizeString(words[w].getString()));
+		if (matchLog != null)
+			matchLog.add(" - word string is '" + wordStr.toString() + "'");
 		
 		//	test against pattern
-		return Pattern.compile(pattern).matcher(wordStr).matches();
+		boolean match = Pattern.compile(pattern).matcher(wordStr).matches();
+		if (matchLog != null) {
+			matchLog.add(" - matching against pattern '" + pattern + "'");
+			matchLog.add(" ==> " + (match ? "match" : "mismatch"));
+		}
+		
+		//	finally ...
+		return match;
 	}
 	
 	static String normalizeString(String string) {

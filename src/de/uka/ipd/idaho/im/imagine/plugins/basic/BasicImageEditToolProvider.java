@@ -376,7 +376,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 				char ch = word.getString().charAt(c);
 				char bch = StringUtils.getBaseChar(ch);
 				gotAscent = (gotAscent || Character.isUpperCase(bch) || Character.isDigit(bch) || ("bdfhijklt".indexOf(bch) != -1) || ("°!§$%&/(){}[]?#'|\\\"*€".indexOf(bch) != -1) || (ch != bch));
-				gotDescent = (gotDescent || ("gjqy".indexOf(bch) != -1));
+				gotDescent = (gotDescent || ("gjpqy".indexOf(bch) != -1));
 			}
 			int baseline = word.bounds.bottom;
 			if (gotDescent)

@@ -27,13 +27,21 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.xml;
 
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.GridLayout;
 import java.awt.Point;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.Map;
+import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -50,12 +58,14 @@ import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.MutableAnnotation;
 import de.uka.ipd.idaho.gamta.util.GenericMutableAnnotationWrapper;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
+import de.uka.ipd.idaho.gamta.util.constants.TableConstants;
 import de.uka.ipd.idaho.goldenGate.DocumentEditorDialog;
 import de.uka.ipd.idaho.goldenGate.GoldenGATE;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImPage;
+import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
@@ -64,6 +74,7 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
+import de.uka.ipd.idaho.stringUtils.StringVector;
 
 /**
  * This plugin provides XML views of Image Markup documents, which simplifies
@@ -108,8 +119,19 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 		private boolean changesCommitted = false;
 		private int contentFlags;
 		private int cContentFlags = -1;
-		ImDocumentEditorDialog(GoldenGATE host, String title, MutableAnnotation content, int contentFlags) {
+		ImDocumentEditorDialog(GoldenGATE host, String title, MutableAnnotation content, int contentFlags, Set taggedAnnotTypes, Set highlightedAnnotTypes, Map annotTypeColors) {
 			super(host, title, content);
+			
+			for (Iterator tit = annotTypeColors.keySet().iterator(); tit.hasNext();) {
+				String annotType = ((String) tit.next());
+				Color annotColor = ((Color) annotTypeColors.get(annotType));
+				if (annotColor != null)
+					this.documentEditor.setAnnotationColor(annotType, annotColor);
+			}
+			for (Iterator tit = taggedAnnotTypes.iterator(); tit.hasNext();)
+				this.documentEditor.setAnnotationTagVisible(((String) tit.next()), true);
+			for (Iterator tit = highlightedAnnotTypes.iterator(); tit.hasNext();)
+				this.documentEditor.setAnnotationValueHighlightVisible(((String) tit.next()), true);
 			
 			this.contentFlags = contentFlags;
 			
@@ -205,6 +227,26 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 				this.dispose(this.isContentModified() && (cChoice == JOptionPane.YES_OPTION));
 		}
 		
+		Set getTaggedAnnotTypes() {
+			return new HashSet(Arrays.asList(this.documentEditor.getTaggedAnnotationTypes()));
+		}
+		
+		Set getHighlightedAnnotTypes() {
+			return new HashSet(Arrays.asList(this.documentEditor.getHighlightAnnotationTypes()));
+		}
+		
+		Map getAnnotTypeColors() {
+			Map annotTypeColors = new HashMap();
+			String[] annotTypes = this.documentEditor.getAnnotationTypes();
+			for (int t = 0; t < annotTypes.length; t++)
+				annotTypeColors.put(annotTypes[t], this.documentEditor.getAnnotationColor(annotTypes[t]));
+			return annotTypeColors;
+		}
+//		
+//		Color getAnnotationColor(String type) {
+//			return this.documentEditor.getAnnotationColor(type);
+//		}
+		
 		boolean areChangesCommitted() {
 			return this.changesCommitted;
 		}
@@ -226,6 +268,54 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 	}
 	
 	private boolean showXmlView(ImDocument doc, ImAnnotation annot, int xmlWrapperFlags, ImDocumentMarkupPanel idmp) {
+		
+		//	collect current display settings, including colors ...
+		Set taggedAnnotTypes = new HashSet();
+		Set highlightedAnnotTypes = new HashSet();
+		Map annotTypeColors = new HashMap();
+		
+		//	... for both regions ...
+		String[] regTypes = idmp.getLayoutObjectTypes();
+		for (int t = 0; t < regTypes.length; t++) {
+			String regAnnotType = ImDocumentRoot.getRegionAnnotationType(regTypes[t]);
+			if (regAnnotType == null)
+				continue;
+			Color typeColor = idmp.getLayoutObjectColor(regTypes[t]);
+			if (typeColor != null)
+				annotTypeColors.put(regAnnotType, typeColor);
+			if (!idmp.areRegionsPainted(regTypes[t]))
+				continue;
+			if (ImWord.WORD_ANNOTATION_TYPE.equals(regTypes[t]))
+				continue;
+			if (TableConstants.TABLE_CELL_ANNOTATION_TYPE.equals(regAnnotType))
+				highlightedAnnotTypes.add(regAnnotType);
+			else taggedAnnotTypes.add(regAnnotType);
+		}
+		
+		//	... and annotations ...
+		String[] annotTypes = idmp.getAnnotationTypes();
+		for (int t = 0; t < annotTypes.length; t++) {
+			Color typeColor = idmp.getAnnotationColor(annotTypes[t]);
+			if (typeColor != null)
+				annotTypeColors.put(annotTypes[t], typeColor);
+			if (!idmp.areAnnotationsPainted(annotTypes[t]))
+				continue;
+			if (this.isStructureAnnotationType(annotTypes[t]))
+				taggedAnnotTypes.add(annotTypes[t]);
+			else highlightedAnnotTypes.add(annotTypes[t]);
+		}
+		
+		//	..., and add paragraphs, which are implicit in text streams
+		taggedAnnotTypes.add(ImRegion.PARAGRAPH_TYPE);
+		
+		//	we need to go through this rigmarole because color settings only show up from the second original dialog opened onward
+		new ImDocumentEditorDialog(this.parent, "Color Initializer", Gamta.newDocument(Gamta.newTokenSequence("COLOR INITIALIZER", null)), xmlWrapperFlags, taggedAnnotTypes, highlightedAnnotTypes, annotTypeColors);
+		
+		//	finally ...
+		return this.showXmlView(doc, annot, xmlWrapperFlags, taggedAnnotTypes, highlightedAnnotTypes, annotTypeColors, idmp);
+	}
+	
+	private boolean showXmlView(ImDocument doc, ImAnnotation annot, int xmlWrapperFlags, Set taggedAnnotTypes, Set highlightedAnnotTypes, Map annotTypeColors, ImDocumentMarkupPanel idmp) {
 		
 		//	wrap document (we must not expose a GAMTA DocumentRoot directly, as then changes go right through)
 		MutableAnnotation xmlDoc;
@@ -268,7 +358,7 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 		title.append(")");
 		
 		//	create, configure, and show editor dialog
-		ImDocumentEditorDialog ided = new ImDocumentEditorDialog(this.parent, title.toString(), xmlDoc, xmlWrapperFlags);
+		ImDocumentEditorDialog ided = new ImDocumentEditorDialog(this.parent, title.toString(), xmlDoc, xmlWrapperFlags, taggedAnnotTypes, highlightedAnnotTypes, annotTypeColors);
 		if (this.idedSize == null)
 			ided.setSize(800, 600);
 		else ided.setSize(this.idedSize);
@@ -276,11 +366,67 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 		ided.setVisible(true);
 		
 		//	not in a view customization recursion, indicate changes right away
-		if (ided.cContentFlags == -1)
+		if (ided.cContentFlags == -1) {
+//			
+//			WE DON'T EVEN WANT THIS, AS WE'RE JUST A VIEW !!!
+//			
+//			//	write color changes back in pull mode for regions ...
+//			String[] regTypes = idmp.getLayoutObjectTypes();
+//			Set regAnnotTypes = new HashSet();
+//			for (int t = 0; t < regTypes.length; t++) {
+//				String regAnnotType = ImDocumentRoot.getRegionAnnotationType(regTypes[t]);
+//				if (regAnnotType == null)
+//					continue;
+//				Color typeColor = ided.getAnnotationColor(regAnnotType);
+//				if (typeColor != null)
+//					idmp.setLayoutObjectColor(regTypes[t], typeColor);
+//				regAnnotTypes.add(regAnnotType);
+//			}
+//			
+//			//	... and in push mode for annotations (unless covered by regions)
+//			String[] annotTypes = xmlDoc.getAnnotationTypes();
+//			for (int t = 0; t < annotTypes.length; t++) {
+//				if (regAnnotTypes.contains(annotTypes[t]))
+//					continue;
+//				Color typeColor = ided.getAnnotationColor(annotTypes[t]);
+//				if (typeColor != null)
+//					idmp.setAnnotationColor(annotTypes[t], typeColor);
+//			}
+			
+			//	any edits committed?
 			return ided.areChangesCommitted();
+		}
 		
 		//	in a view customization recursion, indicate changes disjunctively
-		else return (showXmlView(doc, annot, ided.cContentFlags, idmp) || ided.areChangesCommitted());
+		else return (showXmlView(doc, annot, ided.cContentFlags, ided.getTaggedAnnotTypes(), ided.getHighlightedAnnotTypes(), ided.getAnnotTypeColors(), idmp) || ided.areChangesCommitted());
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#init()
+	 */
+	public void init() {
+		try {
+			StringVector sats = StringVector.loadList(this.dataProvider.getInputStream("structureAnnotationTypes.cnfg"));
+			for (int t = 0; t < sats.size(); t++) {
+				String sat = sats.get(t).trim();
+				if ((sat.length() == 0) || sat.startsWith("//"))
+					continue;
+				this.structureAnnotationTypes.add(sat);
+			}
+		} catch (IOException ioe) {}
+	}
+	
+	private HashSet structureAnnotationTypes = new HashSet();
+	private boolean isStructureAnnotationType(String type) {
+		if (ImAnnotation.PARAGRAPH_TYPE.equals(type))
+			return true;
+		else if (ImAnnotation.SUB_SUB_SECTION_TYPE.equals(type))
+			return true;
+		else if (ImAnnotation.SUB_SECTION_TYPE.equals(type))
+			return true;
+		else if (ImAnnotation.SECTION_TYPE.equals(type))
+			return true;
+		else return this.structureAnnotationTypes.contains(type);
 	}
 	
 	/* (non-Javadoc)

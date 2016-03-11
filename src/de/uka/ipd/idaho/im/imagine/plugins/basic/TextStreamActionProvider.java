@@ -66,12 +66,12 @@ import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
+import de.uka.ipd.idaho.im.util.ImDocumentIO;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.TwoClickSelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
-import de.uka.ipd.idaho.im.util.ImfIO;
 import de.uka.ipd.idaho.stringUtils.StringUtils;
 
 /**
@@ -158,18 +158,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 						});
 						pm.add(cmi);
 						bg.add(cmi);
-//						ImWord startNext = start.getNextWord();
-//						if ((start.centerX < startNext.bounds.left) && (startNext.bounds.top < start.centerY) && (start.centerY < startNext.bounds.bottom)) {
-//							final JMenuItem cmi = new JRadioButtonMenuItem("First Part of Split Word", (start.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE));
-//							cmi.addActionListener(new ActionListener() {
-//								public void actionPerformed(ActionEvent ae) {
-//									if (cmi.isSelected())
-//										setNextRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
-//								}
-//							});
-//							pm.add(cmi);
-//							bg.add(cmi);
-//						}
 						return pm;
 					}
 					private void setNextRelation(char nextRelation, ImDocumentMarkupPanel invoker) {
@@ -224,17 +212,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 						});
 						pm.add(cmi);
 						bg.add(cmi);
-//						if ((start.centerX < end.bounds.left) && (end.bounds.top < start.centerY) && (start.centerY < end.bounds.bottom)) {
-//							final JMenuItem cmi = new JRadioButtonMenuItem("Same Word", (start.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE));
-//							cmi.addActionListener(new ActionListener() {
-//								public void actionPerformed(ActionEvent ae) {
-//									if (cmi.isSelected())
-//										setNextRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
-//								}
-//							});
-//							pm.add(cmi);
-//							bg.add(cmi);
-//						}
 						return pm;
 					}
 					private void setNextRelation(char nextRelation, ImDocumentMarkupPanel invoker) {
@@ -245,27 +222,38 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 						invoker.repaint();
 					}
 				});
-			else if (start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId) && (start.bounds.top < end.centerY) && (end.centerY < start.bounds.bottom) && (end.getTextStreamPos() <= (start.getTextStreamPos() + 20))) {
-				boolean singleLine = true;
-				for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
-					if ((imw.centerY < start.bounds.top) || (start.bounds.bottom < imw.centerY)) {
-						singleLine = false;
-						break;
+			if ((start != end) && start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId) && (start.bounds.top < end.centerY) && (end.centerY < start.bounds.bottom) && (end.getTextStreamPos() <= (start.getTextStreamPos() + 20))) {
+				Tokenizer tokenizer = ((Tokenizer) idmp.document.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER));
+				if (this.isJoinableSelection(start, end, tokenizer)) {
+					StringBuffer before = new StringBuffer();
+					StringBuffer after = new StringBuffer("'");
+					for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+						if (imw == end) {
+							if (start.getNextWord() == end)
+								before.append(" and ");
+							else before.append(", and ");
+							before.append("'" + imw.getString() + "'");
+							after.append(imw.getString() + "'");
+							break;
+						}
+						else {
+							if (imw != start)
+								before.append(", ");
+							before.append("'" + imw.getString() + "'");
+							after.append(imw.getString());
+						}
 					}
-					if (imw == end)
-						break;
-				}
-				if (singleLine)
-					actions.add(new SelectionAction("streamMergeWords", "Merge Words", "Merge selected words into one.") {
+					actions.add(new SelectionAction("streamJoinWords", "Join Words", ("Logically join " + before.toString() + " into " + after.toString() + ".")) {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
-								if (imw == end)
-									break;
-								imw.setNextRelation(ImWord.NEXT_RELATION_CONTINUE);
-							}
-							return true;
+							return joinWords(start, end, null);
 						}
 					});
+					actions.add(new SelectionAction("streamJoinWords", "Join All", ("Logically join all occurrences of " + before.toString() + " into " + after.toString() + ".")) {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return joinWords(start, end, idmp.document);
+						}
+					});
+				}
 			}
 			
 			//	merge paragraphs
@@ -341,17 +329,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 						});
 						pm.add(cmi);
 						bg.add(cmi);
-//						if (start.bounds.right <= start.getNextWord().bounds.left) {
-//							final JMenuItem cmi = new JRadioButtonMenuItem("First Part of Split Word", (start.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE));
-//							cmi.addActionListener(new ActionListener() {
-//								public void actionPerformed(ActionEvent ae) {
-//									if (cmi.isSelected())
-//										setNextRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
-//								}
-//							});
-//							pm.add(cmi);
-//							bg.add(cmi);
-//						}
 						return pm;
 					}
 					private void setNextRelation(char nextRelation, ImDocumentMarkupPanel invoker) {
@@ -488,17 +465,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 					});
 					pm.add(cmi);
 					bg.add(cmi);
-//					if (start.bounds.right <= end.bounds.left) {
-//						final JMenuItem cmi = new JRadioButtonMenuItem("Same Word", (start.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE));
-//						cmi.addActionListener(new ActionListener() {
-//							public void actionPerformed(ActionEvent ae) {
-//								if (cmi.isSelected())
-//									setNextRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
-//							}
-//						});
-//						pm.add(cmi);
-//						bg.add(cmi);
-//					}
 					return pm;
 				}
 				private void setNextRelation(char nextRelation, ImDocumentMarkupPanel invoker) {
@@ -518,27 +484,38 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 		
 		//	multiple words, same stream
-		else if (start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId) && (start.bounds.top < end.centerY) && (end.centerY < start.bounds.bottom) && (end.getTextStreamPos() <= (start.getTextStreamPos() + 20))) {
-			boolean singleLine = true;
-			for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
-				if ((imw.centerY < start.bounds.top) || (start.bounds.bottom < imw.centerY)) {
-					singleLine = false;
-					break;
+		if ((start != end) && start.getTextStreamId().equals(end.getTextStreamId()) && (start.pageId == end.pageId) && (start.bounds.top < end.centerY) && (end.centerY < start.bounds.bottom) && (end.getTextStreamPos() <= (start.getTextStreamPos() + 20))) {
+			Tokenizer tokenizer = ((Tokenizer) idmp.document.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER));
+			if (this.isJoinableSelection(start, end, tokenizer)) {
+				StringBuffer before = new StringBuffer();
+				StringBuffer after = new StringBuffer("'");
+				for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+					if (imw == end) {
+						if (start.getNextWord() == end)
+							before.append(" and ");
+						else before.append(", and ");
+						before.append("'" + imw.getString() + "'");
+						after.append(imw.getString() + "'");
+						break;
+					}
+					else {
+						if (imw != start)
+							before.append(", ");
+						before.append("'" + imw.getString() + "'");
+						after.append(imw.getString());
+					}
 				}
-				if (imw == end)
-					break;
-			}
-			if (singleLine)
-				actions.add(new SelectionAction("streamMergeWords", "Merge Words", "Merge selected words into one.") {
+				actions.add(new SelectionAction("streamJoinWords", "Join Words", ("Logically join " + before.toString() + " into " + after.toString() + ".")) {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
-							if (imw == end)
-								break;
-							imw.setNextRelation(ImWord.NEXT_RELATION_CONTINUE);
-						}
-						return true;
+						return joinWords(start, end, null);
 					}
 				});
+				actions.add(new SelectionAction("streamJoinWords", "Join All", ("Logically join all occurrences of " + before.toString() + " into " + after.toString() + ".")) {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return joinWords(start, end, idmp.document);
+					}
+				});
+			}
 		}
 		
 		//	merge paragraphs
@@ -621,10 +598,51 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		//	mark selection
 		BoundingBox selectedBox = new BoundingBox(Math.min(start.x, end.x), Math.max(start.x, end.x), Math.min(start.y, end.y), Math.max(start.y, end.y));
 		
+		//	prepare collecting actions
+		LinkedList actions = new LinkedList();
+		
 		//	get selected words
 		final ImWord[] selectedWords = page.getWordsInside(selectedBox);
-		if (selectedWords.length == 0)
-			return null;
+		if (selectedWords.length == 0) {
+			
+			//	get selected and context regions
+			ImRegion[] pageRegions = page.getRegions();
+			ImRegion contextParagraph = null;
+			ImRegion contextBlock = null;
+			for (int r = 0; r < pageRegions.length; r++) {
+				if (!idmp.areRegionsPainted(pageRegions[r].getType()))
+					continue;
+				if (pageRegions[r].bounds.includes(selectedBox, true)) {
+					if (ImRegion.PARAGRAPH_TYPE.equals(pageRegions[r].getType()))
+						contextParagraph = pageRegions[r];
+					else if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(pageRegions[r].getType()))
+						contextBlock = pageRegions[r];
+				}
+			}
+			
+			//	add ordering options for paragraph and block if displaying
+			if (contextParagraph != null) {
+				final ImRegion paragraph = contextParagraph;
+				actions.add(new SelectionAction("streamOrderPara", "Order Paragraph Words", "Order paragraphs words in a text stream left to right and top to bottom.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						ImUtils.orderStream(paragraph.getWords(), ImUtils.leftRightTopDownOrder);
+						return true;
+					}
+				});
+			}
+			if (contextBlock != null) {
+				final ImRegion block = contextBlock;
+				actions.add(new SelectionAction("streamOrderBlock", "Order Block Words", "Order block words in a text stream left to right and top to bottom.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						ImUtils.orderStream(block.getWords(), ImUtils.leftRightTopDownOrder);
+						return true;
+					}
+				});
+			}
+			
+			//	little else to do without words being selected
+			return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+		}
 		
 		//	order words
 		Arrays.sort(selectedWords, ImUtils.textStreamOrder);
@@ -652,8 +670,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			}
 		}
 		
-		LinkedList actions = new LinkedList();
-		
 		//	if we have a single continuous selection, we can handle it like a word selection
 		if (singleContinuousStream)
 			actions.addAll(Arrays.asList(this.getActions(selectedWords[0], selectedWords[selectedWords.length - 1], idmp)));
@@ -674,10 +690,71 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			}
 		});
 		
-		//	TODO maybe offer word merging for selection as well
-		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	private boolean isJoinableSelection(ImWord start, ImWord end, Tokenizer tokenizer) {
+		StringBuffer joinResult = ((tokenizer == null) ? null : new StringBuffer());
+		boolean gotNonContinue = false;
+		for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+			if ((imw.centerY < start.bounds.top) || (start.bounds.bottom < imw.centerY))
+				return false;
+			if (joinResult != null)
+				joinResult.append(imw.getString());
+			if (imw == end)
+				break;
+			if (imw.getNextRelation() != ImWord.NEXT_RELATION_CONTINUE)
+				gotNonContinue = true;
+		}
+		return (gotNonContinue && (tokenizer == null) || (tokenizer.tokenize(joinResult).size() == 1));
+	}
+	
+	private boolean joinWords(ImWord start, ImWord end, ImDocument docForAll) {
+		boolean modified = false;
+		
+		//	find all occurrences of arguments, and recurse
+		if (docForAll != null) {
+			ImWord[] tshs = docForAll.getTextStreamHeads();
+			for (int h = 0; h < tshs.length; h++)
+				for (ImWord imw = tshs[h]; imw != null; imw = imw.getNextWord()) {
+					if (imw == start)
+						continue; // we do that in the end
+					if (!start.getString().equals(imw.getString()))
+						continue;
+					ImWord matchPos = imw.getNextWord();
+					ImWord matchEnd = null;
+					ImWord compPos = start.getNextWord();
+					while ((matchPos != null) && (compPos != null)) {
+						if (!compPos.getString().equals(matchPos.getString()))
+							break;
+						if (compPos == end) {
+							matchEnd = matchPos;
+							break;
+						}
+						matchPos = matchPos.getNextWord();
+						compPos = compPos.getNextWord();
+					}
+					if ((matchEnd != null) && (this.isJoinableSelection(imw, matchEnd, null))) {
+						modified = (this.joinWords(imw, matchEnd, null) || modified);
+						imw = matchEnd;
+					}
+				}
+			modified = (this.joinWords(start, end, null) || modified);
+		}
+		
+		//	join argument words
+		else for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+			if (imw == end)
+				break;
+			if (imw.getNextRelation() != ImWord.NEXT_RELATION_CONTINUE) {
+				imw.setNextRelation(ImWord.NEXT_RELATION_CONTINUE);
+				modified = true;
+			}
+		}
+		
+		//	indicate changes
+		return modified;
 	}
 	
 	/* (non-Javadoc)
@@ -691,7 +768,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getToolsMenuItemNames()
 	 */
 	public String[] getToolsMenuItemNames() {
-		String[] tmins = {WORD_MERGER_IMT_NAME};
+		String[] tmins = {WORD_JOINER_IMT_NAME};
 		return tmins;
 	}
 	
@@ -699,19 +776,19 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getImageMarkupTool(java.lang.String)
 	 */
 	public ImageMarkupTool getImageMarkupTool(String name) {
-		if (WORD_MERGER_IMT_NAME.equals(name))
-			return new WordMerger();
+		if (WORD_JOINER_IMT_NAME.equals(name))
+			return new WordJoiner();
 		else return null;
 	}
 	
-	private static final String WORD_MERGER_IMT_NAME = "WordMerger";
+	private static final String WORD_JOINER_IMT_NAME = "WordJoiner";
 	
-	private static class WordMerger implements ImageMarkupTool {
+	private static class WordJoiner implements ImageMarkupTool {
 		public String getLabel() {
-			return "Merge Shattered Words";
+			return "Join Shattered Words";
 		}
 		public String getTooltip() {
-			return "Analyze word gaps, and merge words shattered into multiple pieces due to font decoding errors - USE WITH CARE";
+			return "Analyze word gaps, and join words shattered into multiple pieces due to font decoding errors - USE WITH CARE";
 		}
 		public String getHelpText() {
 			return null; // for now ...
@@ -740,7 +817,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			Tokenizer tokenizer = ((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.NO_INNER_PUNCTUATION_TOKENIZER));
 			
 			//	process lines
-			mergeWords(lines, tokenizer, pm);
+			joinWords(lines, tokenizer, pm);
 		}
 	}
 	
@@ -762,15 +839,9 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
-	/* TODO consider replacing words altogether instead of connecting them
-	 * - HAVE TO preserve char code string for future font edits
-	 * - benefit: words behave normally in other analyses
-	 * - benefit: document stores more compact (fewer words and text stream connections)
-	 */
-	
 	private static final boolean DEBUG_WORD_MERGING = false;
 	
-	private static void mergeWords(ImRegion[] lines, Tokenizer tokenizer, ProgressMonitor pm) {
+	private static void joinWords(ImRegion[] lines, Tokenizer tokenizer, ProgressMonitor pm) {
 		LineData[] lineData = new LineData[lines.length];
 		
 		//	get line words, and measure font size
@@ -1071,7 +1142,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			boolean gapJumpSecure = ((lineData[l].maxWordGapJump * 5) > lineData[l].lineHeight);
 			if (gapJumpSecure) {
 				lineData[l].mergeMinWordGap = lineData[l].minWordGap;
-				lineData[l].words = performWordMergers(lineData[l].words, lineData[l].mergeMinWordGap, tokenizer, dictionary);
+				lineData[l].words = performWordJoins(lineData[l].words, lineData[l].mergeMinWordGap, tokenizer, dictionary);
 				pm.setInfo("  securely merged at local min word gap (" + lineData[l].mergeMinWordGap + "): " + ImUtils.getString(lineData[l].words[0], lineData[l].words[lineData[l].words.length-1], true));
 				continue;
 			}
@@ -1092,7 +1163,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			boolean nonSpaceSecure = ((lineData[l].maxNonSpaceWordGap * 5) > lineData[l].lineHeight);
 			if (nonSpaceSecure) {
 				lineData[l].mergeMinWordGap = (lineData[l].maxNonSpaceWordGap + 1);
-				lineData[l].words = performWordMergers(lineData[l].words, lineData[l].mergeMinWordGap, tokenizer, dictionary);
+				lineData[l].words = performWordJoins(lineData[l].words, lineData[l].mergeMinWordGap, tokenizer, dictionary);
 				pm.setInfo("  securely merged at local non-space word gap + 1 (" + lineData[l].mergeMinWordGap + "): " + ImUtils.getString(lineData[l].words[0], lineData[l].words[lineData[l].words.length-1], true));
 				continue;
 			}
@@ -1249,7 +1320,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 					lineData[l].mergeMinWordGap = ((lineData[l].lineHeight + 2) / 5);
 				
 				//	perform mergers (we need to amend dictionary after round only, so to not reinforce partial mergers)
-				lineData[l].words = performWordMergers(lineData[l].words, lineData[l].mergeMinWordGap, tokenizer, null);
+				lineData[l].words = performWordJoins(lineData[l].words, lineData[l].mergeMinWordGap, tokenizer, null);
 				pm.setInfo("  merged at dictionary hit optimized min word gap (" + lineData[l].mergeMinWordGap + "): " + ImUtils.getString(lineData[l].words[0], lineData[l].words[lineData[l].words.length-1], true));
 				if (DEBUG_WORD_MERGING) System.out.println("  ==> " + getWordString(lineData[l].words, lineData[l].mergeMinWordGap));
 //				
@@ -1304,7 +1375,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
-	private static ImWord[] performWordMergers(ImWord[] words, int minWordGap, Tokenizer tokenizer, Set dictionary) {
+	private static ImWord[] performWordJoins(ImWord[] words, int minWordGap, Tokenizer tokenizer, Set dictionary) {
 		StringBuffer wStr = new StringBuffer(words[0].getString());
 		ArrayList wStrCharWords = new ArrayList();
 		for (int c = 0; c < words[0].getString().length(); c++)
@@ -1627,7 +1698,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 */
 	public static void main(String[] args) throws Exception {
 		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Eigene Daten/Plazi Workshop - Heraklion 2015/Lopez et al.pdf.charsOk.imf")));
-		ImDocument doc = ImfIO.loadDocument(docIn);
+		ImDocument doc = ImDocumentIO.loadDocument(docIn);
 		docIn.close();
 		Tokenizer tokenizer = ((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.NO_INNER_PUNCTUATION_TOKENIZER));
 		
@@ -1641,6 +1712,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			docLines.addAll(Arrays.asList(pageLines));
 		}
 		ImRegion[] lines = ((ImRegion[]) docLines.toArray(new ImRegion[docLines.size()]));
-		mergeWords(lines, tokenizer, ProgressMonitor.dummy);
+		joinWords(lines, tokenizer, ProgressMonitor.dummy);
 	}
 }

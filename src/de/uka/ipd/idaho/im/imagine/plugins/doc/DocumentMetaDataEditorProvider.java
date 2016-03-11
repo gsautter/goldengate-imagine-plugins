@@ -99,11 +99,11 @@ import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.web.plugins.WebDocumentViewer;
+import de.uka.ipd.idaho.im.util.ImDocumentIO;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
-import de.uka.ipd.idaho.im.util.ImfIO;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefConstants;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefEditorFormHandler;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefEditorPanel;
@@ -272,7 +272,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		//	- check values for numeric attributes
 		//	- translate Roman numbers
 		//	- try to enforce <lastName>, <firstName> format for person name attributes
-		String sValue = this.sanitizeAttributeValue(type, value);
+		String sValue = sanitizeAttributeValue(type, value);
 		if (sValue == null) {
 			DialogFactory.alert(("'" + value + "' is not a valid value for document " + type), ("Invalid Document " + Character.toUpperCase(type.charAt(0)) + type.substring(1)), JOptionPane.ERROR_MESSAGE);
 			return;
@@ -292,7 +292,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		//	generate annotation type
 		String annotType;
 		if (isIdentifier)
-			annotType = ("doc" + type);
+			annotType = ("docId" + type);
 		else annotType = ("doc" + Character.toUpperCase(type.charAt(0)) + type.substring(1));
 		
 		//	check existing annotations
@@ -327,36 +327,36 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		idmp.endAtomicAction();
 	}
 	
-	private String sanitizeAttributeValue(String type, String value) {
+	private static String sanitizeAttributeValue(String type, String value) {
 		
 		//	normalize dashes and whitespace
-		value = sanitizeString(value);
+		String sValue = sanitizeString(value, (AUTHOR_ANNOTATION_TYPE.equals(type) || EDITOR_ANNOTATION_TYPE.equals(type)));
 		
 		//	check numeric attributes, translating Roman numbers in the process
 		if (YEAR_ANNOTATION_TYPE.equals(type)) {
-			if (StringUtils.isRomanNumber(value))
-				value = ("" + StringUtils.parseRomanNumber(value));
-			return (value.matches("[12][0-9]{3}") ? value : null);
+			if (StringUtils.isRomanNumber(sValue))
+				sValue = ("" + StringUtils.parseRomanNumber(sValue));
+			return (sValue.matches("[12][0-9]{3}") ? sValue : null);
 		}
 		else if (VOLUME_DESIGNATOR_ANNOTATION_TYPE.equals(type) || ISSUE_DESIGNATOR_ANNOTATION_TYPE.equals(type)) {
-			if (StringUtils.isRomanNumber(value))
-				value = ("" + StringUtils.parseRomanNumber(value));
-			return (value.matches("[1-9][0-9]*") ? value : null);
+			if (StringUtils.isRomanNumber(sValue))
+				sValue = ("" + StringUtils.parseRomanNumber(sValue));
+			return (sValue.matches("[1-9][0-9]*") ? sValue : null);
 		}
 		else if (PAGINATION_ANNOTATION_TYPE.equals(type)) {
-			if (value.indexOf('-') == -1) {
-				if (StringUtils.isRomanNumber(value))
-					value = ("" + StringUtils.parseRomanNumber(value));
-				return (value.matches("[1-9][0-9]*") ? value : null);
+			if (sValue.indexOf('-') == -1) {
+				if (StringUtils.isRomanNumber(sValue))
+					sValue = ("" + StringUtils.parseRomanNumber(sValue));
+				return (sValue.matches("[1-9][0-9]*") ? sValue : null);
 			}
-			else if (value.indexOf('-') == value.lastIndexOf('-')) {
-				String[] valueParts = value.split("\\s*\\-\\s*");
+			else if (sValue.indexOf('-') == sValue.lastIndexOf('-')) {
+				String[] valueParts = sValue.split("\\s*\\-\\s*");
 				if (valueParts.length != 2)
 					return null;
-				String fpn = this.sanitizeAttributeValue(type, valueParts[0]);
+				String fpn = sanitizeAttributeValue(type, valueParts[0]);
 				if (fpn == null)
 					return null;
-				String lpn = this.sanitizeAttributeValue(type, valueParts[1]);
+				String lpn = sanitizeAttributeValue(type, valueParts[1]);
 				if (lpn == null)
 					return null;
 				if (lpn.length() < fpn.length())
@@ -368,10 +368,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		//	for person name attributes (author and editor), try and convert to <lastName>, <firstName>
 		else if (AUTHOR_ANNOTATION_TYPE.equals(type) || EDITOR_ANNOTATION_TYPE.equals(type))
-			return flipNameParts(value);
+			return flipNameParts(sValue, value);
 		
 		//	return normalized value for all other attributes
-		else return value;
+		else return sValue;
 	}
 	
 	/* (non-Javadoc)
@@ -458,7 +458,9 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 					}
 					//	... and then build-in one ...
 					try {
-						return new BufferedReader(new InputStreamReader(this.getClass().getClassLoader().getResourceAsStream("webView.html"), "UTF-8"));
+						InputStream vbpIn = this.getClass().getClassLoader().getResourceAsStream("webView.html");
+						if (vbpIn != null)
+							return new BufferedReader(new InputStreamReader(vbpIn, "UTF-8"));
 					}
 					catch (IOException ioe) {
 						ioe.printStackTrace(System.out);
@@ -484,6 +486,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 						}
 						protected void include(String type, String tag) throws IOException {
 							if ("includeBody".equals(type)) {
+								
+								//	use this for style development !!!
+								if (this.host.findFile("WebDocumentView.dev.html") != null)
+									this.includeFile("WebDocumentView.dev.html");
+								
+								//	open dialog content
 								this.writeLine("<div class=\"bibDataDialog\">");
 								
 								//	add title
@@ -751,14 +759,15 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		int metaDataMaxPageId = metaDataStyle.getIntProperty("maxPageId", 0);
 		ImPage[] pages = doc.getPages();
 		for (int p = 0; (p <= metaDataMaxPageId) && (p < pages.length); p++) {
-			int dpi = pages[p].getPageImage().currentDpi;
+			int dpi = pages[p].getImageDPI();
 			if (this.extractAttribute(AUTHOR_ANNOTATION_TYPE, pages[p], dpi, metaDataStyle, true, ref)) {
 				String[] authors = ref.getAttributeValues(AUTHOR_ANNOTATION_TYPE);
 				for (int a = 0; a < authors.length; a++) {
-					if (metaDataStyle.getBooleanProperty((AUTHOR_ANNOTATION_TYPE + ".isAllCaps"), false))
-						authors[a] = sanitizeString(authors[a]);
+					String oAuthor = authors[a];
+					if (metaDataStyle.getBooleanProperty((AUTHOR_ANNOTATION_TYPE + ".isAllCaps"), false) || metaDataStyle.getBooleanProperty((AUTHOR_ANNOTATION_TYPE + ".isPartAllCaps"), false))
+						authors[a] = sanitizeString(authors[a], true);
 					if (metaDataStyle.getBooleanProperty((AUTHOR_ANNOTATION_TYPE + ".isLastNameLast"), false))
-						authors[a] = flipNameParts(authors[a]);
+						authors[a] = flipNameParts(authors[a], oAuthor);
 					if (a == 0)
 						ref.setAttribute(AUTHOR_ANNOTATION_TYPE, authors[a]);
 					else ref.addAttribute(AUTHOR_ANNOTATION_TYPE, authors[a]);
@@ -779,10 +788,11 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			if (this.extractAttribute(EDITOR_ANNOTATION_TYPE, pages[p], dpi, metaDataStyle, true, ref)) {
 				String[] editors = ref.getAttributeValues(EDITOR_ANNOTATION_TYPE);
 				for (int e = 0; e < editors.length; e++) {
-					if (metaDataStyle.getBooleanProperty((EDITOR_ANNOTATION_TYPE + ".isAllCaps"), false))
-						editors[e] = sanitizeString(editors[e]);
+					String oEditor = editors[e];
+					if (metaDataStyle.getBooleanProperty((EDITOR_ANNOTATION_TYPE + ".isAllCaps"), false) || metaDataStyle.getBooleanProperty((EDITOR_ANNOTATION_TYPE + ".isPartAllCaps"), false))
+						editors[e] = sanitizeString(editors[e], true);
 					if (metaDataStyle.getBooleanProperty((EDITOR_ANNOTATION_TYPE + ".isLastNameLast"), false))
-						editors[e] = flipNameParts(editors[e]);
+						editors[e] = flipNameParts(editors[e], oEditor);
 					if (e == 0)
 						ref.setAttribute(EDITOR_ANNOTATION_TYPE, editors[e]);
 					else ref.addAttribute(EDITOR_ANNOTATION_TYPE, editors[e]);
@@ -1368,10 +1378,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			public void actionPerformed(ActionEvent ae) {
 				String value = textArea.getSelectedText().trim();
 				if (value.length() != 0) {
-					value = sanitizeString(value);
-					if (AUTHOR_ANNOTATION_TYPE.equals(this.attribute) || EDITOR_ANNOTATION_TYPE.equals(this.attribute))
-						ref.addAttribute(this.attribute, value);
-					else ref.setAttribute(this.attribute, value);
+					String sValue = sanitizeString(value, (AUTHOR_ANNOTATION_TYPE.equals(this.attribute) || EDITOR_ANNOTATION_TYPE.equals(this.attribute)));
+					if (AUTHOR_ANNOTATION_TYPE.equals(this.attribute) || EDITOR_ANNOTATION_TYPE.equals(this.attribute)) {
+						flipNameParts(sValue, value);
+						ref.addAttribute(this.attribute, sValue);
+					}
+					else ref.setAttribute(this.attribute, sValue);
 					refModified = true;
 					this.setToolTipText(this.getText() + ": " + ref.getAttributeValueString(this.attribute, " & "));
 					this.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createRaisedBevelBorder(), BorderFactory.createLineBorder(Color.GREEN)));
@@ -1553,16 +1565,42 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 	}
 	
-	private static final String sanitizeString(String str) {
+	private static final String sanitizeString(String str, boolean isPersonName) {
 		
-		//	check all-caps
-		boolean allCaps = true;
-		for (int c = 0; c < str.length(); c++) {
-			char ch = str.charAt(c);
-			if (ch != Character.toUpperCase(ch)) {
-				allCaps = false;
-				break;
+		//	check all-caps (part-wise for person names)
+		boolean[] inAllCaps = new boolean[str.length()];
+		if (isPersonName) {
+			for (int c = 0; c < str.length(); c++) {
+				char ch = str.charAt(c);
+				if (!Character.isLetter(ch)) {
+					inAllCaps[c] = false;
+					continue;
+				}
+				int tec;
+				boolean tAllCaps = true;
+				for (tec = c; tec < str.length(); tec++) {
+					char tch = str.charAt(tec);
+					if (Character.isLetter(tch)) {
+						if (tch != Character.toUpperCase(tch))
+							tAllCaps = false;
+					}
+					else break;
+				}
+				Arrays.fill(inAllCaps, c, tec, tAllCaps);
+				c = tec; // jump to end of token
+				c--; // compensate loop increment
 			}
+		}
+		else {
+			boolean allCaps = true;
+			for (int c = 0; c < str.length(); c++) {
+				char ch = str.charAt(c);
+				if (ch != Character.toUpperCase(ch)) {
+					allCaps = false;
+					break;
+				}
+			}
+			Arrays.fill(inAllCaps, allCaps);
 		}
 		
 		//	normalize characters
@@ -1575,7 +1613,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 					sStr.append(' ');
 			}
 			else if (Character.isLetter(ch)) {
-				if (allCaps && Character.isLetter(lCh))
+				if (inAllCaps[c] && Character.isLetter(lCh))
 					sStr.append(Character.toLowerCase(ch));
 				else sStr.append(ch);
 			}
@@ -1589,15 +1627,46 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return sStr.toString();
 	}
 	
-	private static final String flipNameParts(String name) {
+	private static final String flipNameParts(String name, String oName) {
 		name = name.trim();
+		oName = oName.trim();
+		
+		//	this one's in the appropriate order
 		if (name.indexOf(',') != -1)
 			return name;
-		int split = name.lastIndexOf(' ');
-		if (split == -1)
+		
+		//	find possible splits
+		int fSplit = name.indexOf(' ');
+		int lSplit = name.lastIndexOf(' ');
+		if ((fSplit == -1) || (lSplit == -1))
 			return name;
-		String firstName = name.substring(0, split).trim();
-		String lastName = name.substring(split + 1).trim();
+		
+		//	this one's unambiguous
+		if (fSplit == lSplit) {
+			String firstName = name.substring(0, lSplit).trim();
+			String lastName = name.substring(lSplit + 1).trim();
+			return (lastName + ", " + firstName);
+		}
+		
+		//	try to split after (last) middle initial
+		int lInitialEnd = name.lastIndexOf(". ");
+		if ((lInitialEnd > fSplit) && (lInitialEnd < lSplit)) {
+			int split = (name.lastIndexOf(". ") + ".".length());
+			String firstName = name.substring(0, split).trim();
+			String lastName = name.substring(split + 1).trim();
+			return (lastName + ", " + firstName);
+		}
+		
+		/* TODO make this less speculative:
+		 * - if we have a lastname prefix like 'de', 'van', 'von', split before the first one
+		 * - if we have partial all-caps, use it to identify lastnames
+		 * 
+		 * - THINK OF FURTHER CRITERIA
+		 */
+		
+		//	split at spaces as a general fallback
+		String firstName = name.substring(0, lSplit).trim();
+		String lastName = name.substring(lSplit + 1).trim();
 		return (lastName + ", " + firstName);
 	}
 	
@@ -1609,7 +1678,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 //		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Testdaten/PdfExtract/zt00904.pdf.imf")));
 //		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Testdaten/PdfExtract/zt01826p058.pdf.imf")));
 //		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Testdaten/PdfExtract/zt03456p035.pdf.imf")));
-		ImDocument doc = ImfIO.loadDocument(docIn);
+		ImDocument doc = ImDocumentIO.loadDocument(docIn);
 		docIn.close();
 		doc.clearAttributes();
 		

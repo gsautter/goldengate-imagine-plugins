@@ -629,6 +629,23 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			actions.add(new SelectionAction("mergeTable", "Merge Tables", "Merge the selected tables into one.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					
+					//	prepare marking table in convex hull of selected tables
+					BoundingBox mTableBox = ImLayoutObject.getAggregateBox(selTables);
+					ImWord[] mTableWords = page.getWordsInside(mTableBox);
+					ImRegion mTableRegion = new ImRegion(page.getDocument(), page.pageId, mTableBox, ImRegion.TABLE_TYPE);
+					
+					//	get rows and columns of merged table
+					ImRegion[] mTableRows = ImUtils.createTableRows(mTableRegion);
+					if (mTableRows == null) {
+						DialogFactory.alert("The selected tables cannot be merged because it does not split into rows.", "Cannot Merge Tables", JOptionPane.ERROR_MESSAGE);
+						return false;
+					}
+					ImRegion[] mTableCols = ImUtils.createTableColumns(mTableRegion);
+					if (mTableCols == null) {
+						DialogFactory.alert("The selected tables cannot be merged because it does not split into columns.", "Cannot Merge Tables", JOptionPane.ERROR_MESSAGE);
+						return false;
+					}
+					
 					//	remove existing tables
 					for (int t = 0; t < selTables.length; t++) {
 						ImRegion[] tableRows = getRegionsInside(page, selTables[t].bounds, ImRegion.TABLE_ROW_TYPE, true);
@@ -641,9 +658,17 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 						page.removeRegion(selTables[t]);
 					}
 					
-					//	mark table in convex hull of selected tables
-					BoundingBox mTableBox = ImLayoutObject.getAggregateBox(selTables);
-					ImWord[] mTableWords = page.getWordsInside(mTableBox);
+					//	attach rows and columns to page to prevent duplicating generation
+					for (int r = 0; r < mTableRows.length; r++) {
+						if (mTableRows[r].getPage() == null)
+							page.addRegion(mTableRows[r]);
+					}
+					for (int c = 0; c < mTableCols.length; c++) {
+						if (mTableCols[c].getPage() == null)
+							page.addRegion(mTableCols[c]);
+					}
+					
+					//	mark table
 					return markTable(page, mTableWords, mTableBox, invoker);
 				}
 			});
@@ -854,7 +879,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			actions.add(new SelectionAction("tableExtend", "Extend Table", "Extend table to include all selected words.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					
-					//	compute new table bounds
+					//	prepare marking table in convex hull of selected tables
 					BoundingBox extWordsBox = ImLayoutObject.getAggregateBox(selNonTableWords);
 					BoundingBox extTableBox = new BoundingBox(
 							Math.min(extWordsBox.left, selTables[0].bounds.left),
@@ -862,100 +887,128 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 							Math.min(extWordsBox.top, selTables[0].bounds.top),
 							Math.max(extWordsBox.bottom, selTables[0].bounds.bottom)
 						);
+					ImRegion extTableRegion = new ImRegion(page.getDocument(), page.pageId, extTableBox, ImRegion.TABLE_TYPE);
 					
-					//	salvage rows and columns
-					ImRegion[] tableRows = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_ROW_TYPE, true);
-					for (int r = 0; r < tableRows.length; r++)
-						page.removeRegion(tableRows[r]);
-					ImRegion[] tableCols = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_COL_TYPE, true);
-					for (int c = 0; c < tableCols.length; c++)
-						page.removeRegion(tableCols[c]);
+					//	get rows and columns of extended table
+					ImRegion[] extTableRows = ImUtils.createTableRows(extTableRegion);
+					if (extTableRows == null) {
+						DialogFactory.alert("The table cannot be extended because the extension does not split into rows.", "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
+						return false;
+					}
+					ImRegion[] extTableCols = ImUtils.createTableColumns(extTableRegion);
+					if (extTableCols == null) {
+						DialogFactory.alert("The table cannot be extended because the extension does not split into columns.", "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
+						return false;
+					}
+					
+					//	salvage original rows and columns
+					ImRegion[] selTableRows = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_ROW_TYPE, true);
+					for (int r = 0; r < selTableRows.length; r++)
+						page.removeRegion(selTableRows[r]);
+					ImRegion[] selTableCols = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_COL_TYPE, true);
+					for (int c = 0; c < selTableCols.length; c++)
+						page.removeRegion(selTableCols[c]);
 					
 					//	remove old table (no need for cleaning up words, as they all are in new table
 					selTables[0].setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
 					page.removeRegion(selTables[0]);
 					
-					//	mark table (will use existing rows and columns)
-					markTable(page, page.getWordsInside(extTableBox), extTableBox, idmp);
-					
 					//	make sure exiting row gaps are preserved
-					ImRegion[] eTableRows = getRegionsInside(page, extTableBox, ImRegion.TABLE_ROW_TYPE, true);
-					boolean eTableChanged = false;
-					for (int r = 0; r < eTableRows.length; r++) {
+					ArrayList extTableRowList = new ArrayList(Arrays.asList(extTableRows));
+					for (int r = 0; r < extTableRowList.size(); r++) {
+						ImRegion extTableRow = ((ImRegion) extTableRowList.get(r));
 						ArrayList tableRowList = new ArrayList(1);
-						for (int cr = 0; cr < tableRows.length; cr++) {
-							if (tableRows[cr].bounds.overlaps(eTableRows[r].bounds))
-								tableRowList.add(tableRows[cr]);
+						for (int cr = 0; cr < selTableRows.length; cr++) {
+							if (selTableRows[cr].bounds.overlaps(extTableRow.bounds))
+								tableRowList.add(selTableRows[cr]);
 						}
 						if (tableRowList.size() < 2)
 							continue;
 						for (int sr = 0; sr < tableRowList.size(); sr++) {
 							ImRegion sTableRow = ((ImRegion) tableRowList.get(sr));
-							BoundingBox sTableRowBox = new BoundingBox(eTableRows[r].bounds.left, eTableRows[r].bounds.right, Math.max(eTableRows[r].bounds.top,  sTableRow.bounds.top), Math.min(eTableRows[r].bounds.bottom, sTableRow.bounds.bottom));
+							BoundingBox sTableRowBox = new BoundingBox(extTableRow.bounds.left, extTableRow.bounds.right, Math.max(extTableRow.bounds.top,  sTableRow.bounds.top), Math.min(extTableRow.bounds.bottom, sTableRow.bounds.bottom));
 							ImWord[] sTableRowWords = page.getWordsInside(sTableRowBox);
-							new ImRegion(page, ImLayoutObject.getAggregateBox(sTableRowWords), ImRegion.TABLE_ROW_TYPE);
+							extTableRowList.add((r + sr + 1), new ImRegion(page.getDocument(), page.pageId, ImLayoutObject.getAggregateBox(sTableRowWords), ImRegion.TABLE_ROW_TYPE));
 						}
-						page.removeRegion(eTableRows[r]);
-						eTableChanged = true;
+						extTableRowList.remove(r);
 					}
-					eTableRows = getRegionsInside(page, extTableBox, ImRegion.TABLE_ROW_TYPE, true);
-					for (int r = 0; r < tableRows.length; r++) {
+					for (int r = 0; r < selTableRows.length; r++) {
 						ArrayList tableRowList = new ArrayList(1);
-						for (int cr = 0; cr < eTableRows.length; cr++) {
-							if (tableRows[r].bounds.overlaps(eTableRows[cr].bounds))
-								tableRowList.add(eTableRows[cr]);
+						for (int cr = 0; cr < extTableRowList.size(); cr++) {
+							ImRegion extTableRow = ((ImRegion) extTableRowList.get(cr));
+							if (selTableRows[r].bounds.overlaps(extTableRow.bounds))
+								tableRowList.add(extTableRow);
 						}
 						if (tableRowList.size() < 2)
 							continue;
 						BoundingBox mTableRowBox = ImLayoutObject.getAggregateBox((ImRegion[]) tableRowList.toArray(new ImRegion[tableRowList.size()]));
 						ImWord[] mTableRowWords = page.getWordsInside(mTableRowBox);
-						new ImRegion(page, ImLayoutObject.getAggregateBox(mTableRowWords), ImRegion.TABLE_ROW_TYPE);
-						for (int mr = 0; mr < tableRowList.size(); mr++)
-							page.removeRegion((ImRegion) tableRowList.get(mr));
-						eTableRows = getRegionsInside(page, extTableBox, ImRegion.TABLE_ROW_TYPE, true);
-						eTableChanged = true;
+						ImRegion mExtTableRow = new ImRegion(page.getDocument(), page.pageId, ImLayoutObject.getAggregateBox(mTableRowWords), ImRegion.TABLE_ROW_TYPE);
+						for (int mr = 0; mr < extTableRowList.size(); mr++) {
+							ImRegion extTableRow = ((ImRegion) extTableRowList.get(mr));
+							if (selTableRows[r].bounds.overlaps(extTableRow.bounds)) {
+								if (mExtTableRow == null)
+									extTableRowList.remove(mr--);
+								else {
+									extTableRowList.set(mr, mExtTableRow);
+									mExtTableRow = null;
+								}
+							}
+						}
 					}
 					
 					//	make sure exiting columns gaps are preserved
-					ImRegion[] eTableCols = getRegionsInside(page, extTableBox, ImRegion.TABLE_COL_TYPE, true);
-					for (int c = 0; c < eTableCols.length; c++) {
+					ArrayList extTableColList = new ArrayList(Arrays.asList(extTableCols));
+					for (int c = 0; c < extTableColList.size(); c++) {
+						ImRegion extTableCol = ((ImRegion) extTableColList.get(c));
 						ArrayList tableColList = new ArrayList(1);
-						for (int cc = 0; cc < tableRows.length; cc++) {
-							if (tableRows[cc].bounds.overlaps(eTableCols[c].bounds))
-								tableColList.add(tableRows[cc]);
+						for (int cc = 0; cc < selTableCols.length; cc++) {
+							if (selTableCols[cc].bounds.overlaps(extTableCol.bounds))
+								tableColList.add(selTableCols[cc]);
 						}
 						if (tableColList.size() < 2)
 							continue;
 						for (int sc = 0; sc < tableColList.size(); sc++) {
 							ImRegion sTabeCol = ((ImRegion) tableColList.get(sc));
-							BoundingBox sTableColBox = new BoundingBox(Math.max(eTableCols[c].bounds.left,  sTabeCol.bounds.left), Math.min(eTableCols[c].bounds.right, sTabeCol.bounds.right), eTableCols[c].bounds.top, eTableCols[c].bounds.bottom);
+							BoundingBox sTableColBox = new BoundingBox(Math.max(extTableCol.bounds.left,  sTabeCol.bounds.left), Math.min(extTableCol.bounds.right, sTabeCol.bounds.right), extTableCol.bounds.top, extTableCol.bounds.bottom);
 							ImWord[] sTableColWords = page.getWordsInside(sTableColBox);
-							new ImRegion(page, ImLayoutObject.getAggregateBox(sTableColWords), ImRegion.TABLE_COL_TYPE);
+							extTableColList.add((c + sc + 1), new ImRegion(page.getDocument(), page.pageId, ImLayoutObject.getAggregateBox(sTableColWords), ImRegion.TABLE_COL_TYPE));
 						}
-						page.removeRegion(eTableCols[c]);
-						eTableChanged = true;
+						extTableColList.remove(c);
 					}
-					eTableCols = getRegionsInside(page, extTableBox, ImRegion.TABLE_COL_TYPE, true);
-					for (int c = 0; c < tableCols.length; c++) {
+					for (int c = 0; c < selTableCols.length; c++) {
 						ArrayList tableColList = new ArrayList(1);
-						for (int cc = 0; cc < eTableCols.length; cc++) {
-							if (tableRows[c].bounds.overlaps(eTableCols[cc].bounds))
-								tableColList.add(eTableCols[cc]);
+						for (int cc = 0; cc < extTableColList.size(); cc++) {
+							ImRegion extTableCol = ((ImRegion) extTableColList.get(cc));
+							if (selTableCols[c].bounds.overlaps(extTableCol.bounds))
+								tableColList.add(extTableCol);
 						}
 						if (tableColList.size() < 2)
 							continue;
 						BoundingBox mTableColBox = ImLayoutObject.getAggregateBox((ImRegion[]) tableColList.toArray(new ImRegion[tableColList.size()]));
 						ImWord[] mTableColWords = page.getWordsInside(mTableColBox);
-						new ImRegion(page, ImLayoutObject.getAggregateBox(mTableColWords), ImRegion.TABLE_COL_TYPE);
-						for (int mc = 0; mc < tableColList.size(); mc++)
-							page.removeRegion((ImRegion) tableColList.get(mc));
-						eTableCols = getRegionsInside(page, extTableBox, ImRegion.TABLE_COL_TYPE, true);
-						eTableChanged = true;
+						ImRegion mExtTableCol = new ImRegion(page.getDocument(), page.pageId, ImLayoutObject.getAggregateBox(mTableColWords), ImRegion.TABLE_COL_TYPE);
+						for (int mc = 0; mc < extTableColList.size(); mc++) {
+							ImRegion extTableCol = ((ImRegion) extTableColList.get(mc));
+							if (selTableCols[c].bounds.overlaps(extTableCol.bounds)) {
+								if (mExtTableCol == null)
+									extTableColList.remove(mc--);
+								else {
+									extTableColList.set(mc, mExtTableCol);
+									mExtTableCol = null;
+								}
+							}
+						}
 					}
 					
-					//	update table cells if required
-					if (eTableChanged)
-						markTableCells(page, selTables[0]);
+					//	add rows and columns to page
+					for (int r = 0; r < extTableRowList.size(); r++)
+						page.addRegion((ImRegion) extTableRowList.get(r));
+					for (int c = 0; c < extTableColList.size(); c++)
+						page.addRegion((ImRegion) extTableColList.get(c));
+					
+					//	mark table (will use existing rows and columns)
+					markTable(page, page.getWordsInside(extTableBox), extTableBox, idmp);
 					
 					//	finally ...
 					return true;

@@ -47,9 +47,16 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Reader;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -60,6 +67,8 @@ import java.util.LinkedList;
 import java.util.Set;
 import java.util.TreeSet;
 
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.DefaultComboBoxModel;
@@ -92,6 +101,7 @@ import de.uka.ipd.idaho.easyIO.settings.Settings;
 import de.uka.ipd.idaho.gamta.Annotation;
 import de.uka.ipd.idaho.gamta.AnnotationUtils;
 import de.uka.ipd.idaho.gamta.AttributeUtils;
+import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.MutableAnnotation;
 import de.uka.ipd.idaho.gamta.QueriableAnnotation;
@@ -101,16 +111,20 @@ import de.uka.ipd.idaho.gamta.TokenSequenceUtils;
 import de.uka.ipd.idaho.gamta.Tokenizer;
 import de.uka.ipd.idaho.gamta.defaultImplementation.PlainTokenSequence;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
+import de.uka.ipd.idaho.gamta.util.feedback.html.renderers.BufferedLineWriter;
 import de.uka.ipd.idaho.gamta.util.gPath.GPath;
 import de.uka.ipd.idaho.gamta.util.gPath.GPathParser;
 import de.uka.ipd.idaho.gamta.util.gPath.exceptions.GPathException;
 import de.uka.ipd.idaho.gamta.util.swing.AnnotationDisplayDialog;
 import de.uka.ipd.idaho.gamta.util.swing.AttributeEditor;
+import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager;
 import de.uka.ipd.idaho.goldenGate.plugins.AnnotationFilter;
 import de.uka.ipd.idaho.goldenGate.util.DataListListener;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.goldenGate.util.HelpEditorDialog;
+import de.uka.ipd.idaho.htmlXmlUtil.accessories.HtmlPageBuilder;
+import de.uka.ipd.idaho.htmlXmlUtil.accessories.HtmlPageBuilder.HtmlPageBuilderHost;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImPage;
@@ -120,6 +134,10 @@ import de.uka.ipd.idaho.im.imagine.GoldenGateImagine;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.basic.AttributeToolProvider;
+import de.uka.ipd.idaho.im.imagine.web.GoldenGateImagineWebUtils;
+import de.uka.ipd.idaho.im.imagine.web.GoldenGateImagineWebUtils.AttributeEditorPageBuilder;
+import de.uka.ipd.idaho.im.imagine.web.plugins.WebDocumentViewer;
+import de.uka.ipd.idaho.im.imagine.web.plugins.WebDocumentViewer.WebDocumentView;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
@@ -236,8 +254,11 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager#getDataNamesForResource(java.lang.String)
 	 */
 	public String[] getDataNamesForResource(String name) {
-		String[] dns = {name, (name + ".help.html")};
-		return dns;
+		if (this.dataProvider.isDataAvailable(name + ".help.html")) {
+			String[] dns = {(name + "@" + this.getClass().getName()), (name + ".help.html" + "@" + this.getClass().getName())};
+			return dns;
+		}
+		else return super.getDataNamesForResource(name);
 	}
 	
 	/* (non-Javadoc)
@@ -333,7 +354,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		else return this.getCustomLister(name);
 	}
 	
-	private class AnnotLister implements ImageMarkupTool {
+	private class AnnotLister implements ImageMarkupTool, WebDocumentViewer {
 		public String getLabel() {
 			return "List Annotations";
 		}
@@ -352,9 +373,13 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			//	list annotations on paragraph level normalized document
 			listImObjects("Annotation List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, idmp, null);
 		}
+		public WebDocumentView getWebDocumentView(String baseUrl) {
+//			return createImObjectListView(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, null);
+			return new WebObjectList(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, null);
+		}
 	}
 	
-	private class AnnotTypeLister implements ImageMarkupTool {
+	private class AnnotTypeLister implements ImageMarkupTool, WebDocumentViewer {
 		private String annotType;
 		AnnotTypeLister(String annotType) {
 			this.annotType = annotType;
@@ -377,9 +402,13 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			//	list annotations of matching type on paragraph level normalized document
 			listImObjects("Annotation List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, idmp, getGPathFilter(this.annotType));
 		}
+		public WebDocumentView getWebDocumentView(String baseUrl) {
+//			return createImObjectListView(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, getGPathFilter(this.annotType));
+			return new WebObjectList(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, getGPathFilter(this.annotType));
+		}
 	}
 	
-	private class RegionLister implements ImageMarkupTool {
+	private class RegionLister implements ImageMarkupTool, WebDocumentViewer {
 		public String getLabel() {
 			return "List Regions";
 		}
@@ -398,6 +427,10 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			//	list regions on un-normalized normalized document
 			listImObjects("Region List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_RAW, idmp, null);
 		}
+		public WebDocumentView getWebDocumentView(String baseUrl) {
+//			return createImObjectListView(this, baseUrl, "Region List", ImDocumentRoot.NORMALIZATION_LEVEL_RAW, null);
+			return new WebObjectList(this, baseUrl, "Region List", ImDocumentRoot.NORMALIZATION_LEVEL_RAW, null);
+		}
 	}
 	
 	private CustomImObjectLister getCustomLister(String name) {
@@ -414,7 +447,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		return new CustomImObjectLister(name, label, tooltip, normalizationLevel, filter);
 	}
 	
-	private class CustomImObjectLister implements ImageMarkupTool {
+	private class CustomImObjectLister implements ImageMarkupTool, WebDocumentViewer {
 		private String name;
 		private String label;
 		private String tooltip;
@@ -452,9 +485,13 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			//	offer editing annotations on paragraph level normalized document
 			listImObjects(this.label, doc, this.normalizationLevel, idmp, this.filter);
 		}
+		public WebDocumentView getWebDocumentView(String baseUrl) {
+//			return createImObjectListView(this, baseUrl, this.label, this.normalizationLevel, this.filter);
+			return new WebObjectList(this, baseUrl, this.label, this.normalizationLevel, this.filter);
+		}
 	}
 	
-	private AnnotationFilter getGPathFilter(String filterString) {
+	private static AnnotationFilter getGPathFilter(String filterString) {
 		
 		//	validate & compile path expression
 		String error = GPathParser.validatePath(filterString);
@@ -472,12 +509,12 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		
 		//	validation error
 		else {
-			JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), ("The filter expression is not valid:\n" + error), "GPath Validation", JOptionPane.ERROR_MESSAGE);
+			DialogFactory.alert(("The filter expression is not valid:\n" + error), "GPath Validation", JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
 	}
 	
-	private class GPathAnnotationFilter implements AnnotationFilter {
+	private static class GPathAnnotationFilter implements AnnotationFilter {
 		private String filterString;
 		private GPath filterPath;
 		GPathAnnotationFilter(String filterString, GPath filterPath) {
@@ -492,7 +529,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				return this.filterPath.evaluate(data, GPath.getDummyVariableResolver());
 			}
 			catch (GPathException gpe) {
-				JOptionPane.showMessageDialog(DialogPanel.getTopWindow(), gpe.getMessage(), "GPath Error", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert(gpe.getMessage(), "GPath Error", JOptionPane.ERROR_MESSAGE);
 				return new QueriableAnnotation[0];
 			}
 		}
@@ -672,7 +709,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 						storeSettingsResource(editor[0].name, editor[0].getSettings());
 					}
 					catch (IOException ioe) {
-						if (JOptionPane.showConfirmDialog(editDialog, (ioe.getClass().getName() + " (" + ioe.getMessage() + ")\nwhile saving file to " + editor[0].name + "\nProceed?"), "Could Not Save Analyzer", JOptionPane.YES_NO_OPTION) == JOptionPane.NO_OPTION) {
+						if (DialogFactory.confirm((ioe.getClass().getName() + " (" + ioe.getMessage() + ")\nwhile saving file to " + editor[0].name + "\nProceed?"), "Could Not Save Object List", JOptionPane.YES_NO_OPTION) == JOptionPane.NO_OPTION) {
 							resourceNameList.setSelectedName(editor[0].name);
 							editorPanel.validate();
 							return;
@@ -987,6 +1024,1025 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		}
 	}
 	
+	private class WebObjectList extends WebDocumentView {
+		private ImDocumentMarkupPanel idmp;
+		private boolean showingLayoutObjects;
+		private String layoutObjectName;
+		private String objectListTitle;
+		
+		private int normalizationLevel;
+		private ImDocumentRoot wrappedDoc;
+		
+		private String objectFilterString = null;
+		private AnnotationFilter objectFilter;
+		private boolean isFixedObjectFilter;
+		
+		private ObjectTray[] objectTrays;
+		private HashMap objectTraysByID = new HashMap();
+		
+		private HtmlPageBuilderHost host;
+		
+		private String editingAttributesId = null;
+		private boolean editingAttributesDirty = false;
+		
+		WebObjectList(ImageMarkupTool parentImt, String baseUrl, String objectListTitle, int normalizationLevel, AnnotationFilter objectFilter) {
+			super(parentImt, baseUrl);
+			this.normalizationLevel = normalizationLevel;
+			this.objectListTitle = objectListTitle;
+			this.objectFilter = objectFilter;
+			this.isFixedObjectFilter = (objectFilter != null);
+		}
+		
+		protected void preProcess(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp) {
+			this.idmp = idmp;
+			
+			//	are we showing layout objects?
+			this.showingLayoutObjects = ((this.normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_RAW) || (this.normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_WORDS));
+			this.layoutObjectName = (this.showingLayoutObjects ? "Region" : "Annotation");
+			
+			//	wrap document
+			this.wrappedDoc = new ImDocumentRoot(doc, (this.normalizationLevel | ImDocumentRoot.SHOW_TOKENS_AS_WORD_ANNOTATIONS | ImDocumentRoot.USE_RANDOM_ANNOTATION_IDS));
+		}
+		public Reader getViewBasePage() {
+			//	try configured base page first ...
+			try {
+				return new BufferedReader(new InputStreamReader(dataProvider.getInputStream("webView.html"), "UTF-8"));
+			}
+			catch (IOException ioe) {
+				ioe.printStackTrace(System.out);
+			}
+			//	... and then build-in one ...
+			try {
+				InputStream vbpIn = this.getClass().getClassLoader().getResourceAsStream("webView.html");
+				if (vbpIn != null)
+					return new BufferedReader(new InputStreamReader(vbpIn, "UTF-8"));
+			}
+			catch (IOException ioe) {
+				ioe.printStackTrace(System.out);
+			}
+			//	... before falling back to default
+			return super.getViewBasePage();
+		}
+		public HtmlPageBuilder getViewPageBuilder(HtmlPageBuilderHost host, HttpServletRequest request, HttpServletResponse response) throws IOException {
+			this.host = host;
+			
+			//	wait for pre-processing to finish (we can do that without locking, as pre-processing is quick)
+			while (this.wrappedDoc == null) try {
+				Thread.sleep(10);
+			} catch (InterruptedException ie) {}
+			
+			//	return page builder
+			return new HtmlPageBuilder(host, request, response) {
+				protected boolean includeJavaScriptDomHelpers() {
+					return true;
+				}
+				protected void include(String type, String tag) throws IOException {
+					if ("includeBody".equals(type)) {
+						
+						//	use this for style development !!!
+						if (this.host.findFile("WebDocumentView.dev.html") != null)
+							this.includeFile("WebDocumentView.dev.html");
+						
+						//	open dialog content
+						this.writeLine("<div class=\"objectListDialog\">");
+						
+						//	add title
+						if (objectListTitle != null)
+							this.writeLine("<div id=\"objectListTitle\" class=\"objectListTitle\">" + html.escape(objectListTitle) + "</div>");
+						
+						//	add filter panel only if filter is not fixed
+						if (!isFixedObjectFilter) {
+							this.writeLine("<div class=\"objectListFilter\">");
+							this.writeLine("<input type=\"text\" id=\"objectListFilterField\" value=\"" + ((objectFilterString == null) ? "" : html.escape(objectFilterString)) + "\" placeholder=\"&lt;Enter Filter (XPath)&gt;\" list=\"objectListFilterHistory\" onkeyup=\"return catchReturnKeyInFilter(event);\" />");
+							this.writeLine("<datalist id=\"objectListFilterHistory\">");
+							String[] objectTypes = wrappedDoc.getAnnotationTypes();
+							for (int t = 0; t < objectTypes.length; t++)
+								this.writeLine("<option value=\"" + html.escape(objectTypes[t]) + "\" />");
+							this.writeLine("</datalist>");
+							this.writeLine("<button id=\"objectListFilterButton\" onclick=\"return setObjectListFilter(null);\">Apply</button>");
+							this.writeLine("</div>");
+						}
+						
+						//	add 'Show Matches Only' vs. 'Highlight Matches' toggle
+						this.writeLine("<div id=\"objectListModeBox\" class=\"objectListModes\">");
+						this.write("<span class=\"objectListMode\">");
+						this.write("<input type=\"radio\" name=\"objectListMode\" value=\"highlight\" id=\"objectListModeHighlight\" onchange=\"return setObjectListMode('h');\"/>");
+						this.write("Highlight Matches");
+						this.writeLine("</span>");
+						this.write("<span class=\"objectListMode\">");
+						this.write("<input type=\"radio\" name=\"objectListMode\" value=\"restrict\" id=\"objectListModeRestrict\" onchange=\"return setObjectListMode('r');\"/>");
+						this.write("Show Matches Only");
+						this.writeLine("</span>");
+						this.writeLine("</div>");
+						
+						//	add function buttons, calling dynamic scripts with selection and parameters
+						this.writeLine("<div class=\"objectListFunctions\">");
+						this.writeLine("<button id=\"mergeObjectsButton\" class=\"objectListFunctionsButton\" onclick=\"return mergeSelectedObjects();\" disabled=\"true\">Merge</button>");
+						this.writeLine("<button id=\"renameObjectsButton\" class=\"objectListFunctionsButton\" onclick=\"return renameSelectedObjects();\" disabled=\"true\">Rename</button>");
+						this.writeLine("<button id=\"removeObjectsButton\" class=\"objectListFunctionsButton\" onclick=\"return removeSelectedObjects();\" disabled=\"true\">Remove</button>");
+						this.writeLine("<button id=\"deleteObjectsButton\" class=\"objectListFunctionsButton\" onclick=\"return deleteSelectedObjects();\" disabled=\"true\">Delete</button>");
+						this.writeLine("<button id=\"editAttributesButton\" class=\"objectListFunctionsButton\" onclick=\"return editObjectAttributes(null);\" disabled=\"true\">Edit Attributes</button>");
+						this.writeLine("<button id=\"renameAttributeButton\" class=\"objectListFunctionsButton\" onclick=\"return renameObjectAttribute();\" disabled=\"true\">Rename Attribute</button>");
+						this.writeLine("<button id=\"modifyAttributeButton\" class=\"objectListFunctionsButton\" onclick=\"return modifyObjectAttribute();\" disabled=\"true\">Modify Attributes</button>");
+						this.writeLine("<button id=\"removeAttributeButton\" class=\"objectListFunctionsButton\" onclick=\"return removeObjectAttribute();\" disabled=\"true\">Remove Attribute</button>");
+						this.writeLine("</div>");
+						
+						//	add object table, allowing to select objects via checkbox (and blue highlight)
+						this.writeLine("<table id=\"objectListTable\">");
+						
+						//	add column headers, including onclick sorting
+						this.writeLine("<thead id=\"objectListTableHead\">");
+						this.writeLine("<td id=\"objectListColumnHeadSelect\" class=\"objectListColumnHead objectListSelect\">&nbsp;</td>");
+						this.writeLine("<td id=\"objectListColumnHeadType\" class=\"objectListColumnHead objectListType\" onclick=\"return setObjectListSortField('type');\">Type</td>");
+						this.writeLine("<td id=\"objectListColumnHeadStart\" class=\"objectListColumnHead objectListStart\" onclick=\"return setObjectListSortField('start');\">Start</td>");
+						this.writeLine("<td id=\"objectListColumnHeadEnd\" class=\"objectListColumnHead objectListEnd\" onclick=\"return setObjectListSortField('end');\">End</td>");
+						this.writeLine("<td id=\"objectListColumnHeadValue\" class=\"objectListColumnHead objectListValue\" onclick=\"return setObjectListSortField('value');\">Value</td>");
+						this.writeLine("<td id=\"objectListColumnHeadSpacer\" class=\"objectListColumnHead\">&nbsp</td>");
+						this.writeLine("</thead>");
+						
+						//	add table body (content follows via JavaScript)
+						this.writeLine("<tbody id=\"objectListTableBody\">");
+						this.writeLine("<tr id=\"objectListTableSpacer\">");
+						this.writeLine("<td>&nbsp;</td>");
+						this.writeLine("<td>&nbsp;</td>");
+						this.writeLine("<td>&nbsp;</td>");
+						this.writeLine("<td>&nbsp;</td>");
+						this.writeLine("<td>&nbsp;</td>");
+						this.writeLine("</tr>");
+						this.writeLine("</tbody>");
+						this.writeLine("</table>");
+						
+						//	add 'Select All' and 'Select None' buttons
+						this.writeLine("<div class=\"objectListButtons\">");
+						this.writeLine("<button class=\"objectListButton\" onclick=\"return globalSelectObjects(true);\">Select All</button>");
+						this.writeLine("<button class=\"objectListButton\" onclick=\"return globalSelectObjects(false);\">Select None</button>");
+						this.writeLine("</div>");
+						
+						//	add Close button (simply set URL in window.location.href)
+						this.writeLine("<div class=\"objectListMainButtons\">");
+						this.writeLine("<button class=\"objectListMainButton\" onclick=\"return closeObjectList();\">Close</button>");
+						this.writeLine("</div>");
+						
+						//	close object list area
+						this.writeLine("</div>");
+						
+						//	add script with initialization calls
+						this.writeLine("<script type=\"text/javascript\">");
+						
+						//	if filter is fixed, include script setting filter to that value (to use default list loading facilities)
+						if (isFixedObjectFilter)
+							this.writeLine("setObjectListFilter('" + GoldenGateImagineWebUtils.escapeForJavaScript(objectFilter.toString()) + "');");
+						
+						//	if we have a filter string (may happen on page reload), apply it
+						else if (objectFilterString != null)
+							this.writeLine("setObjectListFilter(null);");
+						
+						//	if editing attributes in a refresh, re-open attribute editor
+						if (editingAttributesId != null)
+							this.writeLine("editObjectAttributes('" + GoldenGateImagineWebUtils.escapeForJavaScript(editingAttributesId) + "');");
+						
+						//	close initialization calls and add dynamic script node
+						this.writeLine("</script>");
+						this.writeLine("<script id=\"dynamicActionScript\" type=\"text/javascript\" src=\"toBeSetDynamically\"></script>");
+					}
+					else super.include(type, tag);
+				}
+				protected void writePageHeadExtensions() throws IOException {
+					this.writeLine("<script type=\"text/javascript\">");
+					
+					//	perform some dynamic action via script tag replacement
+					this.writeLine("function getDynamicActionScript(name, params) {");
+					this.writeLine("  var das = getById('dynamicActionScript');");
+					this.writeLine("  var dasp = das.parentNode;");
+					this.writeLine("  removeElement(das);");
+					this.writeLine("  var dasSrc = ('" + baseUrl + "' + name + '?time=' + (new Date()).getTime() + params);");
+					this.writeLine("  das = newElement('script', 'dynamicActionScript');");
+					this.writeLine("  das.type = 'text/javascript';");
+					this.writeLine("  das.src = dasSrc;");
+					this.writeLine("  dasp.appendChild(das);");
+					this.writeLine("  return false;");
+					this.writeLine("}");
+					
+					//	catch return key in filter field to move to attribute value input
+					this.writeLine("function catchReturnKeyInFilter(event) {");
+					this.writeLine("  if (event.keyCode == 13) {");
+					this.writeLine("    event.stopPropagation();");
+					this.writeLine("    return setObjectListFilter(null);");
+					this.writeLine("  }");
+					this.writeLine("  else return true;");
+					this.writeLine("}");
+					
+					//	TODO put all these URL independent functions in 'webView.html' for easier maintenance
+					
+					//	move table spacer to end
+					this.writeLine("function addObjectListTableSpacer() {");
+					this.writeLine("  var olTb = getById('objectListTableBody');");
+					this.writeLine("  var olTs = getById('objectListTableSpacer');");
+					this.writeLine("  olTb.removeChild(olTs);");
+					this.writeLine("  olTb.appendChild(olTs);");
+					this.writeLine("}");
+					
+					//	call to filter.js
+					this.writeLine("function setObjectListFilter(filter) {");
+					this.writeLine("  if (filter == null)");
+					this.writeLine("    filter = getById('objectListFilterField').value;");
+					this.writeLine("  if ((filter == null) || (filter.trim() == '')) {");
+					this.writeLine("    showAlertDialog('Please enter a non-empty filter to use.', 'Invalid Filter', " + JOptionPane.ERROR_MESSAGE + ");");
+					this.writeLine("    return false;");
+					this.writeLine("  }");
+					this.writeLine("  return getDynamicActionScript('filter.js', ('&filter=' + encodeURIComponent(filter)));");
+					this.writeLine("}");
+					
+					//	add filter string to history
+					this.writeLine("function addToFilterHistory(filterString) {");
+					this.writeLine("  var fh = getById('objectListFilterHistory');");
+					this.writeLine("  var fhChildren = fh.children;");
+					this.writeLine("  var fsOpt = null;");
+					this.writeLine("  for (var c = 0; c < fhChildren.length; c++)");
+					this.writeLine("    if (fhChildren[c].value == filterString) {");
+					this.writeLine("      if (c == 0)");
+					this.writeLine("        return; // no need to move anything around");
+					this.writeLine("      fsOpt = fhChildren[c];");
+					this.writeLine("      removeElement(fsOpt);");
+					this.writeLine("    }");
+					this.writeLine("  if (fsOpt == null) {");
+					this.writeLine("    fsOpt = newElement('option', null, null, null);");
+					this.writeLine("    fsOpt.value = filterString;");
+					this.writeLine("  }");
+					this.writeLine("  fh.insertBefore(fsOpt, fh.firstElementChild);");
+					this.writeLine("}");
+					
+					//	call to 'merge.js'
+					this.writeLine("function mergeSelectedObjects() {");
+					this.writeLine("  getDynamicActionScript('merge.js', ('&selection=' + getSelectedObjectIDs()));");
+					this.writeLine("}");
+					
+					//	call to 'rename.js'
+					this.writeLine("function renameSelectedObjects() {");
+					this.writeLine("  getDynamicActionScript('rename.js', ('&selection=' + getSelectedObjectIDs()));");
+					this.writeLine("}");
+					
+					//	call to 'remove.js'
+					this.writeLine("function removeSelectedObjects() {");
+					this.writeLine("  getDynamicActionScript('remove.js', ('&selection=' + getSelectedObjectIDs()));");
+					this.writeLine("}");
+					
+					//	call to 'delete.js'
+					this.writeLine("function deleteSelectedObjects() {");
+					this.writeLine("  getDynamicActionScript('delete.js', ('selection=' + getSelectedObjectIDs()));");
+					this.writeLine("}");
+					
+					//	open 'editAttributes'
+					this.writeLine("function editObjectAttributes(objectId) {");
+					this.writeLine("  if (objectId == null)");
+					this.writeLine("    objectId = getSelectedObjectIDs();");
+					this.writeLine("  if ((objectId == '') || (objectId.indexOf(';') != -1))");
+					this.writeLine("    return;");
+					this.writeLine("  window.open(('" + baseUrl + "editAttributes?id=' + objectId), 'editAttributesWindow', 'width=50,height=50,top=0,left=0,resizable=yes,scrollbar=yes,scrollbars=yes');");
+					this.writeLine("}");
+					
+					//	get previous or next object ID to 'Previous' and 'Next' up and down object list with attribute editor
+					this.writeLine("function getPreviousObjectId(objId) {");
+					this.writeLine("  var prevObjId = null;");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (objectList[o].tr.style.display == 'none')");
+					this.writeLine("      continue;");
+					this.writeLine("    if (objectList[o].id == objId)");
+					this.writeLine("      break;");
+					this.writeLine("    else prevObjId = objectList[o].id;");
+					this.writeLine("  }");
+					this.writeLine("  return prevObjId;");
+					this.writeLine("}");
+					this.writeLine("function getNextObjectId(objId) {");
+					this.writeLine("  var gotObjId = false;");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (objectList[o].tr.style.display == 'none')");
+					this.writeLine("      continue;");
+					this.writeLine("    if (objectList[o].id == objId)");
+					this.writeLine("      gotObjId = true;");
+					this.writeLine("    else if (gotObjId)");
+					this.writeLine("      return objectList[o].id;");
+					this.writeLine("  }");
+					this.writeLine("  return null;");
+					this.writeLine("}");
+					
+					//	call to 'renameAttribute.js'
+					this.writeLine("function renameObjectAttribute() {");
+					this.writeLine("  getDynamicActionScript('renameAttribute.js', ('&selection=' + getSelectedObjectIDs()));");
+					this.writeLine("}");
+					
+					//	call to 'modifyAttribute.js'
+					this.writeLine("function modifyObjectAttribute() {");
+					this.writeLine("  getDynamicActionScript('modifyAttribute.js', ('&selection=' + getSelectedObjectIDs()));");
+					this.writeLine("}");
+					
+					//	call to 'removeAttribute.js'
+					this.writeLine("function removeObjectAttribute() {");
+					this.writeLine("  getDynamicActionScript('removeAttribute.js', ('&selection=' + getSelectedObjectIDs()));");
+					this.writeLine("}");
+					
+					//	background list object store and sort order
+					this.writeLine("var objectsById = new Object();");
+					this.writeLine("var objectList = new Array();");
+					this.writeLine("var objectListMatchCount = 0;");
+					this.writeLine("var objectListMatchesOnly = true;");
+					this.writeLine("var objectListSortField = 'start';");
+					this.writeLine("var objectListSortedDescending = false;");
+					
+					//	get IDs of selected objects
+					this.writeLine("function getSelectedObjectIDs() {");
+					this.writeLine("  var selIDs = '';");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++)");
+					this.writeLine("    if (objectList[o].isSelected) {");
+					this.writeLine("      if (selIDs != '')");
+					this.writeLine("        selIDs += ';'");
+					this.writeLine("      selIDs += objectList[o].id;");
+					this.writeLine("    }");
+					this.writeLine("  return selIDs;");
+					this.writeLine("}");
+					
+					//	sort object list, reversing sort order for second click on same column
+					this.writeLine("function setObjectListSortField(sortField) {");
+					this.writeLine("  if (sortField == objectListSortField)");
+					this.writeLine("    objectListSortedDescending = !objectListSortedDescending;");
+					this.writeLine("  else objectListSortedDescending = false;");
+					this.writeLine("  objectListSortField = sortField;");
+					this.writeLine("  sortObjectList(objectListSortField, objectListSortedDescending);");
+					this.writeLine("}");
+					this.writeLine("function sortObjectList(sortField, descending) {");
+					this.writeLine("  objectList.sort(function(lo1, lo2) {");
+					this.writeLine("    return (compareListObjects(lo1, lo2, sortField) * (descending ? -1 : 1));");
+					this.writeLine("  });");
+					this.writeLine("  var sortHeaderSuffix = (descending ? ' (d)' : ' (a)');");
+					this.writeLine("  getById('objectListColumnHeadType').innerHTML = ('Type' + ((sortField == 'type') ? sortHeaderSuffix : ''));");
+					this.writeLine("  getById('objectListColumnHeadStart').innerHTML = ('Start' + ((sortField == 'start') ? sortHeaderSuffix : ''));");
+					this.writeLine("  getById('objectListColumnHeadEnd').innerHTML = ('End' + ((sortField == 'end') ? sortHeaderSuffix : ''));");
+					this.writeLine("  getById('objectListColumnHeadValue').innerHTML = ('Value' + ((sortField == 'value') ? sortHeaderSuffix : ''));");
+					this.writeLine("  var olTb = getById('objectListTableBody');");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    removeElement(objectList[o].tr);");
+					this.writeLine("    olTb.appendChild(objectList[o].tr);");
+					this.writeLine("  }");
+					this.writeLine("  addObjectListTableSpacer();");
+					this.writeLine("}");
+					this.writeLine("function compareListObjects(lo1, lo2, compareField) {");
+					this.writeLine("  var val1 = lo1[compareField];");
+					this.writeLine("  var val2 = lo2[compareField];");
+					this.writeLine("  if ((compareField == 'start') || (compareField == 'end'))");
+					this.writeLine("    return (val1 - val2);");
+					this.writeLine("  else if (val1 && val2)");
+					this.writeLine("    return val1.localeCompare(val2);");
+					this.writeLine("  else if (val1)");
+					this.writeLine("    return -1;");
+					this.writeLine("  else if (val2)");
+					this.writeLine("    return 1;");
+					this.writeLine("  else return 0;");
+					this.writeLine("}");
+					
+					//	update match status of list objects
+					this.writeLine("function setNonMatch(nonMatchIDs) {");
+					this.writeLine("  setListObjectMatchStatus(nonMatchIDs, false);");
+					this.writeLine("}");
+					this.writeLine("function setMatch(matchIDs) {");
+					this.writeLine("  setListObjectMatchStatus(matchIDs, true);");
+					this.writeLine("}");
+					this.writeLine("function setListObjectMatchStatus(listObjectIDs, isMatch) {");
+					this.writeLine("  for (var i = 0; i < listObjectIDs.length; i++) {");
+					this.writeLine("    var lo = objectsById[listObjectIDs[i]];");
+					this.writeLine("    if (lo != null)");
+					this.writeLine("      lo.isMatch = isMatch;");
+					this.writeLine("  }");
+					this.writeLine("}");
+					
+					//	remove list objects
+					this.writeLine("function removeListObjects(listObjectIDs) {");
+					this.writeLine("  for (var i = 0; i < listObjectIDs.length; i++) {");
+					this.writeLine("    var lo = objectsById[listObjectIDs[i]];");
+					this.writeLine("    if (lo == null)");
+					this.writeLine("      continue;");
+					this.writeLine("    removeElement(lo.tr);");
+					this.writeLine("    delete objectsById[listObjectIDs[i]];");
+					this.writeLine("  }");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (!objectsById[objectList[o].id])");
+					this.writeLine("      objectList.splice(o--, 1);");
+					this.writeLine("  }");
+					this.writeLine("}");
+					
+					//	add an object to the list
+					this.writeLine("function addListObject(listObject) {");
+					this.writeLine("  objectsById[listObject.id] = listObject;");
+					this.writeLine("  objectList[objectList.length] = listObject;");
+					this.writeLine("  listObject.isSelected = false;");
+					this.writeLine("  var olTr = newElement('tr', null, 'objectListRow', null);");
+					this.writeLine("  var olTd;");
+					this.writeLine("  olTd = newElement('td', null, 'objectListField objectListSelect', null);");
+					this.writeLine("  var olCb = newElement('input', null, null, null);");
+					this.writeLine("  olCb.type = 'checkbox';");
+					this.writeLine("  olCb.name = 'selected';");
+					this.writeLine("  olCb.value = 'true';");
+					this.writeLine("  olCb.onchange = function() {");
+					this.writeLine("    selectListObject(listObject, olCb.checked, true);");
+					this.writeLine("  };");
+					this.writeLine("  olTd.appendChild(olCb);");
+					this.writeLine("  olTr.appendChild(olTd);");
+					this.writeLine("  olTd = newElement('td', null, 'objectListField objectListType', listObject.type);");
+					this.writeLine("  olTr.appendChild(olTd);");
+					this.writeLine("  olTd = newElement('td', null, 'objectListField objectListStart', ('' + listObject.start));");
+					this.writeLine("  olTr.appendChild(olTd);");
+					this.writeLine("  olTd = newElement('td', null, 'objectListField objectListEnd', ('' + listObject.end));");
+					this.writeLine("  olTr.appendChild(olTd);");
+					this.writeLine("  olTd = newElement('td', null, 'objectListField objectListValue', listObject.value);");
+					this.writeLine("  olTr.appendChild(olTd);");
+					this.writeLine("  olTr.onclick = function(event) {");
+					this.writeLine("    selectListObject(listObject, !listObject.isSelected, true);");
+					this.writeLine("    event.stopPropagation();");
+					this.writeLine("  };");
+					this.writeLine("  listObject.tr = olTr;");
+					this.writeLine("  listObject.cb = olCb;");
+					this.writeLine("  getById('objectListTableBody').appendChild(olTr);");
+					this.writeLine("  addObjectListTableSpacer();");
+					this.writeLine("}");
+					
+					//	select specific object, or all / no objects
+					this.writeLine("function selectListObject(listObject, selected, adjustButtons) {");
+					this.writeLine("  if (selected == listObject.isSelected)");
+					this.writeLine("    return;");
+					this.writeLine("  if (selected) {");
+					this.writeLine("    listObject.isSelected = true;");
+					this.writeLine("    listObject.tr.className = 'objectListRow objectListRowSelected';");
+					this.writeLine("    listObject.cb.checked = 'checked';");
+					this.writeLine("  }");
+					this.writeLine("  else {");
+					this.writeLine("    listObject.isSelected = false;");
+					this.writeLine("    listObject.tr.className = 'objectListRow';");
+					this.writeLine("    listObject.cb.checked = null;");
+					this.writeLine("  }");
+					this.writeLine("  if (adjustButtons)");
+					this.writeLine("    adjustObjectListFunctionButtons();");
+					this.writeLine("}");
+					this.writeLine("function globalSelectObjects(all) {");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (objectList[o].isSelected != all)");
+					this.writeLine("      selectListObject(objectList[o], all, false);");
+					this.writeLine("  }");
+					this.writeLine("  adjustObjectListFunctionButtons();");
+					this.writeLine("}");
+					
+					//	adjust availability of functions
+					this.writeLine("function adjustObjectListFunctionButtons() {");
+					this.writeLine("  var selCount = 0;");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (objectList[o].isSelected)");
+					this.writeLine("      selCount++;");
+					this.writeLine("  }");
+					this.writeLine("  var singleType = ((selCount == 0) ? null : getSingleSelectedObjectType());");
+					if (showingLayoutObjects)
+						this.writeLine("  var mergeable = false;");
+					else this.writeLine("  var mergeable = ((selCount > 1) && (singleType != null) && isMergeableSelection());");
+					this.writeLine("  getById('mergeObjectsButton').disabled = (mergeable ? false : true);");
+					this.writeLine("  getById('renameObjectsButton').disabled = ((singleType != null) ? false : true);");
+					this.writeLine("  getById('removeObjectsButton').disabled = ((selCount != 0) ? false : true);");
+					this.writeLine("  getById('deleteObjectsButton').disabled = ((selCount != 0) ? false : true);");
+					this.writeLine("  getById('editAttributesButton').disabled = ((selCount == 1) ? false : true);");
+					this.writeLine("  getById('renameAttributeButton').disabled = ((selCount != 0) ? false : true);");
+					this.writeLine("  getById('modifyAttributeButton').disabled = ((selCount != 0) ? false : true);");
+					this.writeLine("  getById('removeAttributeButton').disabled = ((selCount != 0) ? false : true);");
+					this.writeLine("}");
+					this.writeLine("function getSingleSelectedObjectType() {");
+					this.writeLine("  var singleType = null;");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (!objectList[o].isSelected)");
+					this.writeLine("      continue;");
+					this.writeLine("    if (singleType == null)");
+					this.writeLine("      singleType = objectList[o].type;");
+					this.writeLine("    else if (singleType != objectList[o].type)");
+					this.writeLine("      return null;");
+					this.writeLine("  }");
+					this.writeLine("  return singleType;");
+					this.writeLine("}");
+					
+					//	assess mergeability of selection
+					this.writeLine("function isMergeableSelection() {");
+					this.writeLine("  var minSelIndex = -1;");
+					this.writeLine("  var maxSelIndex = -1;");
+					this.writeLine("  var minSelStart = -1;");
+					this.writeLine("  var maxSelEnd = -1;");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (!objectList[o].isSelected)");
+					this.writeLine("      continue;");
+					this.writeLine("    if (objectList[o].tr.style.display == 'none')");
+					this.writeLine("      continue;");
+					this.writeLine("    if (minSelIndex == -1)");
+					this.writeLine("      minSelIndex = o;");
+					this.writeLine("    maxSelIndex = o;");
+					this.writeLine("    if (minSelStart == -1)");
+					this.writeLine("      minSelStart = objectList[o].start;");
+					this.writeLine("    else minSelStart = Math.min(minSelStart, objectList[o].start);");
+					this.writeLine("    maxSelEnd = Math.max(maxSelEnd, objectList[o].end);");
+					this.writeLine("  }");
+					this.writeLine("  if (minSelIndex == -1)");
+					this.writeLine("    return false;");
+					this.writeLine("  else if (minSelIndex == maxSelIndex)");
+					this.writeLine("    return false;");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (objectList[o].isSelected)");
+					this.writeLine("      continue;");
+					this.writeLine("    if ((minSelIndex < o) && (o < maxSelIndex))");
+					this.writeLine("      return false;");
+					this.writeLine("    if ((minSelStart < objectList[o].start) && (objectList[o].start < maxSelEnd))");
+					this.writeLine("      return false;");
+					this.writeLine("    if ((minSelStart < objectList[o].end) && (objectList[o].end < maxSelEnd))");
+					this.writeLine("      return false;");
+					this.writeLine("  }");
+					this.writeLine("  return true;");
+					this.writeLine("}");
+					
+					//	toggle list mode ('highlight matches' vs. 'show matches only')
+					this.writeLine("function setObjectListMode(mode) {");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (mode == 'r') {");
+					this.writeLine("      objectList[o].tr.style.fontWeight = 'normal';");
+					this.writeLine("      objectList[o].tr.style.display = (objectList[o].isMatch ? null : 'none');");
+					this.writeLine("      if (!objectList[o].isMatch && objectList[o].isSelected)");
+					this.writeLine("        selectListObject(objectList[o], false, false);");
+					this.writeLine("    }");
+					this.writeLine("    else {");
+					this.writeLine("      objectList[o].tr.style.fontWeight = ((!objectListMatchesOnly && objectList[o].isMatch) ? 'bold' : 'normal');");
+					this.writeLine("      objectList[o].tr.style.display = null;");
+					this.writeLine("    }");
+					this.writeLine("  }");
+					this.writeLine("  if ((mode == 'r') || objectListMatchesOnly)");
+					this.writeLine("    getById('objectListTitle').innerHTML = ('" + GoldenGateImagineWebUtils.escapeForJavaScript(objectListTitle) + " (' + objectListMatchCount + ' matches)');");
+					this.writeLine("  else getById('objectListTitle').innerHTML = ('" + GoldenGateImagineWebUtils.escapeForJavaScript(objectListTitle) + " (' + objectListMatchCount + ' matches out of ' + objectList.length + ')');");
+					this.writeLine("}");
+					
+					//	clear object list, setting all status fields back to initial values
+					this.writeLine("function clearObjectList() {");
+					this.writeLine("  var olTs = getById('objectListTableSpacer');");
+					this.writeLine("  var olTb = getById('objectListTableBody');");
+					this.writeLine("  while (olTb.firstElementChild)");
+					this.writeLine("    removeElement(olTb.firstElementChild);");
+					this.writeLine("  olTb.appendChild(olTs);");
+					this.writeLine("  objectsById = new Object();");
+					this.writeLine("  objectList.splice(0, objectList.length);");
+					this.writeLine("  objectListMatchesOnly = true;");
+					this.writeLine("  objectListSortField = 'start';");
+					this.writeLine("  objectListSortedDescending = false;");
+					this.writeLine("}");
+					
+					//	finish object list update (restore sort order, adjust match and non-match styles, etc.)
+					this.writeLine("function finishObjectListUpdate() {");
+					this.writeLine("  if (objectList.length == 0)");
+					this.writeLine("    return;");
+					this.writeLine("  objectListMatchCount = 0;");
+					this.writeLine("  var type = objectList[0].type;");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (objectList[o].isMatch)");
+					this.writeLine("      objectListMatchCount++;");
+					this.writeLine("    else objectListMatchesOnly = false;");
+					this.writeLine("    objectList[o].isSelected = false;");
+					this.writeLine("    objectList[o].tr.className = 'objectListRow';");
+					this.writeLine("    objectList[o].cb.checked = null;");
+					this.writeLine("  }");
+					this.writeLine("  sortObjectList(objectListSortField, objectListSortedDescending);");
+					this.writeLine("  for (var o = 0; o < objectList.length; o++) {");
+					this.writeLine("    if (!objectListMatchesOnly && objectList[o].isMatch)");
+					this.writeLine("      objectList[o].tr.style.fontWeight = 'bold';");
+					this.writeLine("    else objectList[o].tr.style.fontWeight = 'normal';");
+					this.writeLine("  }");
+					this.writeLine("  if (objectListMatchesOnly) {");
+					this.writeLine("    getById('objectListModeHighlight').disabled = true;");
+					this.writeLine("    getById('objectListModeRestrict').disabled = true;");
+					this.writeLine("  }");
+					this.writeLine("  else {");
+					this.writeLine("    getById('objectListModeHighlight').disabled = false;");
+					this.writeLine("    getById('objectListModeRestrict').disabled = false;");
+					this.writeLine("  }");
+					this.writeLine("  getById('objectListModeHighlight').checked = null;");
+					this.writeLine("  getById('objectListModeRestrict').checked = 'checked';");
+					this.writeLine("  setObjectListMode('r');");
+					this.writeLine("  adjustObjectListFunctionButtons();");
+					this.writeLine("  addObjectListTableSpacer();");
+					this.writeLine("}");
+					
+					//	call to close (not a JavaScript !!!)
+					this.writeLine("function closeObjectList() {");
+					this.writeLine("  window.location.href = '" + baseUrl + "close';");
+					this.writeLine("}");
+					
+					this.writeLine("</script>");
+				}
+			};
+		}
+		public boolean handleRequest(HttpServletRequest request, HttpServletResponse response, String pathInfo) throws IOException {
+			
+			//	catch 'filter.js' (filter is in 'filter' parameter)
+			if ("/filter.js".equals(pathInfo)) {
+				
+				//	read filter
+				String filterString = request.getParameter("filter");
+				AnnotationFilter filter = ((filterString == null) ? null : getGPathFilter(filterString));
+				
+				//	prepare response
+				response.setContentType("text/plain");
+				response.setCharacterEncoding("UTF-8");
+				Writer out = new OutputStreamWriter(response.getOutputStream(), "UTF-8");
+				BufferedLineWriter blw = new BufferedLineWriter(out);
+				
+				//	filter is good (filter error is sent by alert() calls in filtering code)
+				if (filter != null) {
+					
+					//	apply filter to update object list (always include type matches, to facilitate filtering in browser)
+					this.objectFilterString = filterString;
+					this.objectFilter = filter;
+					this.objectTrays = getObjects(this.objectFilter, this.wrappedDoc, this.objectTraysByID, true);
+					
+					//	add filter to history
+					blw.writeLine("addToFilterHistory('" + GoldenGateImagineWebUtils.escapeForJavaScript(filterString) + "');");
+					
+					//	update object list
+					blw.writeLine("clearObjectList();");
+					for (int o = 0; o < this.objectTrays.length; o++)
+						this.writeAddListObjectCall(blw, this.objectTrays[o]);
+					blw.writeLine("finishObjectListUpdate();");
+				}
+				
+				//	finish response
+				blw.flush();
+				out.flush();
+				blw.close();
+				return true;
+			}
+			
+			//	call to 'merge.js'
+			if ("/merge.js".equals(pathInfo)) {
+				if (this.showingLayoutObjects)
+					return this.sendEmptyScript(response);
+				Annotation[] selectedObjects = this.getSelectedObjects(request);
+				if (selectedObjects.length < 2)
+					return this.sendEmptyScript(response);
+				
+				//	check feasibility of merger
+				ImWord fImw = ((ImWord) selectedObjects[0].getAttribute(ImAnnotation.FIRST_WORD_ATTRIBUTE));
+				if ((fImw == null) || (fImw.getTextStreamId() == null))
+					return this.sendEmptyScript(response);
+				for (int o = 1; o < selectedObjects.length; o++) {
+					ImWord rImw = ((ImWord) selectedObjects[o].getAttribute(ImAnnotation.FIRST_WORD_ATTRIBUTE));
+					if ((rImw == null) || !fImw.getTextStreamId().equals(rImw.getTextStreamId()))
+						return this.sendEmptyScript(response);
+				}
+				
+				//	get merge parameters
+				int start = selectedObjects[0].getStartIndex();
+				int end = selectedObjects[0].getEndIndex();
+				for (int o = 1; o < selectedObjects.length; o++) {
+					start = Math.min(start, selectedObjects[o].getStartIndex());
+					end = Math.max(end, selectedObjects[o].getEndIndex());
+				}
+				
+				//	perform merger
+				Annotation mObject = null;
+				for (int o = 0; o < selectedObjects.length; o++)
+					if ((selectedObjects[o].getStartIndex() == start) && (selectedObjects[o].getEndIndex() == end)) {
+						mObject = selectedObjects[o];
+						break;
+					}
+				if (mObject == null)
+					mObject = wrappedDoc.addAnnotation(selectedObjects[0].getType(), start, (end - start));
+				for (int o = 0; o < selectedObjects.length; o++) {
+					AttributeUtils.copyAttributes(selectedObjects[o], mObject, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+					if (selectedObjects[o] != mObject)
+						this.wrappedDoc.removeAnnotation(selectedObjects[o]);
+				}
+				
+				//	send update
+				this.refreshObjectListAndSendUpdates(response);
+				return true;
+			}
+			
+			//	call to 'rename.js'
+			if ("/rename.js".equals(pathInfo)) {
+				Annotation[] selectedObjects = this.getSelectedObjects(request);
+				if (selectedObjects.length == 0)
+					return this.sendEmptyScript(response);
+				
+				String[] types = ((this.idmp == null) ? wrappedDoc.getAnnotationTypes() : this.idmp.getAnnotationTypes());
+				Arrays.sort(types, ANNOTATION_TYPE_ORDER);
+				String newType = ImUtils.promptForObjectType(("Enter New " + this.layoutObjectName + " Type"), ("Enter or select new " + this.layoutObjectName.toLowerCase() + " type"), types, selectedObjects[0].getType(), true);
+				if (newType == null)
+					return this.sendEmptyScript(response);
+				
+				for (int o = 0; o < selectedObjects.length; o++)
+					selectedObjects[o].changeTypeTo(newType);
+				if (this.showingLayoutObjects)
+					this.idmp.setRegionsPainted(newType, true);
+				else this.idmp.setAnnotationsPainted(newType, true);
+				
+				//	send update
+				this.refreshObjectListAndSendUpdates(response);
+				return true;
+			}
+			
+			//	call to 'remove.js'
+			if ("/remove.js".equals(pathInfo)) {
+				Annotation[] selectedObjects = this.getSelectedObjects(request);
+				if (selectedObjects.length == 0)
+					return this.sendEmptyScript(response);
+				
+				for (int o = 0; o < selectedObjects.length; o++)
+					this.wrappedDoc.removeAnnotation(selectedObjects[o]);
+				
+				//	send update
+				this.refreshObjectListAndSendUpdates(response);
+				return true;
+			}
+			
+			//	call to 'delete.js'
+			if ("/delete.js".equals(pathInfo)) {
+				Annotation[] selectedObjects = this.getSelectedObjects(request);
+				if (selectedObjects.length == 0)
+					return this.sendEmptyScript(response);
+				
+				for (int o = 0; o < selectedObjects.length; o++)
+					this.wrappedDoc.removeTokens(selectedObjects[o]);
+				
+				//	send update
+				this.refreshObjectListAndSendUpdates(response);
+				return true;
+			}
+			
+			//	call to 'editAttributes'
+			if ("/editAttributes".equals(pathInfo)) {
+				
+				//	write any committed changes
+				if ("POST".equalsIgnoreCase(request.getMethod())) {
+					Annotation target = this.getSelectedObject(request.getParameter("id"));
+					if (target != null)
+						this.editingAttributesDirty = (GoldenGateImagineWebUtils.processAttributeEditorSubmission(target, request) | this.editingAttributesDirty);
+					String nextTargetId = request.getParameter("nextId");
+					Annotation nextTarget = this.getSelectedObject(nextTargetId);
+					if (nextTarget == null) {
+						this.editingAttributesId = null;
+						this.sendAttributeEditorClosePage(response);
+					}
+					else {
+						this.editingAttributesId = nextTargetId;
+						this.sendAttributeEditorPage(request, response, nextTarget, nextTargetId);
+					}
+				}
+				
+				//	initial call for attribute editor page
+				else {
+					String targetId = request.getParameter("id");
+					Annotation target = this.getSelectedObject(targetId);
+					if (target == null) {
+						this.editingAttributesId = null;
+						this.sendAttributeEditorClosePage(response);
+					}
+					else {
+						this.editingAttributesId = targetId;
+						this.sendAttributeEditorPage(request, response, target, targetId);
+					}
+				}
+				
+				//	finally ...
+				return true;
+			}
+			
+			//	call to 'renameAttribute.js'
+			if ("/renameAttribute.js".equals(pathInfo)) {
+				Annotation[] selectedObjects = this.getSelectedObjects(request);
+				if ((selectedObjects.length != 0) && attributeToolProvider.renameAttribute(null, selectedObjects)) {
+					this.refreshObjectListAndSendUpdates(response);
+					return true;
+				}
+				else return this.sendEmptyScript(response);
+			}
+			
+			//	call to 'modifyAttribute.js'
+			if ("/modifyAttribute.js".equals(pathInfo)) {
+				Annotation[] selectedObjects = this.getSelectedObjects(request);
+				if ((selectedObjects.length != 0) && attributeToolProvider.modifyAttribute(null, selectedObjects)) {
+					this.refreshObjectListAndSendUpdates(response);
+					return true;
+				}
+				else return this.sendEmptyScript(response);
+			}
+			
+			//	call to 'removeAttribute.js'
+			if ("/removeAttribute.js".equals(pathInfo)) {
+				Annotation[] selectedObjects = this.getSelectedObjects(request);
+				if ((selectedObjects.length != 0) && attributeToolProvider.removeAttribute(null, selectedObjects)) {
+					this.refreshObjectListAndSendUpdates(response);
+					return true;
+				}
+				else return this.sendEmptyScript(response);
+			}
+			
+			//	none of our business
+			return false;
+		}
+		private void refreshObjectListAndSendUpdates(HttpServletResponse response) throws IOException {
+			
+			//	prepare response
+			response.setContentType("text/plain");
+			response.setCharacterEncoding("UTF-8");
+			Writer out = new OutputStreamWriter(response.getOutputStream(), "UTF-8");
+			BufferedLineWriter blw = new BufferedLineWriter(out);
+			
+			//	do actual update and write script
+			this.refreshObjectListAndWriteUpdates("", blw);
+			
+			//	finish response
+			blw.flush();
+			out.flush();
+			blw.close();
+		}
+		private void refreshObjectListAndWriteUpdates(String prefix, BufferedLineWriter blw) throws IOException {
+			
+			//	re-apply filter and diff and switch objects
+			ObjectTray[] objectTrays = getObjects(this.objectFilter, this.wrappedDoc, this.objectTraysByID, true);
+			HashSet toRemove = new HashSet();
+			for (int o = 0; o < this.objectTrays.length; o++)
+				toRemove.add(this.objectTrays[o]);
+			HashSet toAdd = new HashSet();
+			for (int o = 0; o < objectTrays.length; o++) {
+				if (!toRemove.remove(objectTrays[o]))
+					toAdd.add(objectTrays[o]);
+			}
+			this.objectTrays = objectTrays;
+			
+			//	write update script
+			if (toRemove.size() != 0) {
+				blw.write(prefix + "removeListObjects([");
+				for (Iterator rloit = toRemove.iterator(); rloit.hasNext();) {
+					ObjectTray rlo = ((ObjectTray) rloit.next());
+					blw.write("'" + rlo.hashCode() + "'");
+					if (rloit.hasNext())
+						blw.write(",");
+				}
+				blw.writeLine("]);");
+			}
+			for (Iterator aloit = toAdd.iterator(); aloit.hasNext();)
+				this.writeAddListObjectCall(blw, ((ObjectTray) aloit.next()));
+			StringBuffer matchIDs = new StringBuffer();
+			StringBuffer nonMatchIDs = new StringBuffer();
+			for (int o = 0; o < this.objectTrays.length; o++) {
+				StringBuffer ids = (this.objectTrays[o].isMatch ? matchIDs : nonMatchIDs);
+				if (ids.length() != 0)
+					ids.append(",");
+				ids.append("'" + this.objectTrays[o].hashCode() + "'");
+			}
+			if (matchIDs.length() != 0)
+				blw.writeLine(prefix + "setMatch([" + matchIDs.toString() + "]);");
+			if (nonMatchIDs.length() != 0)
+				blw.writeLine(prefix + "setNonMatch([" + nonMatchIDs.toString() + "]);");
+			blw.writeLine(prefix + "finishObjectListUpdate();");
+		}
+		private void writeAddListObjectCall(BufferedLineWriter blw, ObjectTray ot) throws IOException {
+			blw.write("addListObject({");
+			blw.write("  \"type\": \"" + GoldenGateImagineWebUtils.escapeForJavaScript(ot.wrappedObject.getType()) + "\",");
+			blw.write("  \"start\": " + ot.wrappedObject.getStartIndex() + ",");
+			blw.write("  \"end\": " + ot.wrappedObject.getEndIndex() + ",");
+			blw.write("  \"value\": \"" + GoldenGateImagineWebUtils.escapeForJavaScript(ot.getObjectString()) + "\",");
+			blw.write("  \"id\": \"" + ot.hashCode() + "\",");
+			blw.write("  \"isMatch\": " + ot.isMatch + "");
+			blw.writeLine("});");
+		}
+		private Annotation getSelectedObject(String objectId) {
+			if (objectId == null)
+				return null;
+			for (int o = 0; o < this.objectTrays.length; o++) {
+				if (objectId.equals("" + this.objectTrays[o].hashCode()))
+					return this.objectTrays[o].wrappedObject;
+			}
+			return null;
+		}
+		private Annotation[] getSelectedObjects(HttpServletRequest request) {
+			Set selectedObjectIDs = this.readSelectedObjectIDs(request);
+			ArrayList selectedObjectList = new ArrayList(selectedObjectIDs.size());
+			for (int o = 0; o < this.objectTrays.length; o++) {
+				if (selectedObjectIDs.contains("" + this.objectTrays[o].hashCode()))
+					selectedObjectList.add(this.objectTrays[o].wrappedObject);
+			}
+			return ((Annotation[]) selectedObjectList.toArray(new Annotation[selectedObjectList.size()]));
+		}
+		private Set readSelectedObjectIDs(HttpServletRequest request) {
+			Set selectedObjectIDs = new HashSet();
+			String selectionStr = request.getParameter("selection");
+			if (selectionStr != null)
+				selectedObjectIDs.addAll(Arrays.asList(selectionStr.trim().split("\\s*\\;\\s*")));
+			return selectedObjectIDs;
+		}
+		private boolean sendEmptyScript(HttpServletResponse response) throws IOException {
+			response.setContentType("text/plain");
+			response.setCharacterEncoding("UTF-8");
+			response.getOutputStream().flush();
+			return true;
+		}
+		
+		public boolean isCloseRequest(HttpServletRequest request, String pathInfo) {
+			return ("/close".equals(pathInfo));
+		}
+		
+		private boolean sendAttributeEditorPage(HttpServletRequest request, HttpServletResponse response, Attributed target, final String targetId) throws IOException {
+			response.setContentType("text/html");
+			response.setCharacterEncoding("UTF-8");
+			Reader eaPageReader;
+			File eaPageFile = this.host.findFile("editAttributes.html");
+			if (eaPageFile == null)
+				eaPageReader = new BufferedReader(new InputStreamReader(dataProvider.getInputStream("editAttributes.html")));
+			else eaPageReader = new BufferedReader(new InputStreamReader(new FileInputStream(eaPageFile)));
+			GoldenGateImagineWebUtils.sendHtmlPage(eaPageReader, new AttributeEditorPageBuilder(this.host, request, response, target, targetId, (this.baseUrl + "editAttributes")) {
+				protected void writePageHeadExtensions() throws IOException {
+					super.writePageHeadExtensions();
+					
+					//	submit attribute form with mode
+					this.writeLine("<script type=\"text/javascript\">");
+					this.writeLine("function doSubmitDataAttributes(mode) {");
+					this.writeLine("  var attrForm = getById('attributeForm');");
+					this.writeLine("  if (mode == 'C') {");
+					this.writeLine("    while (attrForm.firstElementChild)");
+					this.writeLine("      removeElement(attrForm.firstElementChild);");
+					this.writeLine("    attrForm.submit();");
+					this.writeLine("    return;");
+					this.writeLine("  }");
+					this.writeLine("  var nextId = null;");
+					this.writeLine("  if (mode == 'P')");
+					this.writeLine("    nextId = window.opener.getPreviousObjectId('" + targetId + "');");
+					this.writeLine("  else if (mode == 'N')");
+					this.writeLine("    nextId = window.opener.getNextObjectId('" + targetId + "');");
+					this.writeLine("  if (nextId != null) {");
+					this.writeLine("    var nextIdField = newElement('input', null, null, null);");
+					this.writeLine("    nextIdField.type = 'hidden';");
+					this.writeLine("    nextIdField.name = 'nextId';");
+					this.writeLine("    nextIdField.value = nextId;");
+					this.writeLine("    attrForm.appendChild(nextIdField);");
+					this.writeLine("  }");
+					this.writeLine("  submitDataAttributes();");
+					this.writeLine("}");
+					this.writeLine("</script>");
+				}
+				protected Attributed[] getContext(Attributed target) {
+					Attributed[] context = new Attributed[objectTrays.length];
+					for (int o = 0; o < objectTrays.length; o++)
+						context[o] = objectTrays[o].wrappedObject;
+					return context;
+				}
+				protected String getTitle(Attributed target) {
+					return ("Edit " + layoutObjectName + " Attributes");
+				}
+				protected SubmitButton[] getButtons() {
+					SubmitButton[] sbs = {
+						new SubmitButton("Previous", "doSubmitDataAttributes('P');"),
+						new SubmitButton("OK", "doSubmitDataAttributes('O');"),
+						new SubmitButton("Cancel", "doSubmitDataAttributes('C');"),
+						new SubmitButton("Next", "doSubmitDataAttributes('N');"),
+						new SubmitButton("Reset", "window.location.reload();")
+					};
+					return sbs;
+				}
+			});
+			eaPageReader.close();
+			return true;
+		}
+		private void sendAttributeEditorClosePage(HttpServletResponse response) throws IOException {
+			
+			//	prepare response
+			response.setContentType("text/html");
+			response.setCharacterEncoding("UTF-8");
+			Writer out = new OutputStreamWriter(response.getOutputStream(), "UTF-8");
+			BufferedLineWriter blw = new BufferedLineWriter(out);
+			blw.writeLine("<html><body>");
+			blw.writeLine("<script type=\"text/javascript\">");
+			
+			//	do actual update and write script
+			blw.writeLine("function doExecuteCalls() {");
+			if (this.editingAttributesDirty)
+				this.refreshObjectListAndWriteUpdates("window.opener.", blw);
+			this.editingAttributesDirty = false;
+			blw.writeLine("}");
+			
+			//	execute argument calls and close status window (we need to wait until pop-in parent has set window.opener and replaced close() function)
+			blw.writeLine("function executeCalls() {");
+			blw.writeLine("  if (window.opener && (window.opener != null)) {");
+			blw.writeLine("    doExecuteCalls();");
+			blw.writeLine("    window.close();");
+			blw.writeLine("  }");
+			blw.writeLine("  else window.setTimeout('executeCalls()', 100);");
+			blw.writeLine("}");
+			blw.writeLine("window.setTimeout('executeCalls()', 100);");
+			
+			//	finish response
+			blw.writeLine("</script>");
+			blw.writeLine("</body></html>");
+			blw.flush();
+			out.flush();
+			blw.close();
+		}
+	}
+	
 	/**
 	 * Open a list of Image Markup objects. Depending on the argument normalization
 	 * level, the listed objects are regions or annotations. If the argument
@@ -1018,8 +2074,6 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 	private StringVector customFilterHistory = new StringVector();
 	private HashMap customFiltersByName = new HashMap();
 	private int customFilterHistorySize = 10;
-	
-	//	TODO give value as 'head ... tail' instead of 'head ...'
 	
 	private class ObjectListDialog extends DialogPanel {
 		
@@ -1178,7 +2232,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 					
 					//	path validation error
 					else {
-						JOptionPane.showMessageDialog(this, ("The expression is not valid:\n" + error), "GPath Validation", JOptionPane.ERROR_MESSAGE);
+						DialogFactory.alert(("The expression is not valid:\n" + error), "GPath Validation", JOptionPane.ERROR_MESSAGE);
 						this.filterSelector.requestFocusInWindow();
 					}
 				}
@@ -1251,22 +2305,20 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 					}
 				});
 				
-				this.refreshAnnotations();
+				this.refreshObjectList();
 				
 				JScrollPane annotationTableBox = new JScrollPane(this.objectTable);
 				
 				this.showMatches.addItemListener(new ItemListener() {
 					public void itemStateChanged(ItemEvent ie) {
-						if (showMatches.isSelected()) {
-							refreshAnnotations();
-						}
+						if (showMatches.isSelected())
+							refreshObjectList();
 					}
 				});
 				this.highlightMatches.addItemListener(new ItemListener() {
 					public void itemStateChanged(ItemEvent ie) {
-						if (highlightMatches.isSelected()) {
-							refreshAnnotations();
-						}
+						if (highlightMatches.isSelected())
+							refreshObjectList();
 					}
 				});
 				
@@ -1314,7 +2366,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 							if (annotations[a] != mAnnotation)
 								wrappedDoc.removeAnnotation(annotations[a]);
 						}
-						refreshAnnotations();
+						refreshObjectList();
 					}
 				});
 				
@@ -1333,7 +2385,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 							return;
 						for (int a = 0; a < annotations.length; a++)
 							annotations[a].changeTypeTo(newType);
-						refreshAnnotations();
+						refreshObjectList();
 						if (showingLayoutObjects)
 							target.setRegionsPainted(newType, true);
 						else target.setAnnotationsPainted(newType, true);
@@ -1349,7 +2401,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 						if (annotations.length != 0) {
 							for (int a = 0; a < annotations.length; a++)
 								wrappedDoc.removeAnnotation(annotations[a]);
-							refreshAnnotations();
+							refreshObjectList();
 						}
 					}
 				});
@@ -1363,7 +2415,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 						if (annotations.length != 0) {
 							for (int a = 0; a < annotations.length; a++)
 								wrappedDoc.removeTokens(annotations[a]);
-							refreshAnnotations();
+							refreshObjectList();
 						}
 					}
 				});
@@ -1373,17 +2425,9 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				this.editAttributesButton.setBorder(BorderFactory.createRaisedBevelBorder());
 				this.editAttributesButton.addActionListener(new ActionListener() {
 					public void actionPerformed(ActionEvent ae) {
-//						Annotation[] annotations = getSelectedObjects();
-//						if (annotations.length == 1)
-//							editObjectAttributes(annotations[0]);
 						int[] selectedRows = objectTable.getSelectedRows();
 						if (selectedRows.length == 1)
 							editObjectAttributes(selectedRows[0]);
-						/* TODO
-						 * - facilitate Previous-ing and Next-ing through object list with attributes dialog
-						 * - 'Previous' and 'Next' both imply 'OK'
-						 * - use current sort order
-						 */
 					}
 				});
 				
@@ -1492,66 +2536,45 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			
 			void setFilter(AnnotationFilter filter) {
 				this.filter = filter;
-				this.refreshAnnotations();
+				this.refreshObjectList();
 			}
 			
-			void refreshAnnotations() {
+			void refreshObjectList() {
 				
 				//	apply filter
-				MutableAnnotation[] annotations = ((this.filter == null) ? new MutableAnnotation[0] : this.filter.getMutableMatches(this.wrappedDoc));
-				this.objectTrays = new ObjectTray[annotations.length];
+				this.objectTrays = getObjects(this.filter, this.wrappedDoc, this.objectTraysByID, this.highlightMatches.isSelected());
 				
 				//	set up statistics
-				String type = ((annotations.length == 0) ? "" : annotations[0].getType());
-				Set matchIDs = new HashSet();
+				String matchObjectType = ((this.objectTrays.length == 0) ? "" : this.objectTrays[0].wrappedObject.getType());
+				this.matchObjectCount = 0;
 				
 				//	check matching annotations
-				for (int a = 0; a < annotations.length; a++) {
-					if (!type.equals(annotations[a].getType()))
-						type = "";
-					matchIDs.add(annotations[a].getAnnotationID());
-					if (this.objectTraysByID.containsKey(annotations[a].getAnnotationID()))
-						this.objectTrays[a] = ((ObjectTray) this.objectTraysByID.get(annotations[a].getAnnotationID()));
-					else {
-						this.objectTrays[a] = new ObjectTray(annotations[a]);
-						this.objectTraysByID.put(annotations[a].getAnnotationID(), this.objectTrays[a]);
-					}
-					this.objectTrays[a].isMatch = true;
+				for (int o = 0; o < this.objectTrays.length; o++) {
+					if (!matchObjectType.equals(this.objectTrays[0].wrappedObject.getType()))
+						matchObjectType = "";
+					if (this.objectTrays[0].isMatch)
+						this.matchObjectCount++;
 				}
 				
 				//	more than one type
-				if (type.length() == 0) {
+				if (matchObjectType.length() == 0) {
 					this.singleTypeMatch = false;
-					this.matchObjectCount = annotations.length;
 					this.showMatches.setSelected(true);
 					this.showMatches.setEnabled(false);
 					this.highlightMatches.setEnabled(false);
-					setTitle(originalTitle + " - " + annotations.length + " " + this.layoutObjectName + "s");
+					setTitle(originalTitle + " - " + this.objectTrays.length + " " + this.layoutObjectName + "s");
 				}
 				
 				//	all of same type, do match highlight display if required
 				else {
 					this.singleTypeMatch = true;
-					this.matchObjectCount = matchIDs.size();
 					this.showMatches.setEnabled(true);
 					this.highlightMatches.setEnabled(true);
 					
 					//	highlight matches
-					if (this.highlightMatches.isSelected()) {
-						annotations = this.wrappedDoc.getMutableAnnotations(type);
-						this.objectTrays = new ObjectTray[annotations.length];
-						for (int a = 0; a < annotations.length; a++) {
-							if (this.objectTraysByID.containsKey(annotations[a].getAnnotationID()))
-								this.objectTrays[a] = ((ObjectTray) this.objectTraysByID.get(annotations[a].getAnnotationID()));
-							else {
-								this.objectTrays[a] = new ObjectTray(annotations[a]);
-								this.objectTraysByID.put(annotations[a].getAnnotationID(), this.objectTrays[a]);
-							}
-							this.objectTrays[a].isMatch = matchIDs.contains(annotations[a].getAnnotationID());
-						}
-						setTitle(originalTitle + " - " + annotations.length + " " + this.layoutObjectName + "s, " + matchIDs.size() + " matches");
-					}
-					else setTitle(originalTitle + " - " + annotations.length + " " + this.layoutObjectName + "s");
+					if (this.highlightMatches.isSelected())
+						setTitle(originalTitle + " - " + this.objectTrays.length + " " + this.layoutObjectName + "s, " + this.matchObjectCount + " matches");
+					else setTitle(originalTitle + " - " + this.objectTrays.length + " " + this.layoutObjectName + "s");
 				}
 				
 				this.objectTable.setModel(new ObjectListTableModel(this.objectTrays));
@@ -1563,6 +2586,75 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				this.sortDescending = false;
 				this.refreshDisplay();
 			}
+//			
+//			void refreshObjectList() {
+//				
+//				//	apply filter
+//				MutableAnnotation[] objects = ((this.filter == null) ? new MutableAnnotation[0] : this.filter.getMutableMatches(this.wrappedDoc));
+//				this.objectTrays = new ObjectTray[objects.length];
+//				
+//				//	set up statistics
+//				String type = ((objects.length == 0) ? "" : objects[0].getType());
+//				Set matchIDs = new HashSet();
+//				
+//				//	check matching annotations
+//				for (int a = 0; a < objects.length; a++) {
+//					if (!type.equals(objects[a].getType()))
+//						type = "";
+//					matchIDs.add(objects[a].getAnnotationID());
+//					if (this.objectTraysByID.containsKey(objects[a].getAnnotationID()))
+//						this.objectTrays[a] = ((ObjectTray) this.objectTraysByID.get(objects[a].getAnnotationID()));
+//					else {
+//						this.objectTrays[a] = new ObjectTray(objects[a]);
+//						this.objectTraysByID.put(objects[a].getAnnotationID(), this.objectTrays[a]);
+//					}
+//					this.objectTrays[a].isMatch = true;
+//				}
+//				
+//				//	more than one type
+//				if (type.length() == 0) {
+//					this.singleTypeMatch = false;
+//					this.matchObjectCount = objects.length;
+//					this.showMatches.setSelected(true);
+//					this.showMatches.setEnabled(false);
+//					this.highlightMatches.setEnabled(false);
+//					setTitle(originalTitle + " - " + objects.length + " " + this.layoutObjectName + "s");
+//				}
+//				
+//				//	all of same type, do match highlight display if required
+//				else {
+//					this.singleTypeMatch = true;
+//					this.matchObjectCount = matchIDs.size();
+//					this.showMatches.setEnabled(true);
+//					this.highlightMatches.setEnabled(true);
+//					
+//					//	highlight matches
+//					if (this.highlightMatches.isSelected()) {
+//						objects = this.wrappedDoc.getMutableAnnotations(type);
+//						this.objectTrays = new ObjectTray[objects.length];
+//						for (int a = 0; a < objects.length; a++) {
+//							if (this.objectTraysByID.containsKey(objects[a].getAnnotationID()))
+//								this.objectTrays[a] = ((ObjectTray) this.objectTraysByID.get(objects[a].getAnnotationID()));
+//							else {
+//								this.objectTrays[a] = new ObjectTray(objects[a]);
+//								this.objectTraysByID.put(objects[a].getAnnotationID(), this.objectTrays[a]);
+//							}
+//							this.objectTrays[a].isMatch = matchIDs.contains(objects[a].getAnnotationID());
+//						}
+//						setTitle(originalTitle + " - " + objects.length + " " + this.layoutObjectName + "s, " + matchIDs.size() + " matches");
+//					}
+//					else setTitle(originalTitle + " - " + objects.length + " " + this.layoutObjectName + "s");
+//				}
+//				
+//				this.objectTable.setModel(new ObjectListTableModel(this.objectTrays));
+//				this.objectTable.getColumnModel().getColumn(0).setMaxWidth(120);
+//				this.objectTable.getColumnModel().getColumn(1).setMaxWidth(50);
+//				this.objectTable.getColumnModel().getColumn(2).setMaxWidth(50);
+//				
+//				this.sortColumn = -1;
+//				this.sortDescending = false;
+//				this.refreshDisplay();
+//			}
 			
 			void sortObjects() {
 				Arrays.sort(this.objectTrays, new Comparator() {
@@ -1616,7 +2708,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				
 				//	finish
 				if (dirty)
-					refreshAnnotations();
+					refreshObjectList();
 			}
 			
 			private class AttributeEditorDialog extends DialogPanel {
@@ -1712,7 +2804,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				if (annotations.length == 0)
 					return;
 				if (attributeToolProvider.renameAttribute(null, annotations))
-					refreshAnnotations();
+					refreshObjectList();
 			}
 			
 			void modifyObjectAttribute() {
@@ -1720,7 +2812,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				if (annotations.length == 0)
 					return;
 				if (attributeToolProvider.modifyAttribute(null, annotations))
-					refreshAnnotations();
+					refreshObjectList();
 			}
 			
 			void removeObjectAttribute() {
@@ -1728,7 +2820,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				if (annotations.length == 0)
 					return;
 				if (attributeToolProvider.removeAttribute(null, annotations))
-					refreshAnnotations();
+					refreshObjectList();
 			}
 			
 			Annotation[] getSelectedObjects() {
@@ -1749,21 +2841,21 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				}
 			}
 			
-			private class ObjectTray {
-				final MutableAnnotation wrappedObject;
-				boolean isMatch = false;
-				ObjectTray(MutableAnnotation annotation) {
-					this.wrappedObject = annotation;
-				}
-			}
-			
+//			private class ObjectTray {
+//				final MutableAnnotation wrappedObject;
+//				boolean isMatch = false;
+//				ObjectTray(MutableAnnotation annotation) {
+//					this.wrappedObject = annotation;
+//				}
+//			}
+//			
 			private class ObjectListTableModel implements TableModel {
 				private ObjectTray[] objectTrays;
 				private boolean isMatchesOnly = true;
 				ObjectListTableModel(ObjectTray[] annotations) {
 					this.objectTrays = annotations;
-					for (int a = 0; a < this.objectTrays.length; a++)
-						this.isMatchesOnly = (this.isMatchesOnly && this.objectTrays[a].isMatch);
+					for (int o = 0; o < this.objectTrays.length; o++)
+						this.isMatchesOnly = (this.isMatchesOnly && this.objectTrays[o].isMatch);
 				}
 				
 				public int getColumnCount() {
@@ -1785,21 +2877,20 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 					return this.objectTrays.length;
 				}
 				public Object getValueAt(int rowIndex, int columnIndex) {
-					Annotation wo = this.objectTrays[rowIndex].wrappedObject;
 					if (this.isMatchesOnly || !this.objectTrays[rowIndex].isMatch) {
-						if (columnIndex == 0) return wo.getType();
-						if (columnIndex == 1) return "" + wo.getStartIndex();
-						if (columnIndex == 2) return "" + wo.getEndIndex();
-						if (columnIndex == 3) return wo.getValue();
+						if (columnIndex == 0) return this.objectTrays[rowIndex].wrappedObject.getType();
+						if (columnIndex == 1) return "" + this.objectTrays[rowIndex].wrappedObject.getStartIndex();
+						if (columnIndex == 2) return "" + this.objectTrays[rowIndex].wrappedObject.getEndIndex();
+						if (columnIndex == 3) return this.objectTrays[rowIndex].getObjectString();
 						return null;
 					}
 					else {
 						String value = null;
-						if (columnIndex == 0) value = wo.getType();
-						if (columnIndex == 1) value = "" + wo.getStartIndex();
-						if (columnIndex == 2) value = "" + wo.getEndIndex();
-						if (columnIndex == 3) value = wo.getValue();
-						return ((value == null) ? null : ("<HTML><B>" + value + "</B></HTML>"));
+						if (columnIndex == 0) value = this.objectTrays[rowIndex].wrappedObject.getType();
+						if (columnIndex == 1) value = "" + this.objectTrays[rowIndex].wrappedObject.getStartIndex();
+						if (columnIndex == 2) value = "" + this.objectTrays[rowIndex].wrappedObject.getEndIndex();
+						if (columnIndex == 3) value = this.objectTrays[rowIndex].getObjectString();
+						return ((value == null) ? null : ("<HTML><B>" + AnnotationUtils.escapeForXml(value) + "</B></HTML>"));
 					}
 				}
 				
@@ -1848,6 +2939,128 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 					return ("<HTML>" + lines.concatStrings("<BR>") + "</HTML>");
 				}
 			}
+		}
+	}
+	
+	private static ObjectTray[] getObjects(AnnotationFilter filter, MutableAnnotation wrappedDoc, HashMap objectTraysByID, boolean includeTypeMatches) {
+		
+		//	apply filter
+		MutableAnnotation[] objects = ((filter == null) ? new MutableAnnotation[0] : filter.getMutableMatches(wrappedDoc));
+		ObjectTray[] objectTrays = new ObjectTray[objects.length];
+		if (objectTraysByID == null)
+			objectTraysByID = new HashMap();
+		
+		//	set up statistics
+		String type = ((objects.length == 0) ? "" : objects[0].getType());
+		Set matchIDs = new HashSet();
+		
+		//	check matching annotations
+		for (int o = 0; o < objects.length; o++) {
+			if (!type.equals(objects[o].getType()))
+				type = "";
+			matchIDs.add(objects[o].getAnnotationID());
+			if (objectTraysByID.containsKey(objects[o].getAnnotationID()))
+				objectTrays[o] = ((ObjectTray) objectTraysByID.get(objects[o].getAnnotationID()));
+			else {
+				objectTrays[o] = new ObjectTray(objects[o]);
+				objectTraysByID.put(objects[o].getAnnotationID(), objectTrays[o]);
+			}
+			objectTrays[o].isMatch = true;
+		}
+		
+		//	include type matches if requested
+		if (includeTypeMatches) {
+			objects = wrappedDoc.getMutableAnnotations(type);
+			objectTrays = new ObjectTray[objects.length];
+			for (int o = 0; o < objects.length; o++) {
+				if (objectTraysByID.containsKey(objects[o].getAnnotationID()))
+					objectTrays[o] = ((ObjectTray) objectTraysByID.get(objects[o].getAnnotationID()));
+				else {
+					objectTrays[o] = new ObjectTray(objects[o]);
+					objectTraysByID.put(objects[o].getAnnotationID(), objectTrays[o]);
+				}
+				objectTrays[o].isMatch = matchIDs.contains(objects[o].getAnnotationID());
+			}
+		}
+		
+		//	finally ...
+		return objectTrays;
+	}
+	
+	private static class ObjectTray {
+		final MutableAnnotation wrappedObject;
+		boolean isMatch = false;
+		ObjectTray(MutableAnnotation annotation) {
+			this.wrappedObject = annotation;
+		}
+		private static final int objectStringHalfMinTokens = 3;
+		private static final int objectStringHalfMinChars = 20;
+		private String objectString = null;
+		String getObjectString() {
+			if (this.objectString != null)
+				return this.objectString;
+			
+			//	we only have a few tokens, concatenate them right away
+			if ((this.wrappedObject.size() <= (objectStringHalfMinTokens * 2)) || (this.wrappedObject.length() <= (objectStringHalfMinChars * 2))) {
+				this.objectString = TokenSequenceUtils.concatTokens(this.wrappedObject, false, true);
+				System.out.println("(" + this.wrappedObject.size() + " <= 6) or (" + this.wrappedObject.length() + " <= 40)");
+				System.out.println(" ==> " + this.objectString);
+				return this.objectString;
+			}
+			
+			//	get first 2 or 3 tokens or 20 characters, whichever is exceeded last
+			StringBuffer osHead = new StringBuffer(this.wrappedObject.firstValue());
+			int osHeadEndIndex = 1;
+			int osHeadEndOffset = this.wrappedObject.firstToken().getEndOffset();
+			for (int t = 1; t < this.wrappedObject.size(); t++) {
+				if (this.wrappedObject.getWhitespaceAfter(t - 1).length() != 0)
+					osHead.append(' ');
+				osHead.append(this.wrappedObject.valueAt(t));
+				osHeadEndIndex = (t + 1);
+				osHeadEndOffset = this.wrappedObject.tokenAt(t).getEndOffset();
+				if ((osHeadEndIndex >= objectStringHalfMinTokens) && (osHead.length() >= objectStringHalfMinChars)) {
+					break;
+				}
+			}
+			
+			//	get last 2 or 3 tokens or 20 characters, whichever is exceeded last
+			StringBuffer osTail = new StringBuffer(this.wrappedObject.lastValue());
+			int osTailStartIndex = (this.wrappedObject.size() - 1);
+			int osTailStartOffset = this.wrappedObject.lastToken().getStartOffset();
+			for (int t = (this.wrappedObject.size() - 1 - 1); t >= 0; t--) {
+				if ((t < osHeadEndIndex) || (this.wrappedObject.tokenAt(t).getStartOffset() < osHeadEndOffset))
+					break; // stop mid-string collisions before they even happen
+				if (this.wrappedObject.getWhitespaceAfter(t).length() != 0)
+					osTail.insert(0, ' ');
+				osTail.insert(0, this.wrappedObject.valueAt(t));
+				osTailStartIndex = t;
+				osTailStartOffset = this.wrappedObject.tokenAt(t).getStartOffset();
+				if (((this.wrappedObject.size() - osTailStartIndex) >= objectStringHalfMinTokens) && (osTail.length() >= objectStringHalfMinChars))
+					break;
+			}
+			
+			//	get middle of object string ...
+			String osMiddle;
+			
+			//	if we meet in the middle, we have to add a space at most
+			if (osHeadEndIndex == osTailStartIndex)
+				osMiddle = ((this.wrappedObject.getWhitespaceAfter(osHeadEndIndex - 1).length() == 0) ? "" : " ");
+			
+			//	add remainder in the middle if not longer than ' ... '
+			else if ((osTailStartOffset - osHeadEndOffset) <= " ... ".length()) {
+				osMiddle = (
+						((this.wrappedObject.getWhitespaceAfter(osHeadEndIndex - 1).length() == 0) ? "" : " ") +
+						TokenSequenceUtils.concatTokens(this.wrappedObject, osHeadEndIndex, (osTailStartIndex - osHeadEndIndex), false, true) +
+						((this.wrappedObject.getWhitespaceAfter(osTailStartIndex - 1).length() == 0) ? "" : " ")
+					);
+			}
+			
+			//	add ' ... ' ellipsis sign in the middle otherwise
+			else osMiddle = " ... ";
+			
+			//	finally ...
+			this.objectString = (osHead.toString() + osMiddle + osTail.toString());
+			return this.objectString;
 		}
 	}
 }

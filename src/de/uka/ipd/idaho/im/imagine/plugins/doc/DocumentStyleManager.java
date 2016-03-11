@@ -2025,16 +2025,23 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			
 			//	get font sizes and perform test
 			try {
-				boolean anchorMatch = DocumentStyleProvider.anchorMatches(this.testDoc, 
-						area, 
+				ArrayList matchLog = new ArrayList();
+				boolean anchorMatch = DocumentStyleProvider.anchorMatches(this.testDoc,
+						area,
 						Integer.parseInt(anchorParamList.getSetting("minFontSize", anchorParamList.getSetting("fontSize", "0"))),
 						Integer.parseInt(anchorParamList.getSetting("maxFontSize", anchorParamList.getSetting("fontSize", "72"))),
 						"true".equals(anchorParamList.getSetting("isBold")),
 						"true".equals(anchorParamList.getSetting("isItalics")),
 						"true".equals(anchorParamList.getSetting("isAllCaps")),
-						pattern);
+						pattern,
+						matchLog);
 				String anchorName = ptn.prefix.substring(ptn.prefix.lastIndexOf('.') + ".".length());
-				JOptionPane.showMessageDialog(this, ("This document " + (anchorMatch ? " matches " : " does not match ") + " anchor '" + anchorName + "'"), "Anchor Match Test", (anchorMatch ? JOptionPane.PLAIN_MESSAGE : JOptionPane.ERROR_MESSAGE));
+				StringBuffer anchorMatchLog = new StringBuffer();
+				for (int l = 0; l < matchLog.size(); l++) {
+					anchorMatchLog.append("\r\n");
+					anchorMatchLog.append((String) matchLog.get(l));
+				}
+				JOptionPane.showMessageDialog(this, ("This document " + (anchorMatch ? " matches " : " does not match ") + " anchor '" + anchorName + "':" + anchorMatchLog.toString()), "Anchor Match Test", (anchorMatch ? JOptionPane.PLAIN_MESSAGE : JOptionPane.ERROR_MESSAGE));
 			} catch (NumberFormatException nfe) {}
 		}
 		
