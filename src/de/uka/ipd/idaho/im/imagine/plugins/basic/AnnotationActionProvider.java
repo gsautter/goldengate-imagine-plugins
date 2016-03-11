@@ -419,45 +419,45 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 				//	go annotation by annotation ...
 				for (int fa = minFirstAnnotIndex; fa < annotList.size(); fa++) {
 					ImAnnotation fAnnot = ((ImAnnotation) annotList.get(fa));
-//					System.out.println("Checking nesting on '" + fAnnot.getType() + "' " + getAnnotationValue(fAnnot));
+					if (DEBUG_CHECK_NESTING) System.out.println("Checking nesting on '" + fAnnot.getType() + "' " + getAnnotationValue(fAnnot));
 					
 					//	... looking for the next conflicts
 					for (int sa = (fa+1); sa < annotList.size(); sa++) {
 						ImAnnotation sAnnot = ((ImAnnotation) annotList.get(sa));
-//						System.out.println(" - comparing to '" + sAnnot.getType() + "' " + getAnnotationValue(sAnnot));
+						if (DEBUG_CHECK_NESTING) System.out.println(" - comparing to '" + sAnnot.getType() + "' " + getAnnotationValue(sAnnot));
 						
 						//	this one starts after first annotation ends, we're done
 						if (ImUtils.textStreamOrder.compare(fAnnot.getLastWord(), sAnnot.getFirstWord()) < 0) {
-//							System.out.println(" ==> start after end, we're done");
+							if (DEBUG_CHECK_NESTING) System.out.println(" ==> start after end, we're done");
 							break;
 						}
 						
 						//	this one ends before or where first annotation ends, not a nesting problem
 						if (ImUtils.textStreamOrder.compare(fAnnot.getLastWord(), sAnnot.getLastWord()) >= 0) {
-//							System.out.println(" ==> completely inside, we're OK");
+							if (DEBUG_CHECK_NESTING) System.out.println(" ==> completely inside, we're OK");
 							continue;
 						}
 						
 						//	get and perform cleanup operation
 						String operation = annotTypeOperations.getProperty((fAnnot.getType() + ">" + sAnnot.getType()), CUT_SECOND_TO_START_OPERATION);
-//						System.out.println(" ==> conflict, operation is " + operation + " for " + (fAnnot.getType() + ">" + sAnnot.getType()));
+						if (DEBUG_CHECK_NESTING) System.out.println(" ==> conflict, operation is " + operation + " for " + (fAnnot.getType() + ">" + sAnnot.getType()));
 						if (CUT_FIRST_TO_START_OPERATION.equals(operation)) {
 							fAnnot.setLastWord(sAnnot.getFirstWord().getPreviousWord());
-//							System.out.println("   - cut to " + getAnnotationValue(fAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - cut to " + getAnnotationValue(fAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
 						}
 						else if (CUT_FIRST_TO_END_OPERATION.equals(operation)) {
 							fAnnot.setFirstWord(sAnnot.getFirstWord());
-//							System.out.println("   - cut to " + getAnnotationValue(fAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - cut to " + getAnnotationValue(fAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
 						}
 						else if (EXTEND_FIRST_OPERATION.equals(operation)) {
 							fAnnot.setLastWord(sAnnot.getLastWord());
-//							System.out.println("   - extended to " + getAnnotationValue(fAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - extended to " + getAnnotationValue(fAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
@@ -466,37 +466,37 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 							ImAnnotation splitAnnot = doc.addAnnotation(fAnnot.getFirstWord(), sAnnot.getFirstWord().getPreviousWord(), fAnnot.getType());
 							splitAnnot.copyAttributes(fAnnot);
 							annotList.add(splitAnnot);
-//							System.out.println("   - first part of split is " + getAnnotationValue(splitAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - first part of split is " + getAnnotationValue(splitAnnot));
 							fAnnot.setFirstWord(sAnnot.getFirstWord());
-//							System.out.println("   - second part of split is " + getAnnotationValue(fAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - second part of split is " + getAnnotationValue(fAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
 						}
 						else if (REMOVE_FIRST_OPERATION.equals(operation)) {
 							doc.removeAnnotation(fAnnot);
-//							System.out.println("   - removed");
+							if (DEBUG_CHECK_NESTING) System.out.println("   - removed");
 							annotList.remove(fa--);
 							annotsChanged = true;
 							sa = annotList.size(); // no use testing against this one any further
 						}
 						else if (CUT_SECOND_TO_START_OPERATION.equals(operation)) {
 							sAnnot.setLastWord(fAnnot.getLastWord());
-//							System.out.println("   - cut to " + getAnnotationValue(sAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - cut to " + getAnnotationValue(sAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
 						}
 						else if (CUT_SECOND_TO_END_OPERATION.equals(operation)) {
 							sAnnot.setFirstWord(fAnnot.getLastWord().getNextWord());
-//							System.out.println("   - cut to " + getAnnotationValue(sAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - cut to " + getAnnotationValue(sAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
 						}
 						else if (EXTEND_SECOND_OPERATION.equals(operation)) {
 							sAnnot.setFirstWord(fAnnot.getFirstWord());
-//							System.out.println("   - extended to " + getAnnotationValue(sAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - extended to " + getAnnotationValue(sAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
@@ -505,16 +505,16 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 							ImAnnotation splitAnnot = doc.addAnnotation(sAnnot.getFirstWord(), fAnnot.getLastWord(), sAnnot.getType());
 							splitAnnot.copyAttributes(sAnnot);
 							annotList.add(splitAnnot);
-//							System.out.println("   - first part of split is " + getAnnotationValue(splitAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - first part of split is " + getAnnotationValue(splitAnnot));
 							sAnnot.setFirstWord(fAnnot.getLastWord().getNextWord());
-//							System.out.println("   - second part of split is " + getAnnotationValue(sAnnot));
+							if (DEBUG_CHECK_NESTING) System.out.println("   - second part of split is " + getAnnotationValue(sAnnot));
 							annotsChanged = true;
 							fa = annotList.size(); // start all over, sort order likely broken
 							sa = annotList.size();
 						}
 						else if (REMOVE_SECOND_OPERATION.equals(operation)) {
 							doc.removeAnnotation(sAnnot);
-//							System.out.println("   - removed");
+							if (DEBUG_CHECK_NESTING) System.out.println("   - removed");
 							annotList.remove(sa--);
 							annotsChanged = true;
 						}
@@ -528,52 +528,54 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			while (annotsChanged);
 		}
 	}
-//	
-//	private static String getAnnotationValue(ImAnnotation annot) {
-//		
-//		//	count out annotation length
-//		int annotChars = 0;
-//		for (ImWord imw = annot.getFirstWord(); imw != null; imw = imw.getNextWord()) {
-//			annotChars += imw.getString().length();
-//			if (imw == annot.getLastWord())
-//				break;
-//		}
-//		
-//		//	this one's short enough
-//		if (annotChars <= 40)
-//			return ImUtils.getString(annot.getFirstWord(), annot.getLastWord(), true);
-//		
-//		//	get end of head
-//		ImWord headEnd = annot.getFirstWord();
-//		int headChars = 0;
-//		for (; headEnd != null; headEnd = headEnd.getNextWord()) {
-//			headChars += headEnd.getString().length();
-//			if (headChars >= 20)
-//				break;
-//			if (headEnd == annot.getLastWord())
-//				break;
-//		}
-//		
-//		//	get start of tail
-//		ImWord tailStart = annot.getLastWord();
-//		int tailChars = 0;
-//		for (; tailStart != null; tailStart = tailStart.getPreviousWord()) {
-//			tailChars += tailStart.getString().length();
-//			if (tailChars >= 20)
-//				break;
-//			if (tailStart == annot.getFirstWord())
-//				break;
-//			if (tailStart == headEnd)
-//				break;
-//		}
-//		
-//		//	met in the middle, use whole string
-//		if ((headEnd == tailStart) || (headEnd.getNextWord() == tailStart) || (headEnd.getNextWord() == tailStart.getPreviousWord()))
-//			return ImUtils.getString(annot.getFirstWord(), annot.getLastWord(), true);
-//		
-//		//	give head and tail only if annotation too long
-//		else return (ImUtils.getString(annot.getFirstWord(), headEnd, true) + " ... " + ImUtils.getString(tailStart, annot.getLastWord(), true));
-//	}
+	
+	private static final boolean DEBUG_CHECK_NESTING = true;
+	
+	private static String getAnnotationValue(ImAnnotation annot) {
+		
+		//	count out annotation length
+		int annotChars = 0;
+		for (ImWord imw = annot.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+			annotChars += imw.getString().length();
+			if (imw == annot.getLastWord())
+				break;
+		}
+		
+		//	this one's short enough
+		if (annotChars <= 40)
+			return ImUtils.getString(annot.getFirstWord(), annot.getLastWord(), true);
+		
+		//	get end of head
+		ImWord headEnd = annot.getFirstWord();
+		int headChars = 0;
+		for (; headEnd != null; headEnd = headEnd.getNextWord()) {
+			headChars += headEnd.getString().length();
+			if (headChars >= 20)
+				break;
+			if (headEnd == annot.getLastWord())
+				break;
+		}
+		
+		//	get start of tail
+		ImWord tailStart = annot.getLastWord();
+		int tailChars = 0;
+		for (; tailStart != null; tailStart = tailStart.getPreviousWord()) {
+			tailChars += tailStart.getString().length();
+			if (tailChars >= 20)
+				break;
+			if (tailStart == annot.getFirstWord())
+				break;
+			if (tailStart == headEnd)
+				break;
+		}
+		
+		//	met in the middle, use whole string
+		if ((headEnd == tailStart) || (headEnd.getNextWord() == tailStart) || (headEnd.getNextWord() == tailStart.getPreviousWord()))
+			return ImUtils.getString(annot.getFirstWord(), annot.getLastWord(), true);
+		
+		//	give head and tail only if annotation too long
+		else return (ImUtils.getString(annot.getFirstWord(), headEnd, true) + " ... " + ImUtils.getString(tailStart, annot.getLastWord(), true));
+	}
 	
 	private static final Comparator annotationOrder = new Comparator() {
 		public int compare(Object obj1, Object obj2) {
