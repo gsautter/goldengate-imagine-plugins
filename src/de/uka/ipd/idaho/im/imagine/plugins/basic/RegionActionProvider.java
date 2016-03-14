@@ -1348,15 +1348,13 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		//	make sure block lines come top-down
 		Arrays.sort(blockLines, ImUtils.topDownOrder);
 		
-		//	index paragraphs and their start lines
+		//	index paragraphs start lines
 		HashSet paragraphStartLineBounds = new HashSet();
-		HashMap paragraphsByBounds = new HashMap();
 		for (int p = 0; p < blockParagraphs.length; p++) {
 			ImRegion[] paragraphLines = blockParagraphs[p].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
 			if (paragraphLines.length == 0)
 				continue;
 			Arrays.sort(paragraphLines, ImUtils.topDownOrder);
-			paragraphsByBounds.put(blockParagraphs[p].bounds, blockParagraphs[p]);
 			paragraphStartLineBounds.add(paragraphLines[0].bounds);
 		}
 		
@@ -1393,6 +1391,17 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		pslPanel.add(new JLabel("Paragraph start lines are "), BorderLayout.WEST);
 		pslPanel.add(pslButtonPanel, BorderLayout.CENTER);
 		
+		final JCheckBox ilhBold = new JCheckBox("bold", false); // at least 2mm difference
+		final JCheckBox ilhItalics = new JCheckBox("italics", false); // at least 2mm difference
+		final JCheckBox ilhAllCaps = new JCheckBox("all-caps", false);
+		JPanel ilhButtonPanel = new JPanel(new GridLayout(1, 0), true);
+		ilhButtonPanel.add(ilhBold);
+		ilhButtonPanel.add(ilhItalics);
+		ilhButtonPanel.add(ilhAllCaps);
+		JPanel ilhPanel = new JPanel(new BorderLayout(), true);
+		ilhPanel.add(new JLabel("Split before in-line headings in "), BorderLayout.WEST);
+		ilhPanel.add(ilhButtonPanel, BorderLayout.CENTER);
+		
 		final JCheckBox shortLineEndsParagraph = new JCheckBox("Lines short of right block edge end paragraphs", true);
 		final JCheckBox singleLineParagraphs = new JCheckBox("Make each line a separate paragraph", false);
 		singleLineParagraphs.addItemListener(new ItemListener() {
@@ -1401,21 +1410,192 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				pslOutdent.setEnabled(!singleLineParagraphs.isSelected());
 				pslFlush.setEnabled(!singleLineParagraphs.isSelected());
 				shortLineEndsParagraph.setEnabled(!singleLineParagraphs.isSelected());
+				ilhBold.setEnabled(!singleLineParagraphs.isSelected());
+				ilhItalics.setEnabled(!singleLineParagraphs.isSelected());
+				ilhAllCaps.setEnabled(!singleLineParagraphs.isSelected());
 			}
 		});
 		
 		JPanel blockSplitOptionPanel = new JPanel(new GridLayout(0, 1), true);
 		blockSplitOptionPanel.add(pslPanel);
 		blockSplitOptionPanel.add(shortLineEndsParagraph);
+		blockSplitOptionPanel.add(ilhPanel);
 		blockSplitOptionPanel.add(singleLineParagraphs);
 		
 		//	prompt user
 		if (DialogFactory.confirm(blockSplitOptionPanel, "Select Block Splitting Options", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION)
 			return false;
 		
+		//	get start line position
+		char paragraphStartLinePos = 'N';
+		if (pslIndent.isSelected())
+			paragraphStartLinePos = 'I';
+		if (pslOutdent.isSelected())
+			paragraphStartLinePos = 'O';
+		
+		//	get in-line heading style
+		String inLineHeadingStyle = "";
+		if (ilhBold.isSelected())
+			inLineHeadingStyle += "B";
+		if (ilhItalics.isSelected())
+			inLineHeadingStyle += "I";
+		if (ilhAllCaps.isSelected())
+			inLineHeadingStyle += "C";
+		
+		//	loop through to multi-access signature
+		return this.restructureBlock(page, block, blockParagraphs, blockLines, isIndentedLine, isShortLine, singleLineParagraphs.isSelected(), paragraphStartLinePos, shortLineEndsParagraph.isSelected(), inLineHeadingStyle);
+//		
+//		//	index paragraphs
+//		HashMap paragraphsByBounds = new HashMap();
+//		for (int p = 0; p < blockParagraphs.length; p++)
+//			paragraphsByBounds.put(blockParagraphs[p].bounds, blockParagraphs[p]);
+//		
+//		//	keep track of logical paragraphs at block boundaries
+//		boolean firstParagraphHasStart = (singleLineParagraphs.isSelected() || (isIndentedLine[0] && pslIndent.isSelected()) || (!isIndentedLine[0] && pslOutdent.isSelected()));
+//		boolean lastParagraphHasEnd = (singleLineParagraphs.isSelected() || (isShortLine[blockLines.length-1] && shortLineEndsParagraph.isSelected()));
+//		
+//		//	do the splitting
+//		int paragraphStartLineIndex = 0;
+//		for (int l = 0; l < blockLines.length; l++) {
+//			
+//			//	assess whether or not to split after current line
+//			boolean lineEndsParagraph = false;
+//			if (singleLineParagraphs.isSelected()) // just split after each line
+//				lineEndsParagraph = true;
+//			else if (shortLineEndsParagraph.isSelected() && isShortLine[l]) // split after short line
+//				lineEndsParagraph = true;
+//			else if (((l+1) < blockLines.length) && isIndentedLine[l+1] && pslIndent.isSelected()) // split before indented line
+//				lineEndsParagraph = true;
+//			else if (((l+1) < blockLines.length) && !isIndentedLine[l+1] && pslOutdent.isSelected()) // split before outdented line
+//				lineEndsParagraph = true;
+//			
+//			//	perform split
+//			if (lineEndsParagraph) {
+//				BoundingBox paragraphBounds = ImLayoutObject.getAggregateBox(blockLines, paragraphStartLineIndex, (l+1));
+//				ImRegion paragraph = ((ImRegion) paragraphsByBounds.remove(paragraphBounds));
+//				if (paragraph == null)
+//					paragraph = new ImRegion(page, paragraphBounds, ImRegion.PARAGRAPH_TYPE);
+//				paragraphStartLineIndex = (l+1);
+//			}
+//		}
+//		if (paragraphStartLineIndex < blockLines.length) {
+//			BoundingBox paragraphBounds = ImLayoutObject.getAggregateBox(blockLines, paragraphStartLineIndex, blockLines.length);
+//			ImRegion paragraph = ((ImRegion) paragraphsByBounds.remove(paragraphBounds));
+//			if (paragraph == null)
+//				paragraph = new ImRegion(page, paragraphBounds, ImRegion.PARAGRAPH_TYPE);
+//		}
+//		
+//		//	clean up now-spurious paragraphs
+//		for (Iterator pbit = paragraphsByBounds.keySet().iterator(); pbit.hasNext();)
+//			page.removeRegion((ImRegion) paragraphsByBounds.get(pbit.next()));
+//		
+//		//	update word relations
+//		blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
+//		for (int p = 0; p < blockParagraphs.length; p++) {
+//			ImWord[] paragraphWords = blockParagraphs[p].getWords();
+//			if (paragraphWords.length == 0)
+//				continue;
+//			Arrays.sort(paragraphWords, ImUtils.textStreamOrder);
+//			for (int w = 0; w < (paragraphWords.length-1); w++) {
+//				if (paragraphWords[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+//					paragraphWords[w].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
+//			}
+//			if (((p != 0) || firstParagraphHasStart) && (paragraphWords[0].getPreviousWord() != null))
+//				paragraphWords[0].getPreviousWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+//			if (((p+1) != blockParagraphs.length) || lastParagraphHasEnd)
+//				paragraphWords[paragraphWords.length-1].setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+//		}
+//		
+//		//	finally ...
+//		return true;
+	}
+	
+	/**
+	 * Restructure the paragraphs in a block. If single line paragraphs are
+	 * specified, each line in the argument block becomes a paragraph of its
+	 * own. Otherwise, the block is split up at short lines if specified, and
+	 * at indented ('I') lines or outdented ('O') lines, depending on the other
+	 * arguments.
+	 * @param block the block whose lines to group into paragraphs
+	 * @param singleLineParagraphs make each line a separate paragraph?
+	 * @param paragraphStartLinePos use 'I' to indicate indented paragraph
+	 *            start lines, 'O' to indicate outdented ones, and any other
+	 *            char to disable indent/outdent based splitting
+	 * @param shortLineEndsParagraph end paragraphs at short lines?
+	 * @return true if the argument block was modified
+	 */
+	public boolean restructureBlock(ImRegion block, boolean singleLineParagraphs, char paragraphStartLinePos, boolean shortLineEndsParagraph) {
+		
+		//	get page
+		ImPage page = block.getPage();
+		if (page == null)
+			return false;
+		
+		//	get block lines
+		ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+		Arrays.sort(blockLines, ImUtils.topDownOrder);
+		
+		//	assess line properties
+		int dpi = page.getImageDPI();
+		boolean[] isIndentedLine = new boolean[blockLines.length];
+		boolean[] isShortLine = new boolean[blockLines.length];
+		for (int l = 0; l < blockLines.length; l++) {
+			int leftDist = (blockLines[l].bounds.left - block.bounds.left);
+			isIndentedLine[l] = ((dpi / 12) /* about 2mm */ < leftDist); // at least 2mm shy of left block edge
+			int rightDist = (block.bounds.right - blockLines[l].bounds.right);
+			isShortLine[l] = ((block.bounds.right - block.bounds.left) < (rightDist * 20)); // at least 5% shy of right block edge
+		}
+		
+		//	do restructuring
+		return this.restructureBlock(block, blockLines, isIndentedLine, isShortLine, singleLineParagraphs, paragraphStartLinePos, shortLineEndsParagraph);
+	}
+	
+	/**
+	 * Restructure the paragraphs in a block. If single line paragraphs are
+	 * specified, each line in the argument block becomes a paragraph of its
+	 * own. Otherwise, the block is split up at short lines if specified, and
+	 * at indented ('I') lines or outdented ('O') lines, depending on the other
+	 * arguments. The two boolean arrays are expected to have the same length
+	 * as the array holding the lines. Further, the lines are expected to be
+	 * sorted top-down (this method cannot sort without potentially losing the
+	 * relation with the boolean arrays).
+	 * @param block the block whose lines to group into paragraphs
+	 * @param blockLines the lines of the argument block
+	 * @param isIndentedLine an array of booleans indicating for each line
+	 *            whether or not it starts flush left in the block
+	 * @param isShortLine an array of booleans indicating for each line
+	 *            whether or not it ends flush right in the block
+	 * @param singleLineParagraphs make each line a separate paragraph?
+	 * @param paragraphStartLinePos use 'I' to indicate indented paragraph
+	 *            start lines, 'O' to indicate outdented ones, and any other
+	 *            char to disable indent/outdent based splitting
+	 * @param shortLineEndsParagraph end paragraphs at short lines?
+	 * @return true if the argument block was modified
+	 */
+	public boolean restructureBlock(ImRegion block, ImRegion[] blockLines, boolean[] isIndentedLine, boolean[] isShortLine, boolean singleLineParagraphs, char paragraphStartLinePos, boolean shortLineEndsParagraph) {
+		
+		//	get page
+		ImPage page = block.getPage();
+		if (page == null)
+			return false;
+		
+		//	get block paragraphs
+		ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
+		
+		//	do restructuring
+		return this.restructureBlock(page, block, blockParagraphs, blockLines, isIndentedLine, isShortLine, singleLineParagraphs, paragraphStartLinePos, shortLineEndsParagraph, "");
+	}
+	
+	private boolean restructureBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines, boolean[] isIndentedLine, boolean[] isShortLine, boolean singleLineParagraphs, char paragraphStartLinePos, boolean shortLineEndsParagraph, String inLineHeadingStyle) {
+		
+		//	index paragraphs
+		HashMap paragraphsByBounds = new HashMap();
+		for (int p = 0; p < blockParagraphs.length; p++)
+			paragraphsByBounds.put(blockParagraphs[p].bounds, blockParagraphs[p]);
+		
 		//	keep track of logical paragraphs at block boundaries
-		boolean firstParagraphHasStart = (singleLineParagraphs.isSelected() || (isIndentedLine[0] && pslIndent.isSelected()) || (!isIndentedLine[0] && pslOutdent.isSelected()));
-		boolean lastParagraphHasEnd = (singleLineParagraphs.isSelected() || (isShortLine[blockLines.length-1] && shortLineEndsParagraph.isSelected()));
+		boolean firstParagraphHasStart = (singleLineParagraphs || (isIndentedLine[0] && (paragraphStartLinePos == 'I')) || (!isIndentedLine[0] && (paragraphStartLinePos == 'O')));
+		boolean lastParagraphHasEnd = (singleLineParagraphs || (isShortLine[blockLines.length-1] && shortLineEndsParagraph));
 		
 		//	do the splitting
 		int paragraphStartLineIndex = 0;
@@ -1423,14 +1603,29 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			
 			//	assess whether or not to split after current line
 			boolean lineEndsParagraph = false;
-			if (singleLineParagraphs.isSelected()) // just split after each line
+			if (singleLineParagraphs) // just split after each line
 				lineEndsParagraph = true;
-			else if (shortLineEndsParagraph.isSelected() && isShortLine[l]) // split after short line
+			else if (shortLineEndsParagraph && isShortLine[l]) // split after short line
 				lineEndsParagraph = true;
-			else if (((l+1) < blockLines.length) && isIndentedLine[l+1] && pslIndent.isSelected()) // split before indented line
+			else if (((l+1) < blockLines.length) && isIndentedLine[l+1] && (paragraphStartLinePos == 'I')) // split before indented line
 				lineEndsParagraph = true;
-			else if (((l+1) < blockLines.length) && !isIndentedLine[l+1] && pslOutdent.isSelected()) // split before outdented line
+			else if (((l+1) < blockLines.length) && !isIndentedLine[l+1] && (paragraphStartLinePos == 'O')) // split before outdented line
 				lineEndsParagraph = true;
+			else if (((l+1) < blockLines.length) && (inLineHeadingStyle.length() != 0)) {
+				ImWord[] nextLineWords = blockLines[l+1].getWords();
+				if (nextLineWords.length != 0) {
+					Arrays.sort(nextLineWords, ImUtils.leftRightOrder);
+					ImWord nextLineStart = nextLineWords[0];
+					if ((nextLineStart != null) && (inLineHeadingStyle.indexOf('B') != -1) && !nextLineStart.hasAttribute(ImWord.BOLD_ATTRIBUTE))
+						nextLineStart = null;
+					if ((nextLineStart != null) && (inLineHeadingStyle.indexOf('I') != -1) && !nextLineStart.hasAttribute(ImWord.ITALICS_ATTRIBUTE))
+						nextLineStart = null;
+					if ((nextLineStart != null) && (inLineHeadingStyle.indexOf('C') != -1) && ((nextLineStart.getString().length() < 3) || !nextLineStart.getString().equals(nextLineStart.getString().toUpperCase())))
+						nextLineStart = null;
+					if (nextLineStart != null)
+						lineEndsParagraph = true;
+				}
+			}
 			
 			//	perform split
 			if (lineEndsParagraph) {
