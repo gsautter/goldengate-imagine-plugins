@@ -84,6 +84,7 @@ import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
+import de.uka.ipd.idaho.im.util.ImFontUtils;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.SymbolTable;
@@ -96,9 +97,20 @@ import de.uka.ipd.idaho.stringUtils.StringUtils;
  * @author sautter
  */
 public class FontEditorProvider extends AbstractImageMarkupToolProvider implements SelectionActionProvider {
+	
+	//	font preference switch, mainly for testing Liberation Fonts against default system fonts
+	private static final boolean USE_FREE_FONTS = true;
+	
+	/* make sure we have the fonts we need */
+	static {
+		if (USE_FREE_FONTS)
+			ImFontUtils.loadFreeFonts();
+	}
+	
+	private static Font serifFont = new Font((USE_FREE_FONTS ? "FreeSerif" : "Serif"), Font.PLAIN, 1);
+	private static Font sansFont = new Font((USE_FREE_FONTS ? "FreeSans" : "SansSerif"), Font.PLAIN, 1);
+	
 	private static final String FONT_EDITOR_IMT_NAME = "FontEditor";
-	private static Font serifFont = new Font("Serif", Font.PLAIN, 1);
-	private static Font sansFont = new Font("Sans", Font.PLAIN, 1);
 	
 	private SymbolTable symbolTable = SymbolTable.getSharedSymbolTable();
 	private ImageMarkupTool fontEditor = new FontEditor();
