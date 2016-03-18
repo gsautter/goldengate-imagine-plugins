@@ -500,9 +500,16 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 				double hScale = (((double) (imw.bounds.right - imw.bounds.left)) / wtl.getBounds().getWidth());
 				AffineTransform at = prg.getTransform();
 				prg.translate(imw.bounds.left, 0);
+//				if (hScale < 1)
+//					prg.scale(hScale, 1);
+//				prg.drawString(imw.getString(), ((float) -wtl.getBounds().getMinX()), (imw.bounds.bottom - Math.round(wlm.getDescent())));
+				float leftShift = ((float) -wtl.getBounds().getMinX());
 				if (hScale < 1)
 					prg.scale(hScale, 1);
-				prg.drawString(imw.getString(), ((float) -wtl.getBounds().getMinX()), (imw.bounds.bottom - Math.round(wlm.getDescent())));
+				else leftShift += (((imw.bounds.right - imw.bounds.left) - wtl.getBounds().getWidth()) / 2);
+				try {
+					prg.drawGlyphVector(rf.createGlyphVector(new FontRenderContext(prg.getTransform(), true, true), imw.getString()), leftShift, (imw.bounds.bottom - Math.round(wlm.getDescent())));
+				} catch (InternalError ie) {}
 				prg.setTransform(at);
 				System.out.println(" - word '" + imw.getString() + "' re-rendered");
 			}
