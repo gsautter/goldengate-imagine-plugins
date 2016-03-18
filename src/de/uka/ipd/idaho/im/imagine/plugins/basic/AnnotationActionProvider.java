@@ -308,8 +308,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			ImAnnotation[] annots = doc.getAnnotations();
 			
 			//	investigate annotations
+			pm.setBaseProgress(0);
+			pm.setMaxProgress(10);
+			pm.setStep("Indexing Annotations by Text Stream");
 			HashMap annotsByTextStream = new LinkedHashMap();
 			for (int a = 0; a < annots.length; a++) {
+				pm.setProgress((a * 100) / annots.length);
 				
 				//	sort annotations by text stream ID ...
 				String annotTextStreamId = annots[a].getFirstWord().getTextStreamId();
@@ -330,11 +334,21 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			}
 			
 			//	process annotations of each text stream
+			pm.setBaseProgress(10);
+			pm.setMaxProgress(100);
+			pm.setStep("Checking Annotations");
+			int annotsChecked = 0;
 			for (Iterator tsidit = annotsByTextStream.keySet().iterator(); tsidit.hasNext();) {
 				String textStreamId = ((String) tsidit.next());
 				ArrayList textStreamAnnots = ((ArrayList) annotsByTextStream.get(textStreamId));
+				pm.setBaseProgress(10 + ((annotsChecked * 90) / annots.length));
+				pm.setMaxProgress(10 + (((annotsChecked + textStreamAnnots.size()) * 90) / annots.length));
 				this.processAnnots(doc, ((ImAnnotation[]) textStreamAnnots.toArray(new ImAnnotation[textStreamAnnots.size()])), pm);
+				annotsChecked += textStreamAnnots.size();
 			}
+			
+			//	clean up document data structures
+			doc.cleanupAnnotations();
 		}
 		
 		private void processAnnots(ImDocument doc, ImAnnotation[] annots, ProgressMonitor pm) {
@@ -346,23 +360,66 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			//	sort annotations
 			Arrays.sort(annots, annotationOrder);
 			
-			//	group annotations into structure (comprising whole paragraphs) and details
-			//	chop up (or cut) detail level annotations inconsistent with paragraph breaks
-			ArrayList structAnnotList = new ArrayList();
-			ArrayList detailAnnotList = new ArrayList();
+			//	resolve annotation vs. paragraph break issues first
+			pm.setInfo(" - checking structure annotations against paragraphs");
 			for (int a = 0; a < annots.length; a++) {
+				pm.setProgress((a * 20) / annots.length);
 				
 				//	check if annotation spans paragraphs
 				ImWord firstWord = annots[a].getFirstWord();
 				boolean firstIsParaStart = ((firstWord.getPreviousWord() == null) || (firstWord.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
 				ImWord lastWord = annots[a].getLastWord();
 				boolean lastIsParaEnd = ((lastWord.getNextWord() == null) || (lastWord.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
-				if (firstIsParaStart && lastIsParaEnd) {
+				
+				//	nothing to do in this step if so (splitting at internal paragraph breaks happens below)
+				if (firstIsParaStart && lastIsParaEnd)
+					continue;
+				
+				//	take care of annotation start if required
+				String startOperation = (firstIsParaStart ? null : annotTypeOperations.getProperty(ImAnnotation.PARAGRAPH_TYPE + ">" + annots[a].getType()));
+				if (EXTEND_SECOND_OPERATION.equals(startOperation))
+					for (ImWord imw = annots[a].getFirstWord(); imw != null; imw = imw.getPreviousWord()) {
+						boolean imwIsParaStart = ((imw.getPreviousWord() == null) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+						if (imwIsParaStart) {
+							annots[a].setFirstWord(imw);
+							break;
+						}
+					}
+				
+				//	take care of annotation end if required
+				String endOperation = (lastIsParaEnd ? null : annotTypeOperations.getProperty(annots[a].getType() + ">" + ImAnnotation.PARAGRAPH_TYPE));
+				if (EXTEND_FIRST_OPERATION.equals(endOperation))
+					for (ImWord imw = annots[a].getLastWord(); imw != null; imw = imw.getNextWord()) {
+						boolean imwIsParaEnd = ((imw.getNextWord() == null) || (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+						if (imwIsParaEnd) {
+							annots[a].setLastWord(imw);
+							break;
+						}
+					}
+			}
+			
+			//	re-sort annotations
+			Arrays.sort(annots, annotationOrder);
+			
+			//	group annotations into structure (comprising whole paragraphs) and details
+			//	chop up (or cut) detail level annotations inconsistent with paragraph breaks
+			pm.setInfo(" - checking detail annotations against paragraphs");
+			ArrayList structAnnotList = new ArrayList();
+			ArrayList detailAnnotList = new ArrayList();
+			for (int a = 0; a < annots.length; a++) {
+				pm.setProgress(20 + ((a * 40) / annots.length));
+				
+				//	check if annotation spans paragraphs
+				ImWord firstWord = annots[a].getFirstWord();
+				boolean firstIsParaStart = ((firstWord.getPreviousWord() == null) || (firstWord.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+				ImWord lastWord = annots[a].getLastWord();
+				boolean lastIsParaEnd = ((lastWord.getNextWord() == null) || (lastWord.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+				
+				//	paragraph spanning, and no explicit operation defined for line breaks
+				if (firstIsParaStart && lastIsParaEnd && (annotTypeOperations.getProperty(annots[a].getType()) == null)) {
 					structAnnotList.add(annots[a]);
 					continue;
 				}
-				
-				//	TODO some structure annotations might end short of paragraph end, extend them
 				
 				//	check annotation for inner paragraph breaks
 				for (ImWord imw = firstWord; imw != null; imw = imw.getNextWord()) {
@@ -402,8 +459,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					detailAnnotList.add(annots[a]);
 			}
 			
-			//	clean up structural annotations
+			//	check annotation nesting
+			pm.setProgress(60);
+			pm.setInfo(" - checking structural annotation nesting");
 			this.cleanUpInterleavingAnnots(doc, structAnnotList);
+			pm.setProgress(80);
+			pm.setInfo(" - checking detail annotation nesting");
 			this.cleanUpInterleavingAnnots(doc, detailAnnotList);
 		}
 		
@@ -529,7 +590,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
-	private static final boolean DEBUG_CHECK_NESTING = true;
+	private static final boolean DEBUG_CHECK_NESTING = false;
 	
 	private static String getAnnotationValue(ImAnnotation annot) {
 		
