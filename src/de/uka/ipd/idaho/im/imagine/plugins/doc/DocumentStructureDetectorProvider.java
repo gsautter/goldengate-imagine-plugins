@@ -1229,6 +1229,31 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setBaseProgress(90);
 		spm.setMaxProgress(100);
 		
+		//	extrapolate bold and italics properties to dash-like words
+		for (int h = 0; h < textStreamHeads.length; h++)
+			for (ImWord imw = textStreamHeads[h]; imw != null; imw = imw.getNextWord()) {
+				
+				//	not eligible for font property extrapolation
+				if ((imw.getString().length() > 1) || ("+-\u00B1\u00AD\u2010\u2012\u2011\u2013\u2014\u2015\u2212".indexOf(imw.getString()) == -1))
+					continue;
+				
+				//	get surrounding words
+				ImWord pImw = imw.getPreviousWord();
+				ImWord nImw = imw.getNextWord();
+				
+				//	no two surrounding words to check
+				if ((pImw == null) || (nImw == null))
+					continue;
+				
+				//	extrapolate bold
+				if (pImw.hasAttribute(ImWord.BOLD_ATTRIBUTE) && nImw.hasAttribute(ImWord.BOLD_ATTRIBUTE) && !imw.hasAttribute(ImWord.BOLD_ATTRIBUTE))
+					imw.setAttribute(ImWord.BOLD_ATTRIBUTE);
+				
+				//	extrapolate italics (for dashes only, as characters involving a plus sign do have vertical strokes)
+				if (pImw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) && nImw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) && !imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) && ("-\u00AD\u2010\u2012\u2011\u2013\u2014\u2015\u2212".indexOf(imw.getString()) != -1))
+					imw.setAttribute(ImWord.ITALICS_ATTRIBUTE);
+			}
+		
 		//	mark emphases
 		HashSet emphasisWords = new HashSet();
 		for (int h = 0; h < textStreamHeads.length; h++) {
@@ -1237,12 +1262,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			for (ImWord imw = textStreamHeads[h]; imw != null; imw = imw.getNextWord()) {
 				boolean markedBoldEmphasis = false;
 				boolean markedItalicsEmphasis = false;
-				
-				//	get font size
-				String imwFontSize = ((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+//				
+//				//	get font size
+//				String imwFontSize = ((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
 				
 				//	finish bold emphasis (for style reasons, or because paragraph ends)
-				if ((boldStart != null) && (!imw.hasAttribute(ImWord.BOLD_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || ((imwFontSize != null) && !imwFontSize.equals(boldStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, imwFontSize))))) {
+//				if ((boldStart != null) && (!imw.hasAttribute(ImWord.BOLD_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || ((imwFontSize != null) && !imwFontSize.equals(boldStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, imwFontSize))))) {
+				if ((boldStart != null) && (!imw.hasAttribute(ImWord.BOLD_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || !this.isFontSizeMatch(((String) boldStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE)), imw))) {
 					ImAnnotation emphasis = doc.addAnnotation(boldStart, imw.getPreviousWord(), ImAnnotation.EMPHASIS_TYPE);
 					emphasis.setAttribute(ImWord.BOLD_ATTRIBUTE);
 					markedBoldEmphasis = true;
@@ -1284,7 +1310,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				}
 				
 				//	finish italics emphasis (for style reasons, or because paragraph ends)
-				if ((italicsStart != null) && (!imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || ((imwFontSize != null) && !imwFontSize.equals(italicsStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, imwFontSize))))) {
+//				if ((italicsStart != null) && (!imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || ((imwFontSize != null) && !imwFontSize.equals(italicsStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, imwFontSize))))) {
+				if ((italicsStart != null) && (!imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || !this.isFontSizeMatch(((String) italicsStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE)), imw))) {
 					ImAnnotation emphasis = doc.addAnnotation(italicsStart, imw.getPreviousWord(), ImAnnotation.EMPHASIS_TYPE);
 					emphasis.setAttribute(ImWord.ITALICS_ATTRIBUTE);
 					markedItalicsEmphasis = true;
@@ -1352,6 +1379,28 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	finally, we're done
 		spm.setProgress(100);
+	}
+	
+	/* string of punctuation marks whose font size can differ a little from the
+	 * surrounding text due to sloppy layout or even adjustment */
+	private static final String fontSizeVariablePunctuationMarks = ",.;:^°\"'=+-\u00B1\u00AD\u2010\u2012\u2011\u2013\u2014\u2015\u2212";
+	
+	private boolean isFontSizeMatch(String fontSize, ImWord imw) {
+		if (fontSize == null)
+			return true;
+		String imwFontSize = ((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+		if (imwFontSize == null)
+			return true;
+		if (fontSize.equals(imwFontSize))
+			return true;
+		if ((imw.getString().length() > 1) || (fontSizeVariablePunctuationMarks.indexOf(imw.getString()) == -1))
+			return false;
+		try {
+			return (Math.abs(Integer.parseInt(fontSize) - Integer.parseInt(imwFontSize)) <= 1);
+		}
+		catch (NumberFormatException nfe) {
+			return true;
+		}
 	}
 	
 	private void assessHeadingHierarchy(ArrayList headings, int docFontSize, int docFirstPageId, ProgressMonitor pm) {
@@ -1486,14 +1535,6 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 	}
 	
-	/* TODO allow single-line headings to be split off the top of blocks or even paragraphs
-	 * - introduce isBlockTopHeading property ...
-	 * - ... and apply to first line in block exclusively
-	 * ==> should help get treatment headings off LSIDs, figure references, and more exotic sub-title style appendages
-	 * ==> make sure to split paragraph if first line not a paragraph in itself
-	 * ==> use with care !!!
-	 */
-	
 	private static class HeadingStyleDefined {
 		final int level;
 		int minFontSize;
@@ -1572,9 +1613,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				String wordFontSizeStr = ((String) lineWords[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
 				if (wordFontSizeStr != null) try {
 					int wfs = Integer.parseInt(wordFontSizeStr);
-					if (wfs < this.minFontSize)
+					int wfsTolerance = (((wordStr.length() == 1) && (fontSizeVariablePunctuationMarks.indexOf(wordStr) != -1)) ? 1 : 0);
+					if ((wfs + wfsTolerance) < this.minFontSize)
 						return false;
-					if (this.maxFontSize < wfs)
+					if (this.maxFontSize < (wfs - wfsTolerance))
 						return false;
 				} catch (NumberFormatException nfe) {}
 				lineWordString.append(wordStr);
