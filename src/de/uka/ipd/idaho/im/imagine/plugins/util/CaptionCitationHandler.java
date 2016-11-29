@@ -27,21 +27,34 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.util;
 
+import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.GridLayout;
+import java.awt.Point;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
+
+import javax.swing.JCheckBox;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 
 import de.uka.ipd.idaho.gamta.Annotation;
 import de.uka.ipd.idaho.gamta.AttributeUtils;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
+import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImObject;
@@ -52,8 +65,12 @@ import de.uka.ipd.idaho.im.ImSupplement.Figure;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractReactionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener;
+import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
+import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
+import de.uka.ipd.idaho.stringUtils.StringUtils;
 
 /**
  * This plugin listens to changes to captions marked in a document, marks
@@ -62,7 +79,7 @@ import de.uka.ipd.idaho.im.util.ImUtils;
  * 
  * @author sautter
  */
-public class CaptionCitationHandler extends AbstractReactionProvider implements ImagingConstants {
+public class CaptionCitationHandler extends AbstractReactionProvider implements SelectionActionProvider, GoldenGateImagineDocumentListener, ImagingConstants {
 	
 	/** public zero-argument constructor for class loading */
 	public CaptionCitationHandler() {}
@@ -75,14 +92,245 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 	}
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#typeChanged(de.uka.ipd.idaho.im.ImObject, java.lang.String, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider#getActions(java.awt.Point, java.awt.Point, de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
-	public void typeChanged(ImObject object, String oldType, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
+	public SelectionAction[] getActions(Point start, Point end, ImPage page, ImDocumentMarkupPanel idmp) {
+		return null; // we're only annotating ...
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider#getActions(de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
+	 */
+	public SelectionAction[] getActions(final ImWord start, final ImWord end, final ImDocumentMarkupPanel idmp) {
+		
+		//	no use working across text stream
+		if (!start.getTextStreamId().equals(end.getTextStreamId()))
+			return null;
+		
+		//	if selection starts with a word (not an index letter or Roman number), it has to be 'Tab*', 'Fig*', etc., whichever is present in the document
+		TreeSet docCaptionStarts = this.getDocumentCaptionStarts(idmp.document);
+		if ((start.getString().length() > 1) && Gamta.isWord(start.getString()) && !docCaptionStarts.contains(start.getString()) && !start.getString().matches("[IiVvXxLl]+"))
+			return null;
+		
+		//	check length of selection, and also if we have at least one number selected
+		int selWordCount = 0;
+		boolean selHasNumber = false;
+		for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+			selWordCount++;
+			
+			String imwString = imw.getString();
+			if ((imwString == null) || (imwString.trim().length() == 0))
+				continue;
+			
+			//	skip over start word (even if joined)
+			if ((imw == start) && docCaptionStarts.contains(imw.getString())) {
+				while ((imw != null) && ((imw.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) || (imw.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED)))
+					imw = imw.getNextWord();
+				continue;
+			}
+			
+			//	Arabic index number
+			if (imwString.matches("[0-9]+(\\s*[a-z])?"))
+				selHasNumber = true;
+			
+			//	lower case Roman index number
+			else if (imwString.matches("[ivxl]+"))
+				selHasNumber = true;
+			
+			//	upper case Roman index number
+			else if (imwString.matches("[IVXL]+"))
+				selHasNumber = true;
+			
+			//	lower case index letter
+			else if (imwString.matches("[a-z]"))
+				selHasNumber = true;
+			
+			//	upper case index letter
+			else if (imwString.matches("[A-Z]"))
+				selHasNumber = true;
+			
+			//	no use looking beyond an internal word (safe for enumeration separators) ...
+			if ((imwString.length() <= 1) || !Gamta.isWord(imwString) || imwString.matches("[IiVvXxLl]+")) {}
+			else if (imwString.equals(",") || imwString.equals("&") || (";and;und;et;y;".indexOf(";" + imwString.toLowerCase() + ";") != -1)) {}
+			else if (selHasNumber)
+				return null;
+			
+			//	need to look any further?
+			if (imw == end)
+				break;
+			else if (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+				return null; // caption citations will rarely ever run across paragraph boundaries ...
+			else if (selWordCount > 10)
+				return null; // caption citations will rarely ever be longer than 'XYZ Figs. 2a - f', which is 7 tokens ...
+		}
+		
+		//	do we have a number?
+		if (!selHasNumber)
+			return null;
+		
+		//	find caption citation head word
+		String ccHead = null;
+		ImWord ccNumStart = null;
+		if (docCaptionStarts.contains(start.getString())) {
+			ccHead = start.getString(); // TODO append connected words ('continue' or 'hyphenated' relation)
+			ccNumStart = start.getNextWord();
+		}
+		else for (ImWord imw = start.getPreviousWord(); imw != null; imw = imw.getPreviousWord()) {
+			if (docCaptionStarts.contains(imw.getString())) {
+				ccHead = imw.getString();
+				ccNumStart = start;
+				break;
+			}
+			else if (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+				return null; // even enumerations of caption citations will rarely ever run across paragraph boundaries ...
+		}
+		if (ccHead == null)
+			return null;
+		
+		//	get parsed caption citation objects (we'll assign captions later)
+		final ArrayList ccList = this.getCaptionCitations(start, ccNumStart, end, null);
+		if (ccList.isEmpty())
+			return null;
+		
+		//	collect actions
+		LinkedList actions = new LinkedList();
+		
+		//	offer marking table citation
+		if (ccHead.toLowerCase().startsWith("tab"))
+			actions.add(new SelectionAction("annotateTableCitation", "Annotate Table Citation", "Annotate selected words as a table citation and select cited table(s).") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return annotateCaptionCitation(idmp.document, true, start, end);
+				}
+			});
+		else actions.add(new SelectionAction("annotateFigureCitation", "Annotate Figure Citation", "Annotate selected words as a figure citation and select cited figure(s).") {
+			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				return annotateCaptionCitation(idmp.document, false, start, end);
+			}
+		});
+		
+		//	finally ...
+		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	private boolean annotateCaptionCitation(ImDocument doc, boolean isTableCitation, ImWord start, ImWord end) {
+		
+		//	get applicable captions
+		ImAnnotation[] allCaptions = doc.getAnnotations(ImAnnotation.CAPTION_TYPE);
+		ArrayList captions = new ArrayList();
+		for (int c = 0; c < allCaptions.length; c++) {
+			if (isTableCitation == allCaptions[c].getFirstWord().getString().toLowerCase().startsWith("tab"))
+				captions.add(allCaptions[c]);
+		}
+		
+		//	anything to work with?
+		if (captions.isEmpty()) {
+			DialogFactory.alert(("There are no" + (isTableCitation ? " table" : "") + " captions in the document to cite.\r\nPlease first mark the caption referenced by the selected words."), "No Captions To Cite", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		//	prepare getting user input
+		JPanel captionPanel = new JPanel(new GridLayout(0, 1), true);
+		captionPanel.add(new JLabel(("<HTML><B>Select captions referenced by '" + ImUtils.getString(start, end, true) + "'</B></HTML>"), JLabel.CENTER));
+		ArrayList captionSelectors = new ArrayList();
+		for (int c = 0; c < captions.size(); c++) {
+			ImAnnotation caption = ((ImAnnotation) captions.get(c));
+			int captionStartWords = 0;
+			ImWord captionStartEnd = caption.getFirstWord();
+			for (ImWord imw = caption.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+				captionStartWords++;
+				captionStartEnd = imw;
+				if (imw == caption.getLastWord())
+					break;
+				if (captionStartWords > 15) // TODOne is 15 a good threshold? ==> looks that way
+					break;
+			}
+			JCheckBox captionSelector = new JCheckBox(ImUtils.getString(caption.getFirstWord(), captionStartEnd, true));
+			captionPanel.add(captionSelector);
+			captionSelectors.add(captionSelector);
+		}
+		
+		//	use scroll pane if more than 10 captions to choose from
+		if (captionSelectors.size() > 10) {
+			Dimension cpps = captionPanel.getPreferredSize();
+			JScrollPane captionPanelBox = new JScrollPane(captionPanel);
+			captionPanel = new JPanel(new BorderLayout(), true);
+			captionPanel.add(captionPanelBox, BorderLayout.CENTER);
+			if (cpps != null)
+				captionPanel.setPreferredSize(new Dimension((cpps.width + 32), 250));
+		}
+		
+		//	prompt
+		int choice = DialogFactory.confirm(captionPanel, "Select Cited Captions", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+		if (choice != JOptionPane.OK_OPTION)
+			return false;
+		
+		//	get selected captions
+		ArrayList citedCaptions = new ArrayList();
+		for (int c = 0; c < Math.min(captions.size(), captionSelectors.size()); c++) {
+			JCheckBox captionSelector = ((JCheckBox) captionSelectors.get(c));
+			if (captionSelector.isSelected())
+				citedCaptions.add(captions.get(c));
+		}
+		
+		//	anything selected?
+		if (citedCaptions.isEmpty())
+			return false;
+		
+		//	add annotation
+		this.annotateCaptionCitation(doc, (isTableCitation ? "table" : "figure"), start, end, citedCaptions);
+		return true;
+	}
+	
+	private HashMap documentCaptionStarts = new HashMap();
+	private TreeSet getDocumentCaptionStarts(ImDocument doc) {
+		TreeSet captionStarts = ((TreeSet) this.documentCaptionStarts.get(doc.docId));
+		
+		//	collect caption starts if not done before
+		if (captionStarts == null) {
+			captionStarts = new TreeSet(String.CASE_INSENSITIVE_ORDER);
+			ImAnnotation[] captions = doc.getAnnotations(ImAnnotation.CAPTION_TYPE);
+			for (int c = 0; c < captions.length; c++) {
+				String captionStart = captions[c].getFirstWord().getString();
+				if (captionStartMappings.containsKey(captionStart))
+					captionStart = ((String) captionStartMappings.get(captionStart));
+				for (int e = 3; e <= (captionStart.length() - (captionStart.toLowerCase().endsWith("s") ? 1 : 0)); e++) {
+					captionStarts.add(captionStart.substring(0, e));
+					captionStarts.add(captionStart.substring(0, e) + "s");
+				}
+			}
+			this.documentCaptionStarts.put(doc.docId, captionStarts);
+		}
+		
+		//	finally ...
+		return captionStarts;
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument)
+	 */
+	public void documentOpened(ImDocument doc) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument)
+	 */
+	public void documentSaving(ImDocument doc) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument)
+	 */
+	public void documentSaved(ImDocument doc) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentClosed(java.lang.String)
+	 */
+	public void documentClosed(String docId) {
+		this.documentCaptionStarts.remove(docId);
+	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#attributeChanged(de.uka.ipd.idaho.im.ImObject, java.lang.String, java.lang.Object, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
 	 */
-	public void attributeChanged(ImObject object, String attributeName, Object oldValue, ImDocumentMarkupPanel idmpg, boolean allowPrompt) {
+	public void attributeChanged(ImObject object, String attributeName, Object oldValue, ImDocumentMarkupPanel idmp, boolean allowPrompt) {
 		
 		//	write through modifications of a caption annotation to figure and table citations
 		if ((object instanceof ImAnnotation) && CAPTION_TYPE.equals(object.getType())) {
@@ -270,16 +518,77 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		return captionCitationsToAttributeNameSuffixes;
 	}
 	
+	/* TODO move this thing to ImUtils, and use it
+	 * - here
+	 * - in RegionActionProvider
+	 * - in FigureTableExporter
+	 * - wherever ...
+	 */
+	/* TODO make this a CaptionStart object, comprising
+	 * - the caption start string ...
+	 * - ... as well as possible abbreviations
+	 * - the type of numbering scheme (1-12, I-XII, i-xii, A-F, or a-f)
+	 * - whether or not a sub index is used (likely most often letters below Arabic numbers, but it might be the other way around)
+	 * - the minimum and maximum top level number
+	 * - the minimum and maximum sub index (likely only with single top level numbers)
+	 */
 	private String getCaptionStart(ImAnnotation caption) {
 		ImWord captionStartEnd = null;
+		char indexType = ((char) 0);
 		boolean lastWasIndex = false;
 		for (ImWord imw = caption.getFirstWord().getNextWord(); imw != null; imw = imw.getNextWord()) {
 			String imwString = imw.getString();
 			if ((imwString == null) || (imwString.trim().length() == 0))
 				continue;
 			
-			//	index number or letter
-			if (imwString.matches("([0-9]+(\\s*[a-z])?)|[IiVvXxLl]+|[a-zA-Z]")) {
+			//	Arabic index number
+			if (imwString.matches("[0-9]+(\\s*[a-z])?")) {
+				if (indexType == 0)
+					indexType = 'A';
+				else if (indexType != 'A')
+					break;
+				captionStartEnd = imw;
+				lastWasIndex = true;
+			}
+			
+			//	lower case Roman index number
+			else if (imwString.matches("[ivxl]+")) {
+				if (indexType == 0)
+					indexType = 'r';
+				else if ((indexType == 'l') && (imwString.length() == 1)) { /* need to allow 'a-i', etc. ... */ }
+				else if (indexType != 'r')
+					break;
+				captionStartEnd = imw;
+				lastWasIndex = true;
+			}
+			
+			//	upper case Roman index number
+			else if (imwString.matches("[IVXL]+")) {
+				if (indexType == 0)
+					indexType = 'R';
+				else if ((indexType == 'L') && (imwString.length() == 1)) { /* need to allow 'A-I', etc. ... */ }
+				else if (indexType != 'R')
+					break;
+				captionStartEnd = imw;
+				lastWasIndex = true;
+			}
+			
+			//	lower case index letter
+			else if (imwString.matches("[a-z]")) {
+				if (indexType == 0)
+					indexType = 'l';
+				else if (indexType != 'l')
+					break;
+				captionStartEnd = imw;
+				lastWasIndex = true;
+			}
+			
+			//	upper case index letter
+			else if (imwString.matches("[A-Z]")) {
+				if (indexType == 0)
+					indexType = 'L';
+				else if (indexType != 'L')
+					break;
 				captionStartEnd = imw;
 				lastWasIndex = true;
 			}
@@ -299,6 +608,36 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		//	finally ...
 		return ImUtils.getString(caption.getFirstWord(), ((captionStartEnd == null) ? caption.getLastWord() : captionStartEnd), true);
 	}
+//	
+//	private String getCaptionStart(ImAnnotation caption) {
+//		ImWord captionStartEnd = null;
+//		boolean lastWasIndex = false;
+//		for (ImWord imw = caption.getFirstWord().getNextWord(); imw != null; imw = imw.getNextWord()) {
+//			String imwString = imw.getString();
+//			if ((imwString == null) || (imwString.trim().length() == 0))
+//				continue;
+//			
+//			//	index number or letter
+//			if (imwString.matches("([0-9]+(\\s*[a-z])?)|[IiVvXxLl]+|[a-zA-Z]")) {
+//				captionStartEnd = imw;
+//				lastWasIndex = true;
+//			}
+//			
+//			//	enumeration separator or range marker
+//			else if (imwString.equals(",") || imwString.equals("&") || (";and;und;et;y;".indexOf(";" + imwString.toLowerCase() + ";") != -1) || imwString.matches("[\\-\\u00AD\\u2010-\\u2015\\u2212]+")) {
+//				if (!lastWasIndex) // no enumeration or range open, we're done here
+//					break;
+//				lastWasIndex = false;
+//			}
+//			
+//			//	ignore dots
+//			else if (!".".equals(imwString))
+//				break;
+//		}
+//		
+//		//	finally ...
+//		return ImUtils.getString(caption.getFirstWord(), ((captionStartEnd == null) ? caption.getLastWord() : captionStartEnd), true);
+//	}
 	
 	private String getCaptionTargetSupplementId(ImPage targetPage, BoundingBox captionTargetBox) {
 		ImSupplement[] targetPageSupplements = targetPage.getSupplements();
@@ -502,11 +841,19 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 				else if (".:,;".indexOf(imwString) == -1)
 					break;
 			}
-			System.out.println(" - start is '" + captionStart + "'");
-			System.out.println(" - min number is " + minNumber);
-			System.out.println(" - max number is " + maxNumber);
-			System.out.println(" - min letter is " + ((char) (minLetter + letterBase)));
-			System.out.println(" - max letter is " + ((char) (maxLetter + letterBase)));
+			
+			//	expand common abbreviations
+			if (captionStartMappings.containsKey(captionStart))
+				captionStart = ((String) captionStartMappings.get(captionStart));
+			
+			//	what do we have?
+			if (DEBUG_MARK_CAPTION_CITATIONS) {
+				System.out.println(" - start is '" + captionStart + "'");
+				System.out.println(" - min number is " + minNumber);
+				System.out.println(" - max number is " + maxNumber);
+				System.out.println(" - min letter is " + ((char) (minLetter + letterBase)));
+				System.out.println(" - max letter is " + ((char) (maxLetter + letterBase)));
+			}
 			
 			//	do we have anything to work with?
 			if (captionStart == null)
@@ -559,18 +906,24 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 						captionStartNumbers.put(number, captions[c]);
 				}
 			}
-			System.out.println(" - got " + numbers.size() + " numbers:");
-			for (Iterator cnit = numbers.keySet().iterator(); cnit.hasNext();)
-				System.out.println("   - " + cnit.next());
+			
+			if (DEBUG_MARK_CAPTION_CITATIONS) {
+				System.out.println(" - got " + numbers.size() + " numbers:");
+				for (Iterator cnit = numbers.keySet().iterator(); cnit.hasNext();)
+					System.out.println("   - " + cnit.next());
+			}
 		}
-		System.out.println("Got captions:");
-		for (Iterator csit = captionStartsToNumbers.keySet().iterator(); csit.hasNext();) {
-			String captionStart = ((String) csit.next());
-			System.out.print(" - " + captionStart);
-			TreeMap captionStartNumbers = ((TreeMap) captionStartsToNumbers.get(captionStart));
-			for (Iterator cnit = captionStartNumbers.keySet().iterator(); cnit.hasNext();)
-				System.out.print(" " + cnit.next());
-			System.out.println();
+		
+		if (DEBUG_MARK_CAPTION_CITATIONS) {
+			System.out.println("Got captions:");
+			for (Iterator csit = captionStartsToNumbers.keySet().iterator(); csit.hasNext();) {
+				String captionStart = ((String) csit.next());
+				System.out.print(" - " + captionStart);
+				TreeMap captionStartNumbers = ((TreeMap) captionStartsToNumbers.get(captionStart));
+				for (Iterator cnit = captionStartNumbers.keySet().iterator(); cnit.hasNext();)
+					System.out.print(" " + cnit.next());
+				System.out.println();
+			}
 		}
 		
 		//	finally ...
@@ -593,100 +946,241 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		}
 	}
 	
-	private ImWord markCaptionCitation(ImDocument doc, ImWord ccStart, TreeMap captionStartNumbers) {
+	private ImWord markCaptionCitation(ImDocument doc, ImWord ccHead, TreeMap captionStartNumbers) {
+		
+		//	get caption citations
+		ArrayList ccList = this.getCaptionCitations(ccHead, ccHead.getNextWord(), null, captionStartNumbers);
+		
+		//	anything to work with at all?
+		if (ccList.isEmpty())
+			return ccHead;
+		if (DEBUG_MARK_CAPTION_CITATIONS) {
+			System.out.println(" ==> found caption citation sequence '" + ImUtils.getString(ccHead, ((CaptionCitation) ccList.get(ccList.size()-1)).lastWord, true) + "' with " + ccList.size() + " caption citations:");
+			for (int c = 0; c < ccList.size(); c++) {
+				CaptionCitation cc = ((CaptionCitation) ccList.get(c));
+				System.out.println("   - " + ImUtils.getString(cc.firstWord, cc.lastWord, true) + " (" + cc.citedCaptions.size() + " cited captions)");
+			}
+		}
+		
+		//	merge caption citations if cited captions overlap or are empty on either side
+		for (int c = 0; c < (ccList.size() - 1); c++) {
+			CaptionCitation cc = ((CaptionCitation) ccList.get(c));
+			CaptionCitation ncc = ((CaptionCitation) ccList.get(c+1));
+			boolean mergeCcs = false;
+			if (cc.citedCaptions.isEmpty())
+				mergeCcs = true;
+			else if (ncc.citedCaptions.isEmpty())
+				mergeCcs = true;
+			else for (Iterator nccit = ncc.citedCaptions.iterator(); nccit.hasNext();)
+				if (cc.citedCaptions.contains(nccit.next())) {
+					mergeCcs = true;
+					break;
+				}
+			if (mergeCcs) {
+				cc.lastWord = ncc.lastWord;
+				cc.citedCaptions.addAll(ncc.citedCaptions);
+				ccList.remove(c+1);
+				c--;
+			}
+		}
+		
+		//	check if any cited caption found to link to
+		for (int c = 0; c < ccList.size(); c++) {
+			CaptionCitation cc = ((CaptionCitation) ccList.get(c));
+			if (cc.citedCaptions.isEmpty())
+				ccList.remove(c--);
+		}
+		
+		//	anything to reference?
+		if (ccList.isEmpty())
+			return ccHead;
+		if (DEBUG_MARK_CAPTION_CITATIONS) {
+			System.out.println(" ==> got " + ccList.size() + " caption citations after merging and cleanup:");
+			for (int c = 0; c < ccList.size(); c++) {
+				CaptionCitation cc = ((CaptionCitation) ccList.get(c));
+				System.out.println("   - " + ImUtils.getString(cc.firstWord, cc.lastWord, true) + " (" + cc.citedCaptions.size() + " cited captions)");
+			}
+		}
+		
+		//	mark caption citation, distinguishing table citations from figure citations
+		for (int c = 0; c < ccList.size(); c++) {
+			CaptionCitation cc = ((CaptionCitation) ccList.get(c));
+			this.annotateCaptionCitation(doc, ccHead.getString(), cc.firstWord, cc.lastWord, cc.citedCaptions);
+		}
+		
+		//	return last word of last caption citation
+		return ((CaptionCitation) ccList.get(ccList.size()-1)).lastWord;
+	}
+	
+	private ArrayList getCaptionCitations(ImWord ccHead, ImWord ccNumStart, ImWord ccEnd, TreeMap captionStartNumbers) {
 		int lastNumber = -1;
+		String lastNumberStr = null;
 		int lastLetter = -1;
+//		String lastLetterStr = null; // we'll need that for Arabic+Roman and Roman+Arabic combinations
 		boolean lastWasLetter = false;
 		CaptionCitation cc = null;
 		ArrayList ccList = new ArrayList();
+		//	TODO somehow handle Arabic main numbers with Roman index numbers
+		//	TODO somehow handle Roman main numbers with Arabic index numbers
 		
 		//	try and find numbers, starting from successor of start word
-		for (ImWord imw = ccStart.getNextWord(); imw != null; imw = imw.getNextWord()) {
+		for (ImWord imw = ccNumStart; imw != null; imw = imw.getNextWord()) {
 			String imwString = imw.getString();
 			if (imwString == null)
 				continue;
 			
-			//	number
-			if (imwString.matches("[1-9][0-9]{0,2}") && captionStartNumbers.containsKey(imwString)) {
+			//	Arabic number
+			if (imwString.matches("[1-9][0-9]{0,2}") && ((captionStartNumbers == null) || captionStartNumbers.containsKey(imwString))) {
 				if ((lastNumber == -1) || (lastLetter != -1) || lastWasLetter) {
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got number " + imwString);
-					cc = new CaptionCitation((ccList.isEmpty() ? ccStart : imw), imw);
+					cc = new CaptionCitation((ccList.isEmpty() ? ccHead : imw), imw);
 					ccList.add(cc);
-					ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
-					if (citedCaption != null)
-						cc.citedCaptions.add(citedCaption);
+					if (captionStartNumbers != null) {
+						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
+						if (citedCaption != null)
+							cc.citedCaptions.add(citedCaption);
+					}
 				}
 				else {
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got number range " + lastNumber + "-" + imwString);
 					cc.lastWord = imw;
-					for (int n = lastNumber; n <= Integer.parseInt(imwString); n++) {
-						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + n));
+					if (captionStartNumbers != null)
+						for (int n = lastNumber; n <= Integer.parseInt(imwString); n++) {
+							ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + n));
+							if (citedCaption != null)
+								cc.citedCaptions.add(citedCaption);
+						}
+				}
+				lastNumber = Integer.parseInt(imwString);
+				lastNumberStr = imwString;
+				lastLetter = -1;
+//				lastLetterStr = null;
+				lastWasLetter = false;
+			}
+			
+			//	lower case Roman number (for now only if we don't have an Arabic number open)
+			else if ((lastNumber == -1) && imwString.matches("[ivxl]+") && StringUtils.isRomanNumber(imwString) && ((captionStartNumbers == null) || captionStartNumbers.containsKey(imwString))) {
+				if ((lastNumber == -1) || (lastLetter != -1) || lastWasLetter) {
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got number " + imwString);
+					cc = new CaptionCitation((ccList.isEmpty() ? ccHead : imw), imw);
+					ccList.add(cc);
+					if (captionStartNumbers != null) {
+						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
 						if (citedCaption != null)
 							cc.citedCaptions.add(citedCaption);
 					}
 				}
-				lastNumber = Integer.parseInt(imwString);
+				else {
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got number range " + lastNumber + "-" + imwString);
+					cc.lastWord = imw;
+					if (captionStartNumbers != null)
+						for (int n = lastNumber; n <= Integer.parseInt(imwString); n++) {
+							ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + n));
+							if (citedCaption != null)
+								cc.citedCaptions.add(citedCaption);
+						}
+				}
+				lastNumber = StringUtils.parseRomanNumber(imwString);
+				lastNumberStr = imwString;
 				lastLetter = -1;
+//				lastLetterStr = null;
+				lastWasLetter = false;
+			}
+			
+			//	upper case Roman number (for now only if we don't have an Arabic number open)
+			else if ((lastNumber == -1) && imwString.matches("[IVXL]+") && StringUtils.isRomanNumber(imwString) && ((captionStartNumbers == null) || captionStartNumbers.containsKey(imwString))) {
+				if ((lastNumber == -1) || (lastLetter != -1) || lastWasLetter) {
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got number " + imwString);
+					cc = new CaptionCitation((ccList.isEmpty() ? ccHead : imw), imw);
+					ccList.add(cc);
+					if (captionStartNumbers != null) {
+						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
+						if (citedCaption != null)
+							cc.citedCaptions.add(citedCaption);
+					}
+				}
+				else {
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got number range " + lastNumber + "-" + imwString);
+					cc.lastWord = imw;
+					if (captionStartNumbers != null)
+						for (int n = lastNumber; n <= Integer.parseInt(imwString); n++) {
+							ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + n));
+							if (citedCaption != null)
+								cc.citedCaptions.add(citedCaption);
+						}
+				}
+				lastNumber = StringUtils.parseRomanNumber(imwString);
+				lastNumberStr = imwString;
+				lastLetter = -1;
+//				lastLetterStr = null;
 				lastWasLetter = false;
 			}
 			
 			//	lower case index letter
-			else if (imwString.matches("[a-z]") && (captionStartNumbers.containsKey(imwString) || captionStartNumbers.containsKey("" + lastNumber + imwString))) {
+			else if (imwString.matches("[a-z]") && ((captionStartNumbers == null) || captionStartNumbers.containsKey(imwString) || captionStartNumbers.containsKey("" + lastNumberStr + imwString))) {
 				if (lastLetter == -1) {
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter " + imwString);
 					if (cc == null) { // letters only, no caption citation open
-						cc = new CaptionCitation((ccList.isEmpty() ? ccStart : imw), imw);
+						cc = new CaptionCitation((ccList.isEmpty() ? ccHead : imw), imw);
 						ccList.add(cc);
 					}
 					else cc.lastWord = imw; // combination of numbers and letters, don't overwrite number start
-					ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
-					if (citedCaption == null)
-						citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumber + imwString));
-					if (citedCaption != null)
-						cc.citedCaptions.add(citedCaption);
+					if (captionStartNumbers != null) {
+						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
+						if (citedCaption == null)
+							citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumberStr + imwString));
+						if (citedCaption != null)
+							cc.citedCaptions.add(citedCaption);
+					}
 				}
 				else {
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter range " + ((char) (lastLetter + 'a')) + "-" + imwString);
 					cc.lastWord = imw;
-					for (int l = lastLetter; l <= (imwString.charAt(0) - 'a'); l++) {
-						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + ((char) (l + 'a'))));
-						if (citedCaption == null)
-							citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumber + ((char) (l + 'a'))));
-						if (citedCaption != null)
-							cc.citedCaptions.add(citedCaption);
-					}
+					if (captionStartNumbers != null)
+						for (int l = lastLetter; l <= (imwString.charAt(0) - 'a'); l++) {
+							ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + ((char) (l + 'a'))));
+							if (citedCaption == null)
+								citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumberStr + ((char) (l + 'a'))));
+							if (citedCaption != null)
+								cc.citedCaptions.add(citedCaption);
+						}
 				}
 				lastLetter = (imwString.charAt(0) - 'a');
+//				lastLetterStr = imwString;
 				lastWasLetter = true;
 			}
 			
 			//	upper case index letter
-			else if (imwString.matches("[A-Z]") && (captionStartNumbers.containsKey(imwString) || captionStartNumbers.containsKey("" + lastNumber + imwString))) {
+			else if (imwString.matches("[A-Z]") && ((captionStartNumbers == null) || captionStartNumbers.containsKey(imwString) || captionStartNumbers.containsKey("" + lastNumberStr + imwString))) {
 				if (lastLetter == -1) {
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter " + imwString);
 					if (cc == null) { // letters only, no caption citation open
-						cc = new CaptionCitation((ccList.isEmpty() ? ccStart : imw), imw);
+						cc = new CaptionCitation((ccList.isEmpty() ? ccHead : imw), imw);
 						ccList.add(cc);
 					}
 					else cc.lastWord = imw; // combination of numbers and letters, don't overwrite number start
-					ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
-					if (citedCaption == null)
-						citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumber + imwString));
-					if (citedCaption != null)
-						cc.citedCaptions.add(citedCaption);
-				}
-				else {
-					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter range " + ((char) (lastLetter + 'A')) + "-" + imwString);
-					cc.lastWord = imw;
-					for (int l = lastLetter; l <= (imwString.charAt(0) - 'A'); l++) {
-						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + ((char) (l + 'A'))));
+					if (captionStartNumbers != null) {
+						ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get(imwString));
 						if (citedCaption == null)
-							citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumber + ((char) (l + 'A'))));
+							citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumberStr + imwString));
 						if (citedCaption != null)
 							cc.citedCaptions.add(citedCaption);
 					}
 				}
+				else {
+					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got letter range " + ((char) (lastLetter + 'A')) + "-" + imwString);
+					cc.lastWord = imw;
+					if (captionStartNumbers != null)
+						for (int l = lastLetter; l <= (imwString.charAt(0) - 'A'); l++) {
+							ImAnnotation citedCaption = ((ImAnnotation) captionStartNumbers.get("" + ((char) (l + 'A'))));
+							if (citedCaption == null)
+								citedCaption = ((ImAnnotation) captionStartNumbers.get("" + lastNumberStr + ((char) (l + 'A'))));
+							if (citedCaption != null)
+								cc.citedCaptions.add(citedCaption);
+						}
+				}
 				lastLetter = (imwString.charAt(0) - 'A');
+//				lastLetterStr = imwString;
 				lastWasLetter = true;
 			}
 			
@@ -696,10 +1190,12 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 				if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - got enumeration separator " + imwString);
 				if (lastLetter != -1) {// clear last letter
 					lastLetter = -1;
+//					lastLetterStr = null;
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println("   ==> letter range start reset");
 				}
 				else if (lastNumber != -1) {// clear last number
 					lastNumber = -1;
+					lastNumberStr = null;
 					if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println("   ==> number range start reset");
 				}
 				else {
@@ -722,114 +1218,76 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 				if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println(" - end of caption citation sequence at " + imwString);
 				break;
 			}
+			
+			//	stop looking if requested
+			if (imw == ccEnd)
+				break;
 		}
 		
-		//	anything to work with at all?
-		if (ccList.isEmpty())
-			return ccStart;
-		if (DEBUG_MARK_CAPTION_CITATIONS) {
-			System.out.println(" ==> found caption citation sequence '" + ImUtils.getString(ccStart, ((CaptionCitation) ccList.get(ccList.size()-1)).lastWord, true) + "' with " + ccList.size() + " caption citations:");
-			for (int c = 0; c < ccList.size(); c++) {
-				cc = ((CaptionCitation) ccList.get(c));
-				System.out.println("   - " + ImUtils.getString(cc.firstWord, cc.lastWord, true) + " (" + cc.citedCaptions.size() + " cited captions)");
-			}
-		}
-		
-		//	merge caption citations if cited captions overlap or are empty on either side
-		for (int c = 0; c < (ccList.size() - 1); c++) {
-			cc = ((CaptionCitation) ccList.get(c));
-			CaptionCitation ncc = ((CaptionCitation) ccList.get(c+1));
-			boolean mergeCcs = false;
-			if (cc.citedCaptions.isEmpty())
-				mergeCcs = true;
-			else if (ncc.citedCaptions.isEmpty())
-				mergeCcs = true;
-			else for (Iterator nccit = ncc.citedCaptions.iterator(); nccit.hasNext();)
-				if (cc.citedCaptions.contains(nccit.next())) {
-					mergeCcs = true;
-					break;
-				}
-			if (mergeCcs) {
-				cc.lastWord = ncc.lastWord;
-				cc.citedCaptions.addAll(ncc.citedCaptions);
-				ccList.remove(c+1);
-				c--;
-			}
-		}
-		
-		//	check if any cited caption found to link to
-		for (int c = 0; c < ccList.size(); c++) {
-			cc = ((CaptionCitation) ccList.get(c));
-			if (cc.citedCaptions.isEmpty())
-				ccList.remove(c--);
-		}
-		
-		//	anything to reference?
-		if (ccList.isEmpty())
-			return ccStart;
-		if (DEBUG_MARK_CAPTION_CITATIONS) {
-			System.out.println(" ==> got " + ccList.size() + " caption citations after merging and cleanup:");
-			for (int c = 0; c < ccList.size(); c++) {
-				cc = ((CaptionCitation) ccList.get(c));
-				System.out.println("   - " + ImUtils.getString(cc.firstWord, cc.lastWord, true) + " (" + cc.citedCaptions.size() + " cited captions)");
-			}
-		}
-		
-		//	mark caption citation, distinguishing table citations from figure citations
-		for (int c = 0; c < ccList.size(); c++) {
-			cc = ((CaptionCitation) ccList.get(c));
-			ImAnnotation captionCitation = doc.addAnnotation(cc.firstWord, cc.lastWord, ((ccStart.getString().toLowerCase().startsWith("tab") ? ImRegion.TABLE_TYPE : "figure") + CITATION_TYPE_SUFFIX));
-			int ccIndex = 0;
-			for (Iterator ccit = cc.citedCaptions.iterator(); ccit.hasNext();) {
-				ImAnnotation citedCaption = ((ImAnnotation) ccit.next());
-				String captionStart = this.getCaptionStart(citedCaption);
-				String captionText = ImUtils.getString(citedCaption.getFirstWord(), citedCaption.getLastWord(), true);
-				String captionTargetPageId = ((String) citedCaption.getAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE));
-				BoundingBox captionTargetBox = BoundingBox.parse((String) citedCaption.getAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE));
-				String captionHttpUri = ((String) citedCaption.getAttribute("httpUri"));
-				if (cc.citedCaptions.size() == 1) {
-					captionCitation.setAttribute("captionStartId", citedCaption.getFirstWord().getLocalID());
-					captionCitation.setAttribute("captionStart", captionStart);
-					captionCitation.setAttribute("captionText", captionText);
-					if ((captionTargetPageId != null) && (captionTargetBox != null)) {
-						captionCitation.setAttribute("captionTargetPageId", captionTargetPageId);
-						captionCitation.setAttribute("captionTargetBox", captionTargetBox.toString());
-						String captionTargetId = this.getCaptionTargetSupplementId(citedCaption.getDocument().getPage(Integer.parseInt(captionTargetPageId)), captionTargetBox);
-						if (captionTargetId != null)
-							captionCitation.setAttribute("captionTargetId", captionTargetId);
-					}
-					if (captionHttpUri != null)
-						captionCitation.setAttribute("httpUri", captionHttpUri);
-				}
-				else {
-					int cci = ccIndex++;
-					captionCitation.setAttribute(("captionStartId-" + cci), citedCaption.getFirstWord().getLocalID());
-					captionCitation.setAttribute(("captionStart-" + cci), captionStart);
-					captionCitation.setAttribute(("captionText-" + cci), captionText);
-					if ((captionTargetPageId != null) && (captionTargetBox != null)) {
-						captionCitation.setAttribute(("captionTargetPageId-" + cci), captionTargetPageId);
-						captionCitation.setAttribute(("captionTargetBox-" + cci), captionTargetBox.toString());
-						String captionTargetId = this.getCaptionTargetSupplementId(citedCaption.getDocument().getPage(Integer.parseInt(captionTargetPageId)), captionTargetBox);
-						if (captionTargetId != null)
-							captionCitation.setAttribute(("captionTargetId-" + cci), captionTargetId);
-					}
-					if (captionHttpUri != null)
-						captionCitation.setAttribute(("httpUri-" + cci), captionHttpUri);
-				}
-			}
-			if (DEBUG_MARK_CAPTION_CITATIONS) {
-				ImDocumentRoot ccDoc = new ImDocumentRoot(captionCitation, ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS);
-				Annotation[] ccAnnot = ccDoc.getAnnotations(captionCitation.getType());
-				if (ccAnnot.length != 0)
-					System.out.println(" - " + ccAnnot[0].toXML());
-			}
-		}
-		
-		//	return last word of last caption citation
-		return ((CaptionCitation) ccList.get(ccList.size()-1)).lastWord;
+		//	finally ...
+		return ccList;
 	}
 	
-	private class CaptionCitation {
+	private void annotateCaptionCitation(ImDocument doc, String ccHead, ImWord firstWord, ImWord lastWord, Collection citedCaptions) {
+		ImAnnotation captionCitation = doc.addAnnotation(firstWord, lastWord, ((ccHead.toLowerCase().startsWith("tab") ? ImRegion.TABLE_TYPE : "figure") + CITATION_TYPE_SUFFIX));
+		int ccIndex = 0;
+		for (Iterator ccit = citedCaptions.iterator(); ccit.hasNext();) {
+			ImAnnotation citedCaption = ((ImAnnotation) ccit.next());
+			String captionStart = this.getCaptionStart(citedCaption);
+			String captionText = ImUtils.getString(citedCaption.getFirstWord(), citedCaption.getLastWord(), true);
+			String captionTargetPageId = ((String) citedCaption.getAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE));
+			BoundingBox captionTargetBox = BoundingBox.parse((String) citedCaption.getAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE));
+			String captionHttpUri = ((String) citedCaption.getAttribute("httpUri"));
+			if (citedCaptions.size() == 1) {
+				captionCitation.setAttribute("captionStartId", citedCaption.getFirstWord().getLocalID());
+				captionCitation.setAttribute("captionStart", captionStart);
+				captionCitation.setAttribute("captionText", captionText);
+				if ((captionTargetPageId != null) && (captionTargetBox != null)) {
+					captionCitation.setAttribute("captionTargetPageId", captionTargetPageId);
+					captionCitation.setAttribute("captionTargetBox", captionTargetBox.toString());
+					String captionTargetId = this.getCaptionTargetSupplementId(citedCaption.getDocument().getPage(Integer.parseInt(captionTargetPageId)), captionTargetBox);
+					if (captionTargetId != null)
+						captionCitation.setAttribute("captionTargetId", captionTargetId);
+				}
+				if (captionHttpUri != null)
+					captionCitation.setAttribute("httpUri", captionHttpUri);
+			}
+			else {
+				int cci = ccIndex++;
+				captionCitation.setAttribute(("captionStartId-" + cci), citedCaption.getFirstWord().getLocalID());
+				captionCitation.setAttribute(("captionStart-" + cci), captionStart);
+				captionCitation.setAttribute(("captionText-" + cci), captionText);
+				if ((captionTargetPageId != null) && (captionTargetBox != null)) {
+					captionCitation.setAttribute(("captionTargetPageId-" + cci), captionTargetPageId);
+					captionCitation.setAttribute(("captionTargetBox-" + cci), captionTargetBox.toString());
+					String captionTargetId = this.getCaptionTargetSupplementId(citedCaption.getDocument().getPage(Integer.parseInt(captionTargetPageId)), captionTargetBox);
+					if (captionTargetId != null)
+						captionCitation.setAttribute(("captionTargetId-" + cci), captionTargetId);
+				}
+				if (captionHttpUri != null)
+					captionCitation.setAttribute(("httpUri-" + cci), captionHttpUri);
+			}
+		}
+		
+		if (DEBUG_MARK_CAPTION_CITATIONS) {
+			ImDocumentRoot ccDoc = new ImDocumentRoot(captionCitation, ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS);
+			Annotation[] ccAnnot = ccDoc.getAnnotations(captionCitation.getType());
+			if (ccAnnot.length != 0)
+				System.out.println(" - " + ccAnnot[0].toXML());
+		}
+	}
+	
+	private static TreeMap captionStartMappings = new TreeMap(String.CASE_INSENSITIVE_ORDER);
+	static {
+		captionStartMappings.put("Fig", "Figure");
+		captionStartMappings.put("Figs", "Figures");
+		captionStartMappings.put("Abb", "Abbildung");
+		captionStartMappings.put("Diag", "Diagram");
+		captionStartMappings.put("Diags", "Diagrams");
+		captionStartMappings.put("Tab", "Table");
+	}
+	
+	private static class CaptionCitation {
 		ImWord firstWord;
 		ImWord lastWord;
 		LinkedHashSet citedCaptions = new LinkedHashSet();

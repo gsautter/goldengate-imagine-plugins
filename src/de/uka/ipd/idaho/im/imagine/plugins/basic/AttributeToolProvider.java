@@ -31,6 +31,7 @@ import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.TreeSet;
 
@@ -39,6 +40,9 @@ import javax.swing.JOptionPane;
 import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.DocumentRoot;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
+import de.uka.ipd.idaho.gamta.util.swing.AttributeEditor;
+import de.uka.ipd.idaho.gamta.util.swing.AttributeEditor.AttributeValueList;
+import de.uka.ipd.idaho.gamta.util.swing.AttributeEditor.AttributeValueProvider;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
@@ -89,6 +93,58 @@ public class AttributeToolProvider extends AbstractImageMarkupToolProvider {
 	 */
 	public String getPluginName() {
 		return "IM Attribute Actions";
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#init()
+	 */
+	public void init() {
+		
+		//	register attribute suggestion provider
+		AttributeEditor.addAttributeValueProvider(new AttributeValueProvider() {
+			public AttributeValueList getValuesFor(Attributed attributed, String attributeName) {
+				if (attributed instanceof ImObject) {
+					AttributeValueProvider[] avps = AttributeEditor.getAttributeValueProviders();
+					AttributeValueList avl = null;
+					for (int p = 0; p < avps.length; p++) {
+						if (avps[p] == this)
+							continue;
+						AttributeValueList pAvl = avps[p].getValuesFor(((ImObject) attributed).getType(), attributeName);
+						if (pAvl == null)
+							continue;
+						if (avl == null)
+							avl = new AttributeValueList(pAvl, pAvl.isControlled);
+						else avl.addAll(pAvl);
+					}
+					return avl;
+				}
+				else return null;
+			}
+			public AttributeValueList getValuesFor(String type, String attributeName) {
+				return null; // we just get the object type and then rely on the other providers
+			}
+			public String[] getAttributesFor(Attributed attributed) {
+				if (attributed instanceof ImObject) {
+					AttributeValueProvider[] avps = AttributeEditor.getAttributeValueProviders();
+					LinkedHashSet ans = null;
+					for (int p = 0; p < avps.length; p++) {
+						if (avps[p] == this)
+							continue;
+						String[] pAns = avps[p].getAttributesFor(((ImObject) attributed).getType());
+						if (pAns == null)
+							continue;
+						if (ans == null)
+							ans = new LinkedHashSet();
+						ans.addAll(Arrays.asList(pAns));
+					}
+					return ((ans == null) ? null : ((String[]) ans.toArray(new String[ans.size()])));
+				}
+				else return null;
+			}
+			public String[] getAttributesFor(String type) {
+				return null; // we just get the object type and then rely on the other providers
+			}
+		});
 	}
 	
 	/* (non-Javadoc)

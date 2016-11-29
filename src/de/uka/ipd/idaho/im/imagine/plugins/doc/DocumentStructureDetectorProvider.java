@@ -28,7 +28,6 @@
 package de.uka.ipd.idaho.im.imagine.plugins.doc;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -83,6 +82,8 @@ import de.uka.ipd.idaho.stringUtils.regExUtils.RegExUtils;
  */
 public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolProvider implements ImagingConstants {
 	private boolean debug = false;
+	private static final boolean detectTablesSimpleDefault = true;
+	private boolean detectTablesSimple = detectTablesSimpleDefault;
 	
 	private static final String STRUCTURE_DETECTOR_IMT_NAME = "StructureDetector";
 	
@@ -419,10 +420,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			ImUtils.sortLeftRightTopDown(pageNumberParts);
 			if (documentBornDigital) {
 				spm.setInfo(" - got " + pageNumberParts.size() + " possible page numbers for page " + p + ":");
-				for (int w = 0; w < pageNumberParts.size(); w++) {
+				for (int w = 0; w < pageNumberParts.size(); w++)  try {
 					pageData[p].pageNumberCandidates.add(new PageNumber((ImWord) pageNumberParts.get(w)));
 					spm.setInfo("   - " + ((ImWord) pageNumberParts.get(w)).getString());
-				}
+				} catch (NumberFormatException nfe) {}
 			}
 			else {
 				spm.setInfo(" - got " + pageNumberParts.size() + " parts of possible page numbers:");
@@ -528,13 +529,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		ParallelJobRunner.runParallelFor(new ParallelFor() {
 			public void doFor(int p) throws Exception {
 				spm.setProgress((p * 100) / pages.length);
-				detectTables(pages[p], pageImageDpi, minTableColMargin, minTableRowMargin, spm);
-//				try {
-//					detectTablesTest(pages[p], pageImageDpi, minTableColMargin, minTableRowMargin, spm);
-//				} catch (Exception e) {
-//					// TODO Auto-generated catch block
-//					e.printStackTrace(System.out);
-//				}
+				if (detectTablesSimple)
+					detectTables(pages[p], pageImageDpi, minTableColMargin, minTableRowMargin, spm);
+				else try {
+					detectTablesTest(pages[p], pageImageDpi, minTableColMargin, minTableRowMargin, spm);
+				}
+				catch (Exception e) {
+					e.printStackTrace(System.out);
+				}
 				//	TODO figure out what layout hints might be useful for tables
 				
 				/* TODO restrict table detection:
@@ -568,7 +570,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				 * ==> anchor points (and in particular their violation) might well help to chop captions off the top of tables
 				 */
 			}
-		}, pages.length, (this.debug ? 1 : -1));
+		}, pages.length, ((this.debug || (this.detectTablesSimple != detectTablesSimpleDefault)) ? 1 : -1));
 		
 		//	detect artifacts (blocks with word coverage below 10%, only for scanned documents)
 		if (!documentBornDigital) {
@@ -666,6 +668,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
 		
 		//	detect footnote paragraphs
+		//	TODO maybe require footnotes to form separate block of their own
 		spm.setStep(" - detecting footnotes");
 		spm.setBaseProgress(50);
 		spm.setMaxProgress(55);
@@ -692,7 +695,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					for (int p = 0; p < pageParagraphs.length; p++) {
 						if (!footnoteArea.includes(pageParagraphs[p].bounds, false))
 							continue;
-						ImWord[] paragraphWords = getLargestTextStreamWords(pageParagraphs[p].getWords());
+							ImWord[] paragraphWords = getLargestTextStreamWords(pageParagraphs[p].getWords());
 						if (paragraphWords.length == 0)
 							continue;
 						Arrays.sort(paragraphWords, ImUtils.textStreamOrder);
@@ -1091,6 +1094,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					spm.setInfo(" - caption start is " + ((tableCaptionStart == null) ? "null" : ("'" + tableCaptionStart + "'")));
 					for (int c = (t+1); c < pageTables.length; c++) {
 						spm.setInfo(" - comparing to table " + pageTables[c].bounds);
+						if (pageTables[c].bounds.top < pageTables[t].bounds.bottom) {
+							spm.setInfo(" --> tables overlapping or side by side");
+							continue;
+						}
+						if ((pageTables[c].bounds.right < pageTables[t].bounds.left) && (pageTables[t].bounds.right < pageTables[c].bounds.left)) {
+							spm.setInfo(" --> tables horizontally offset");
+							continue;
+						}
 						if (!ImUtils.areTableRowsCompatible(pageTables[t], pageTables[c])) {
 							spm.setInfo(" --> rows not compatible");
 							continue;
@@ -1116,6 +1127,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					spm.setInfo(" - caption start is " + ((tableCaptionStart == null) ? "null" : ("'" + tableCaptionStart + "'")));
 					for (int c = (t+1); c < pageTables.length; c++) {
 						spm.setInfo(" - comparing to table " + pageTables[c].bounds);
+						if (pageTables[c].bounds.left < pageTables[t].bounds.right) {
+							spm.setInfo(" --> tables overlapping or atop one another");
+							continue;
+						}
 						if (!ImUtils.areTableColumnsCompatible(pageTables[t], pageTables[c])) {
 							spm.setInfo(" --> columns not compatible");
 							continue;
@@ -1138,7 +1153,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setStep(" - merging tables across pages");
 		ImRegion[] docTables;
 		
-		//	investigate row mergers
+		//	get and sort document tables
 		docTables = ((ImRegion[]) docTableList.toArray(new ImRegion[docTableList.size()]));
 		docTableList.clear();
 		Arrays.sort(docTables, new Comparator() {
@@ -1148,6 +1163,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				return ((reg1.pageId == reg2.pageId) ? ImUtils.topDownOrder.compare(reg1, reg2) : (reg1.pageId - reg2.pageId));
 			}
 		});
+		
+		//	investigate row mergers
 		spm.setBaseProgress(75);
 		spm.setMaxProgress(80);
 		for (int t = 0; t < docTables.length; t++) {
@@ -1158,6 +1175,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			spm.setInfo(" - caption start is " + ((tableCaptionStart == null) ? "null" : ("'" + tableCaptionStart + "'")));
 			for (int c = (t+1); c < docTables.length; c++) {
 				spm.setInfo(" - comparing to table " + docTables[c].bounds + " on page " + docTables[c].pageId);
+				if (docTables[c].pageId == docTables[t].pageId) {
+					spm.setInfo(" --> same page");
+					break;
+				}
 				if ((docTables[c].pageId - docTables[t].pageId) > 2) {
 					spm.setInfo(" --> too many pages in between");
 					break;
@@ -1197,6 +1218,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			spm.setInfo(" - got " + tableGridRow.length + " row-connected tables");
 			for (int c = (t+1); c < docTables.length; c++) {
 				spm.setInfo(" - comparing to table " + docTables[c].bounds + " on page " + docTables[c].pageId);
+				if (docTables[c].pageId == docTables[t].pageId) {
+					spm.setInfo(" --> same page");
+					break;
+				}
 				if (!ImUtils.areTableColumnsCompatible(docTables[t], docTables[c])) {
 					spm.setInfo(" --> columns not compatible");
 					continue;
@@ -1262,12 +1287,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			for (ImWord imw = textStreamHeads[h]; imw != null; imw = imw.getNextWord()) {
 				boolean markedBoldEmphasis = false;
 				boolean markedItalicsEmphasis = false;
-//				
-//				//	get font size
-//				String imwFontSize = ((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
 				
 				//	finish bold emphasis (for style reasons, or because paragraph ends)
-//				if ((boldStart != null) && (!imw.hasAttribute(ImWord.BOLD_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || ((imwFontSize != null) && !imwFontSize.equals(boldStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, imwFontSize))))) {
 				if ((boldStart != null) && (!imw.hasAttribute(ImWord.BOLD_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || !this.isFontSizeMatch(((String) boldStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE)), imw))) {
 					ImAnnotation emphasis = doc.addAnnotation(boldStart, imw.getPreviousWord(), ImAnnotation.EMPHASIS_TYPE);
 					emphasis.setAttribute(ImWord.BOLD_ATTRIBUTE);
@@ -1310,7 +1331,6 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				}
 				
 				//	finish italics emphasis (for style reasons, or because paragraph ends)
-//				if ((italicsStart != null) && (!imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || ((imwFontSize != null) && !imwFontSize.equals(italicsStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, imwFontSize))))) {
 				if ((italicsStart != null) && (!imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) || (imw.getPreviousWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) || !this.isFontSizeMatch(((String) italicsStart.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE)), imw))) {
 					ImAnnotation emphasis = doc.addAnnotation(italicsStart, imw.getPreviousWord(), ImAnnotation.EMPHASIS_TYPE);
 					emphasis.setAttribute(ImWord.ITALICS_ATTRIBUTE);
@@ -2773,8 +2793,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			return false;
 		if (DEBUG_IS_TABLE) System.out.println(" --> got cells");
 		
+		//	small number of rows, so likely increasing row margin won't help ==> follow check
+		if (tableRows.length < 9) {
+			if (DEBUG_IS_TABLE) System.out.println(" --> assessing table completeness");
+			if (!this.checkColumnHeaders(page, tableCols, tableCells))
+				return false;
+			else if (!this.checkRowLabels(page, tableCells))
+				return false;
+			else if (!this.checkTableBody(page, tableCells))
+				return false;
+		}
+		
 		//	large number of rows, but incomplete row labels or sparse table body, try increasing row margin
-		if ((tableRows.length >= 9) && (!this.checkRowLabels(page, tableCells) || !this.checkTableBody(page, tableCells))) {
+		else if (!this.checkRowLabels(page, tableCells) || !this.checkTableBody(page, tableCells)) {
 			if (DEBUG_IS_TABLE) System.out.println(" --> re-trying with increased row margin");
 			
 			//	compute average margin of table rows (we only have a chance if cell internal line margin is less than table row margin)
@@ -3084,6 +3115,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return tableRows;
 	}
 	
+	//	TODO observe multi-column cells
 	private ImRegion[][] getTableCells(ImPage page, ImRegion block, ImRegion[] tableRows, ImRegion[] tableCols, boolean includeCellChecks) {
 		
 		//	get table cells
@@ -3142,7 +3174,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					emptyTableBodyCells++;
 			}
 		if ((emptyTableBodyCells * 2) > tableBodyCells) {
-			if (DEBUG_IS_TABLE) System.out.println(" ==> table content extremely sparse, " + emptyTableBodyCells + " empty out of " + tableBodyCells);
+			if (DEBUG_IS_TABLE) System.out.println(" ==> table content extremely sparse, " + emptyTableBodyCells + " cells empty out of " + tableBodyCells);
 			return false;
 		}
 		return true;
@@ -3196,27 +3228,26 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		//	compute font size
 		int fontSizeSum = 0;
 		int fontSizeWordCount = 0;
-		for (int w = 0; w < paragraphWords.length; w++) {
-			String wfsStr = ((String) paragraphWords[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
-			if (wfsStr != null) try {
-				int wfs = Integer.parseInt(wfsStr);
-				if (wfs < minFontSize)
-					return false;
-				if (maxFontSize < wfs)
-					return false;
+		for (int w = 0; w < paragraphWords.length; w++) try {
+			int wfs = Integer.parseInt((String) paragraphWords[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "-1"));
+			if (isFontSizeMatch(paragraphWords[w], wfs, minFontSize, maxFontSize, DEBUG_IS_FOOTNOTE)) {
 				fontSizeSum += wfs;
 				fontSizeWordCount++;
-			} catch (NumberFormatException nfe) {}
-		}
-		int paragraphFontSize = ((fontSizeWordCount == 0) ? -1 : (fontSizeSum / fontSizeWordCount));
+			}
+			else return false;
+		} catch (NumberFormatException nfe) {}
 		
-		//	if footnote is large (> 50% of page width, or > 30 words), require font size to be lower than in main text
-		int paragraphWidth = (paragraph.bounds.right - paragraph.bounds.left);
-		int pageWidth = (paragraph.getPage().bounds.right - paragraph.getPage().bounds.left);
-		if ((((paragraphWidth * 2) > pageWidth) || (paragraphWords.length > 30)) && (paragraphFontSize >= docFontSize)) {
-			if (DEBUG_IS_FOOTNOTE) System.out.println(" ==> font too large for big footnote (" + ((paragraphWidth * 100) / pageWidth) + "% of page width, " + paragraphWords.length + " words, font size " + paragraphFontSize + " vs. " + docFontSize + " in doc)");
-			return false;
-		}
+		//	if footnote is large (> 50% of page width, or > 30 words), require font size to be lower than in main text (unless we have a style template)
+		//	WE NEED THIS CATCH, EVEN WITH A STYLE TEMPLATE (KEYS !!!)
+//		if (startPatterns == this.footnoteStartPatterns) {
+			int paragraphFontSize = ((fontSizeWordCount == 0) ? -1 : (fontSizeSum / fontSizeWordCount));
+			int paragraphWidth = (paragraph.bounds.right - paragraph.bounds.left);
+			int pageWidth = (paragraph.getPage().bounds.right - paragraph.getPage().bounds.left);
+			if ((((paragraphWidth * 2) > pageWidth) || (paragraphWords.length > 30)) && (paragraphFontSize >= docFontSize)) {
+				if (DEBUG_IS_FOOTNOTE) System.out.println(" ==> font too large for big footnote (" + ((paragraphWidth * 100) / pageWidth) + "% of page width, " + paragraphWords.length + " words, font size " + paragraphFontSize + " vs. " + docFontSize + " in doc)");
+				return false;
+			}
+//		}
 		
 		//	find end of first line
 		ImWord firstLineEnd = paragraphWords[0];
@@ -3253,7 +3284,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return false;
 	}
 	
-	private static final boolean DEBUG_IS_CAPTION = true;
+	private static final boolean DEBUG_IS_CAPTION = false;
 	private boolean isCaption(ImRegion paragraph, ImWord[] paragraphWords, Pattern[] startPatterns, int minFontSize, int maxFontSize, boolean startIsBold) {
 		
 		//	test bold property and font size first thing
@@ -3261,24 +3292,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (DEBUG_IS_CAPTION) System.out.println(" ==> not bold at " + paragraphWords[0].getString());
 			return false;
 		}
-		if ((0 < minFontSize) || (maxFontSize < 72)) try {
-			for (int w = 0; w < paragraphWords.length; w++) {
-				int wfs = Integer.parseInt((String) paragraphWords[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "-1"));
-				if (wfs < 0)
-					continue;
-				if (wfs < minFontSize) {
-					if (DEBUG_IS_CAPTION) System.out.println(" ==> font smaller than " + minFontSize + " at " + wfs + " for " + paragraphWords[w].getString());
+		if ((0 < minFontSize) || (maxFontSize < 72)) 
+			for (int w = 0; w < paragraphWords.length; w++) try {
+				if (!isFontSizeMatch(paragraphWords[w], minFontSize, maxFontSize, DEBUG_IS_CAPTION))
 					return false;
-				}
-				if (maxFontSize < wfs) {
-					if (DEBUG_IS_CAPTION) System.out.println(" ==> font larger than " + maxFontSize + " at " + wfs + " for " + paragraphWords[w].getString());
-					return false;
-				}
 			}
-		}
-		catch (NumberFormatException nfe) {
-			return false;
-		}
+			catch (NumberFormatException nfe) {
+				return false;
+			}
 		
 		//	find end of first line
 		ImWord firstLineEnd = paragraphWords[0];
@@ -3397,6 +3418,35 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return true;
 	}
 	
+	private static boolean isFontSizeMatch(ImWord word, int minFontSize, int maxFontSize, boolean debug) {
+		return isFontSizeMatch(word, Integer.parseInt((String) word.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "-1")), minFontSize, maxFontSize, debug);
+	}
+	
+	private static boolean isFontSizeMatch(ImWord word, int wordFontSize, int minFontSize, int maxFontSize, boolean debug) {
+		if (wordFontSize < 0)
+			return true;
+		int fontSizeTolerance = (((word.getString().length() > 1) || (fontSizeVariablePunctuationMarks.indexOf(word.getString()) == -1)) ? 0 : 1);
+		if ((wordFontSize + fontSizeTolerance) < minFontSize) {
+			boolean isPossibleSuperOrSubScript = false;
+			if ((word.getString().length() == 1) && Character.isLetterOrDigit(word.getString().charAt(0)))
+				isPossibleSuperOrSubScript = true; // index letter or digit
+			else if (" st nd rd th ".indexOf(word.getString()) != -1)
+				isPossibleSuperOrSubScript = true; // English ordinal number suffixes (all other Latin based languages use single letter ones or none at all)
+			if (isPossibleSuperOrSubScript) {
+				if (debug) System.out.println(" ==> font smaller than " + minFontSize + " at " + wordFontSize + " tolerated for " + word.getString() + " as potential super- or subscript");
+			}
+			else {
+				if (debug) System.out.println(" ==> font smaller than " + minFontSize + " at " + wordFontSize + " for " + word.getString());
+				return false;
+			}
+		}
+		if (maxFontSize < (wordFontSize - fontSizeTolerance)) {
+			if (debug) System.out.println(" ==> font larger than " + maxFontSize + " at " + wordFontSize + " for " + word.getString());
+			return false;
+		}
+		return true;
+	}
+	
 	private ImRegion getAboveCaptionTarget(ImPage page, ImRegion caption, int dpi, boolean isTableCaption) {
 		
 		//	get regions
@@ -3429,17 +3479,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				continue;
 			
 			//	check if candidate target contains words that cannot belong to a caption target area, and find lower edge
-			ImWord[] regionWords = page.getWordsInside(pageRegions[r].bounds);
-			boolean gotNonCaptionableWords = false;
-			for (int w = 0; w < regionWords.length; w++) {
-				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(regionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(regionWords[w].getTextStreamType()))
-					continue;
-				if (isTableCaption && ImWord.TEXT_STREAM_TYPE_TABLE.equals(regionWords[w].getTextStreamType()))
-					continue;
-				gotNonCaptionableWords = true;
-				break;
-			}
-			if (gotNonCaptionableWords)
+//			ImWord[] regionWords = page.getWordsInside(pageRegions[r].bounds);
+//			boolean gotNonCaptionableWords = false;
+//			for (int w = 0; w < regionWords.length; w++) {
+//				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(regionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(regionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(regionWords[w].getTextStreamType()))
+//					continue;
+//				if (isTableCaption && ImWord.TEXT_STREAM_TYPE_TABLE.equals(regionWords[w].getTextStreamType()))
+//					continue;
+//				gotNonCaptionableWords = true;
+//				break;
+//			}
+//			if (gotNonCaptionableWords)
+//				continue;
+			if (this.containsNonCaptionableWords(pageRegions[r].bounds, page))
 				continue;
 			
 			//	this one looks good
@@ -3478,15 +3530,17 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			
 			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
 			BoundingBox aggregateBounds = new BoundingBox(Math.min(targetRegion.bounds.left, pageRegions[r].bounds.left), Math.max(targetRegion.bounds.right, pageRegions[r].bounds.right), Math.min(targetRegion.bounds.top, pageRegions[r].bounds.top), Math.max(targetRegion.bounds.bottom, pageRegions[r].bounds.bottom));
-			ImWord[] aggregateWords = page.getWordsInside(aggregateBounds);
-			boolean gotNonCaptionableWords = false;
-			for (int w = 0; w < aggregateWords.length; w++) {
-				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(aggregateWords[w].getTextStreamType()))
-					continue;
-				gotNonCaptionableWords = true;
-				break;
-			}
-			if (gotNonCaptionableWords)
+//			ImWord[] aggregateWords = page.getWordsInside(aggregateBounds);
+//			boolean gotNonCaptionableWords = false;
+//			for (int w = 0; w < aggregateWords.length; w++) {
+//				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(aggregateWords[w].getTextStreamType()))
+//					continue;
+//				gotNonCaptionableWords = true;
+//				break;
+//			}
+//			if (gotNonCaptionableWords)
+//				continue;
+			if (this.containsNonCaptionableWords(aggregateBounds, page))
 				continue;
 			
 			//	include this one in the aggregate
@@ -3529,17 +3583,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				continue;
 			
 			//	check if candidate target contains words that cannot belong to a caption target area, and find lower edge
-			ImWord[] pageRegionWords = page.getWordsInside(pageRegions[r].bounds);
-			boolean gotNonCaptionableWords = false;
-			for (int w = 0; w < pageRegionWords.length; w++) {
-				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(pageRegionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(pageRegionWords[w].getTextStreamType()))
-					continue;
-				if (isTableCaption && ImWord.TEXT_STREAM_TYPE_TABLE.equals(pageRegionWords[w].getTextStreamType()))
-					continue;
-				gotNonCaptionableWords = true;
-				break;
-			}
-			if (gotNonCaptionableWords)
+//			ImWord[] pageRegionWords = page.getWordsInside(pageRegions[r].bounds);
+//			boolean gotNonCaptionableWords = false;
+//			for (int w = 0; w < pageRegionWords.length; w++) {
+//				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(pageRegionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(pageRegionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(pageRegionWords[w].getTextStreamType()))
+//					continue;
+//				if (isTableCaption && ImWord.TEXT_STREAM_TYPE_TABLE.equals(pageRegionWords[w].getTextStreamType()))
+//					continue;
+//				gotNonCaptionableWords = true;
+//				break;
+//			}
+//			if (gotNonCaptionableWords)
+//				continue;
+			if (this.containsNonCaptionableWords(pageRegions[r].bounds, page))
 				continue;
 			
 			//	this one looks good
@@ -3578,15 +3634,17 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			
 			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
 			BoundingBox aggregateBounds = new BoundingBox(Math.min(targetRegion.bounds.left, pageRegions[r].bounds.left), Math.max(targetRegion.bounds.right, pageRegions[r].bounds.right), Math.min(targetRegion.bounds.top, pageRegions[r].bounds.top), Math.max(targetRegion.bounds.bottom, pageRegions[r].bounds.bottom));
-			ImWord[] aggregateWords = page.getWordsInside(aggregateBounds);
-			boolean gotNonCaptionableWords = false;
-			for (int w = 0; w < aggregateWords.length; w++) {
-				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(aggregateWords[w].getTextStreamType()))
-					continue;
-				gotNonCaptionableWords = true;
-				break;
-			}
-			if (gotNonCaptionableWords)
+//			ImWord[] aggregateWords = page.getWordsInside(aggregateBounds);
+//			boolean gotNonCaptionableWords = false;
+//			for (int w = 0; w < aggregateWords.length; w++) {
+//				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(aggregateWords[w].getTextStreamType()))
+//					continue;
+//				gotNonCaptionableWords = true;
+//				break;
+//			}
+//			if (gotNonCaptionableWords)
+//				continue;
+			if (this.containsNonCaptionableWords(aggregateBounds, page))
 				continue;
 			
 			//	include this one in the aggregate
@@ -3630,17 +3688,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				continue;
 			
 			//	check if candidate target contains words that cannot belong to a caption target area, and find lower edge
-			ImWord[] pageRegionWords = page.getWordsInside(pageRegions[r].bounds);
-			boolean gotNonCaptionableWords = false;
-			for (int w = 0; w < pageRegionWords.length; w++) {
-				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(pageRegionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(pageRegionWords[w].getTextStreamType()))
-					continue;
-				if (isTableCaption && ImWord.TEXT_STREAM_TYPE_TABLE.equals(pageRegionWords[w].getTextStreamType()))
-					continue;
-				gotNonCaptionableWords = true;
-				break;
-			}
-			if (gotNonCaptionableWords)
+//			ImWord[] pageRegionWords = page.getWordsInside(pageRegions[r].bounds);
+//			boolean gotNonCaptionableWords = false;
+//			for (int w = 0; w < pageRegionWords.length; w++) {
+//				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(pageRegionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(pageRegionWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(pageRegionWords[w].getTextStreamType()))
+//					continue;
+//				if (isTableCaption && ImWord.TEXT_STREAM_TYPE_TABLE.equals(pageRegionWords[w].getTextStreamType()))
+//					continue;
+//				gotNonCaptionableWords = true;
+//				break;
+//			}
+//			if (gotNonCaptionableWords)
+//				continue;
+			if (this.containsNonCaptionableWords(pageRegions[r].bounds, page))
 				continue;
 			
 			//	this one looks good
@@ -3681,15 +3741,17 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			
 			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
 			BoundingBox aggregateBounds = new BoundingBox(Math.min(targetRegion.bounds.left, pageRegions[r].bounds.left), Math.max(targetRegion.bounds.right, pageRegions[r].bounds.right), Math.min(targetRegion.bounds.top, pageRegions[r].bounds.top), Math.max(targetRegion.bounds.bottom, pageRegions[r].bounds.bottom));
-			ImWord[] aggregateWords = page.getWordsInside(aggregateBounds);
-			boolean gotNonCaptionableWords = false;
-			for (int w = 0; w < aggregateWords.length; w++) {
-				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(aggregateWords[w].getTextStreamType()))
-					continue;
-				gotNonCaptionableWords = true;
-				break;
-			}
-			if (gotNonCaptionableWords)
+//			ImWord[] aggregateWords = page.getWordsInside(aggregateBounds);
+//			boolean gotNonCaptionableWords = false;
+//			for (int w = 0; w < aggregateWords.length; w++) {
+//				if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_DELETED.equals(aggregateWords[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(aggregateWords[w].getTextStreamType()))
+//					continue;
+//				gotNonCaptionableWords = true;
+//				break;
+//			}
+//			if (gotNonCaptionableWords)
+//				continue;
+			if (this.containsNonCaptionableWords(aggregateBounds, page))
 				continue;
 			
 			//	include this one in the aggregate
@@ -3698,6 +3760,15 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	return what we got
 		return targetRegion;
+	}
+	
+	private boolean containsNonCaptionableWords(BoundingBox bounds, ImPage page) {
+		ImWord[] words = page.getWordsInside(bounds);
+		for (int w = 0; w < words.length; w++) {
+			if (!ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(words[w].getTextStreamType()) && !ImWord.TEXT_STREAM_TYPE_DELETED.equals(words[w].getTextStreamType()) && !ImWord.TEXT_STREAM_TYPE_LABEL.equals(words[w].getTextStreamType()))
+				return true;
+		}
+		return false;
 	}
 	
 	private static ImWord[] getLargestTextStreamWords(ImWord[] words) {
@@ -3932,7 +4003,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pm.setInfo("   - got " + values.size() + " possible values");
 		
 		//	compute fuzzyness for each value
-		for (Iterator vit = values.iterator(); vit.hasNext();) {
+		for (Iterator vit = values.iterator(); vit.hasNext();) try {
 			String pageNumberValue = ((String) vit.next());
 			pm.setInfo("     - " + pageNumberValue);
 			int fuzzyness = 0;
@@ -3941,7 +4012,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					fuzzyness++;
 			}
 			pageNumberCandidates.add(new PageNumber(pageNumberString, Integer.parseInt(pageNumberValue), fuzzyness, ambiguity, firstWord, lastWord));
-		}
+		} catch (NumberFormatException nfe) {}
 		
 		//	did we add anything?
 		return true;
@@ -4283,7 +4354,8 @@ Create HeadingStructureEditor
 		
 //		testFileName = "29882.pdf"; // TODO figures come in horizontal stripes, bundle images
 		
-		testFileName = "zt03881p227.pdf.imf"; // fails to detect full-page table on page 5
+//		testFileName = "zt03881p227.pdf.imf"; // fails to detect full-page table on page 5
+//		testFileName = "zt03881p227.pdf.imdir"; // TODO fails to detect full-page table on page 5
 //		testFileName = "zt03881p227.pdf.imf"; // cuts off column headers on page 8 due to too narrow column gap
 		/* TODO revisit table extraction, try this:
 		 * - cut blocks into individual lines altogether
@@ -4296,18 +4368,19 @@ Create HeadingStructureEditor
 		 * ==> more versatile than mere column gap approach
 		 * ==> can handle column gap constrictions due to wide values
 		 */
-		FileInputStream fis = new FileInputStream(new File("E:/Testdaten/PdfExtract/" + testFileName));
-		ImDocument doc = ImDocumentIO.loadDocument(fis);
-		fis.close();
+		testFileName = "Zootaxa/zt02241p032.pdf.raw.imf"; // TODO finally found bogus table document: zt02241p032.pdf (page 5) ==> test this sucker right to the solution
+		
+		ImDocument doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/" + testFileName));
 		
 		DocumentStyle.addProvider(new DocumentStyle.Provider() {
 			public Properties getStyleFor(Attributed doc) {
-//				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/zootaxa.2007.journal_article.docStyle"));
-				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/ijsem.0000.journal_article.docStyle"));
+				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/zootaxa.2007.journal_article.docStyle"));
+//				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/ijsem.0000.journal_article.docStyle"));
 				return ds.toProperties();
 			}
 		});
 		
+		dsdp.detectTablesSimple = false;
 		dsdp.detectDocumentStructure(doc, true, ProgressMonitor.dummy);
 //		
 //		String[] params = DocumentStyle.getParameterNames();

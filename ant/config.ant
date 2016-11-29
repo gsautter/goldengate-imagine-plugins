@@ -16,6 +16,9 @@
 	<!-- directory that contains all libraries that are required in the .war -->
 	<property name="lib.home" value="lib" />
 	
+	<!-- directory that contains all libraries that are required in the .war -->
+	<property name="webLib.home" value="tomcatLib" />
+	
 	<!-- build directory that will contain all the .jars and what else is required for a .war -->
 	<property name="build.home" value="build" />
 	

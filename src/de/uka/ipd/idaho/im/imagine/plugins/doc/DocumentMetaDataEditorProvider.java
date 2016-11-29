@@ -808,6 +808,13 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			}
 		}
 		
+		//	check existing reference type, and facilitate re-classification if there are errors
+		if (ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE)) {
+			String[] refErrors = this.refTypeSystem.checkType(ref);
+			if (refErrors != null)
+				ref.removeAttribute(PUBLICATION_TYPE_ATTRIBUTE);
+		}
+		
 		//	try and classify existing reference
 		if (!ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE)) {
 			String type = this.refTypeSystem.classify(ref);
@@ -1111,7 +1118,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	}
 	
 	private void annotateAttributeValues(RefData ref, ImDocument doc) {
-		ImDocumentRoot wrappedDoc = new ImDocumentRoot(doc.getPage(0), (ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS | ImDocumentRoot.NORMALIZE_CHARACTERS));
+		ImDocumentRoot wrappedDoc = new ImDocumentRoot(doc.getPage(doc.getFirstPageId()), (ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS | ImDocumentRoot.NORMALIZE_CHARACTERS));
 		String[] attributeNames = ref.getAttributeNames();
 		for (int a = 0; a < attributeNames.length; a++)
 			this.annotateAttributeValues(attributeNames[a], ref, wrappedDoc);
@@ -1168,7 +1175,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			QueriableAnnotation wrappedDoc = null;
 			public void actionPerformed(ActionEvent ae) {
 				if (this.wrappedDoc == null)
-					this.wrappedDoc = new ImDocumentRoot(doc.getPage(0), ImDocumentRoot.NORMALIZATION_LEVEL_WORDS);
+					this.wrappedDoc = new ImDocumentRoot(doc.getPage(doc.getFirstPageId()), ImDocumentRoot.NORMALIZATION_LEVEL_WORDS);
 				RefData ref = refEditorPanel.getRefData();
 				if (fillFromDocument(refEditDialog, docName, this.wrappedDoc, ref)) {
 					if (doc.hasAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) && (doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) instanceof String) && !ref.hasAttribute(PUBLICATION_URL_ANNOTATION_TYPE))

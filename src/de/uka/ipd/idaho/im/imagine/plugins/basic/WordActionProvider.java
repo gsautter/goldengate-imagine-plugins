@@ -27,6 +27,7 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
+import java.awt.BorderLayout;
 import java.awt.Font;
 import java.awt.Point;
 import java.awt.font.FontRenderContext;
@@ -39,12 +40,19 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
+
+import de.uka.ipd.idaho.gamta.AnnotationUtils;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.TokenSequence;
 import de.uka.ipd.idaho.gamta.Tokenizer;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
 import de.uka.ipd.idaho.gamta.util.imaging.PageImage;
+import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImFont;
@@ -212,8 +220,10 @@ public class WordActionProvider extends AbstractSelectionActionProvider {
 		//	get selection actions
 		LinkedList actions = new LinkedList();
 		
-		//	offer merging words
+		//	multiple words selected
 		if (start != end) {
+			
+			//	offer merging words if possible
 			Tokenizer tokenizer = ((Tokenizer) idmp.document.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER));
 			if (this.isMergeableSelection(start, end, tokenizer)) {
 				StringBuffer before = new StringBuffer();
@@ -246,20 +256,154 @@ public class WordActionProvider extends AbstractSelectionActionProvider {
 						}
 					});
 			}
+			
+			//	offer removing words
+			actions.add(new SelectionAction("wordsRemove", "Remove Words", "Remove selected words.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return removeWords(start, end);
+				}
+			});
 		}
 		
-		//	offer removing words
-		if (start == end)
+		//	single word selected
+		if (start == end) {
+			
+			//	offer splitting word
+			actions.add(new SelectionAction("wordsSplit", "Split Word", "Split selected word.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					
+					//	tokenize word without inner punctuation as a starting point
+					TokenSequence wordTokens = Gamta.NO_INNER_PUNCTUATION_TOKENIZER.tokenize(start.getString());
+					
+					//	create user prompt
+					StringBuffer editStringBuilder = new StringBuffer();
+					for (int t = 0; t < wordTokens.size(); t++) {
+						if (t != 0)
+							editStringBuilder.append(" ");
+						editStringBuilder.append(wordTokens.valueAt(t));
+					}
+					JPanel wordSplitPanel = new JPanel(new BorderLayout(), true);
+					wordSplitPanel.add(new JLabel("<HTML>Split the word with spaces in the field below.<BR>Do not add or remove any characters but spaces.</HTM>"), BorderLayout.CENTER);
+					JTextField wordSplitField = new JTextField(editStringBuilder.toString());
+					wordSplitField.setFont(new Font("Monospaced", Font.PLAIN, 12));
+					wordSplitPanel.add(wordSplitField, BorderLayout.SOUTH);
+					
+					//	prompt user
+					int choice = DialogFactory.confirm(wordSplitPanel, "Split Word", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+					if (choice != JOptionPane.OK_OPTION)
+						return false;
+					
+					//	check consistency
+					if (!wordSplitField.getText().trim().replaceAll("\\s", "").equals(start.getString())) {
+						DialogFactory.alert(new JLabel("<HTML>'" + AnnotationUtils.escapeForXml(start.getString()) + "' cannot be split this way.<BR>All characters have to be preserved.<BR>Only insert spaces to mark the splitting points.</HTM>"), "Cannot Split Word", JOptionPane.ERROR_MESSAGE);
+						return false;
+					}
+					
+					//	any splits present?
+					String[] splitWordParts = wordSplitField.getText().trim().split("\\s+");
+					if (splitWordParts.length < 2)
+						return false;
+					
+					//	remember predecessor and successor
+					ImWord prevWord = start.getPreviousWord();
+					ImWord nextWord = start.getNextWord();
+					
+					//	remember annotations starting or ending at to-split word
+					ImAnnotation[] wordAnnots = idmp.document.getAnnotations(start);
+					
+					//	get character codes (convert HEX storage notation)
+					System.out.println("Splitting word " + start.getString());
+					String startCharCodesHex = ((String) start.getAttribute(ImFont.CHARACTER_CODE_STRING_ATTRIBUTE));
+					String startCharCodes = null;
+					if (startCharCodesHex != null) {
+						startCharCodes = "";
+						for (int c = 0; c < startCharCodesHex.length(); c += 2)
+							startCharCodes = (startCharCodes + ((char) Integer.parseInt(startCharCodesHex.substring(c, (c+2)), 16)));
+						System.out.print(" - char codes are " + startCharCodes + " (");
+						for (int c = 0; c < startCharCodes.length(); c++)
+							 System.out.print(((c == 0) ? "" : " ") + Integer.toString(((int) startCharCodes.charAt(c)), 16));
+						System.out.println(")");
+					}
+					
+					//	compute split proportions and character code
+					ImWord[] splitWords = new ImWord[splitWordParts.length];
+					String[] splitWordCharCodes = new String[splitWordParts.length];
+					float[] splitWordWidths = new float[splitWordParts.length];
+					int fontStyle = Font.PLAIN;
+					if (start.hasAttribute(ImWord.BOLD_ATTRIBUTE))
+						fontStyle = (fontStyle | Font.BOLD);
+					if (start.hasAttribute(ImWord.ITALICS_ATTRIBUTE))
+						fontStyle = (fontStyle | Font.ITALIC);
+					Font font = new Font("Serif", fontStyle, Integer.parseInt(((String) start.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "24"))));
+					float splitWordWidthSum = 0;
+					int splitWordCharCodeStart = 0;
+					for (int s = 0; s < splitWordParts.length; s++) {
+						if (startCharCodes != null) {
+							splitWordCharCodes[s] = startCharCodes.substring(splitWordCharCodeStart, (splitWordCharCodeStart + splitWordParts[s].length()));
+							splitWordCharCodeStart += splitWordParts[s].length();
+						}
+						TextLayout tl = new TextLayout(splitWordParts[s], font, new FontRenderContext(null, false, true));
+						splitWordWidths[s] = ((float) tl.getBounds().getWidth());
+						splitWordWidthSum += splitWordWidths[s];
+					}
+					
+					//	generate sub words, adding them to document right away
+					int startWidth = (start.bounds.right - start.bounds.left);
+					float splitWordLeft = start.bounds.left;
+					for (int s = 0; s < splitWordParts.length; s++) {
+						float splitWordWidth = ((startWidth * splitWordWidths[s]) / splitWordWidthSum);
+						BoundingBox splitWordBox = new BoundingBox(Math.round(splitWordLeft), Math.round(splitWordLeft + splitWordWidth), start.bounds.top, start.bounds.bottom);
+						splitWords[s] = new ImWord(start.getPage(), splitWordBox, splitWordParts[s]);
+						splitWords[s].copyAttributes(start);
+						if (startCharCodes != null) {
+							StringBuffer splitWordCharCodeString = new StringBuffer();
+							for (int c = 0; c < splitWordCharCodes[s].length(); c++)
+								splitWordCharCodeString.append(Integer.toString(((int) splitWordCharCodes[s].charAt(c)), 16).toUpperCase());
+							splitWords[s].setAttribute(ImFont.CHARACTER_CODE_STRING_ATTRIBUTE, splitWordCharCodeString.toString());
+						}
+						splitWordLeft += splitWordWidth;
+						System.out.println(" --> split word part " + splitWords[s].getString() + ", bounds are " + splitWords[s].bounds);
+						if (startCharCodes != null) {
+							System.out.print("   - char codes are " + splitWordCharCodes[s] + " (");
+							for (int c = 0; c < splitWordCharCodes[s].length(); c++)
+								 System.out.print(((c == 0) ? "" : " ") + Integer.toString(((int) splitWordCharCodes[s].charAt(c)), 16));
+							System.out.println(")");
+						}
+					}
+					
+					//	chain sub words together and into text stream
+					for (int w = 0; w < splitWords.length; w++)
+						splitWords[w].setPreviousWord((w == 0) ? prevWord : splitWords[w-1]);
+					if (nextWord != null)
+						nextWord.setPreviousWord(splitWords[splitWords.length-1]);
+					
+					//	link annotations to new words
+					for (int a = 0; a < wordAnnots.length; a++) {
+						if (wordAnnots[a].getFirstWord() == start)
+							wordAnnots[a].setFirstWord(splitWords[0]);
+						if (wordAnnots[a].getLastWord() == start)
+							wordAnnots[a].setLastWord(splitWords[splitWords.length-1]);
+					}
+					
+					//	remove original word
+					start.getPage().removeWord(start, true);
+					
+					//	clean up annotations if required
+					if (wordAnnots.length != 0)
+						idmp.document.cleanupAnnotations();
+					
+					//	indicate change
+					return true;
+				}
+			});
+			
+			//	offer removing word
 			actions.add(new SelectionAction("wordsRemove", "Remove Word", "Remove selected word.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return removeWords(start, end);
 				}
 			});
-		else actions.add(new SelectionAction("wordsRemove", "Remove Words", "Remove selected words.") {
-			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				return removeWords(start, end);
-			}
-		});
+		}
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));

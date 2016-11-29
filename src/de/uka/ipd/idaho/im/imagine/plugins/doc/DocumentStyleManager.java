@@ -873,6 +873,8 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
+	private static final boolean DEBUG_STYLE_UPDATES = true;
+	
 	private void useFontProperties(String docId, Settings docStyle, String docStyleParamGroupName, String[] docStyleParamNames, int minFontSize, int maxFontSize, boolean isBold, boolean isItalics, boolean isAllCaps) {
 		
 		//	ask for properties to use
@@ -951,27 +953,27 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		//	set properties
 		if ((useMinFontSize != null) && useMinFontSize.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + ".minFontSize"), ("" + minFontSize));
-			System.out.println(docStyleParamGroupName + ".minFontSize set to " + minFontSize);
+			if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamGroupName + ".minFontSize set to " + minFontSize);
 		}
 		if ((useMaxFontSize != null) && useMaxFontSize.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + ".maxFontSize"), ("" + maxFontSize));
-			System.out.println(docStyleParamGroupName + ".maxFontSize set to " + maxFontSize);
+			if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamGroupName + ".maxFontSize set to " + maxFontSize);
 		}
 		if ((minFontSize == maxFontSize) && (useMinFontSize != null) && useMinFontSize.useParam.isSelected() && (useMaxFontSize != null) && useMaxFontSize.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + ".fontSize"), ("" + minFontSize));
-			System.out.println(docStyleParamGroupName + ".fontSize set to " + minFontSize);
+			if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamGroupName + ".fontSize set to " + minFontSize);
 		}
 		if ((useIsBold != null) && useIsBold.useParam.isSelected()) {
 			docStyle.setSetting(useIsBold.docStyleParamName, "true");
-			System.out.println(useIsBold.docStyleParamName + " set to true");
+			if (DEBUG_STYLE_UPDATES) System.out.println(useIsBold.docStyleParamName + " set to true");
 		}
 		if ((useIsItalics != null) && useIsItalics.useParam.isSelected()) {
 			docStyle.setSetting(useIsItalics.docStyleParamName, "true");
-			System.out.println(useIsItalics.docStyleParamName + " set to true");
+			if (DEBUG_STYLE_UPDATES) System.out.println(useIsItalics.docStyleParamName + " set to true");
 		}
 		if ((useIsAllCaps != null) && useIsAllCaps.useParam.isSelected()) {
 			docStyle.setSetting(useIsAllCaps.docStyleParamName, "true");
-			System.out.println(useIsAllCaps.docStyleParamName + " set to true");
+			if (DEBUG_STYLE_UPDATES) System.out.println(useIsAllCaps.docStyleParamName + " set to true");
 		}
 		
 		//	if style editor open, adjust tree path
@@ -990,19 +992,19 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			int eMargin = Integer.parseInt(docStyle.getSetting(docStyleParamName, "-1"));
 			if (eMargin == -1) {
 				docStyle.setSetting(docStyleParamName, ("" + margin));
-				System.out.println(docStyleParamName + " set to " + margin);
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + margin);
 			}
 			else if (docStyleParamName.startsWith(".min", docStyleParamName.lastIndexOf('.'))) {
 				docStyle.setSetting(docStyleParamName, ("" + Math.min(eMargin,  margin)));
-				System.out.println(docStyleParamName + " set to " + Math.min(eMargin,  margin));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + Math.min(eMargin,  margin));
 			}
 			else if (docStyleParamName.startsWith(".max", docStyleParamName.lastIndexOf('.'))) {
 				docStyle.setSetting(docStyleParamName, ("" + Math.max(eMargin,  margin)));
-				System.out.println(docStyleParamName + " set to " + Math.max(eMargin,  margin));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + Math.max(eMargin,  margin));
 			}
 			else {
 				docStyle.setSetting(docStyleParamName, ("" + margin));
-				System.out.println(docStyleParamName + " set to " + margin);
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + margin);
 			}
 		}
 		
@@ -1011,7 +1013,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			String eMarginStr = docStyle.getSetting(docStyleParamName);
 			if ((eMarginStr == null) || (eMarginStr.trim().length() == 0)) {
 				docStyle.setSetting(docStyleParamName, ("" + margin));
-				System.out.println(docStyleParamName + " set to " + margin);
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + margin);
 			}
 			else {
 				String[] eMarginStrs = eMarginStr.split("[^0-9]+");
@@ -1020,7 +1022,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 						return;
 				}
 				docStyle.setSetting(docStyleParamName, (eMarginStr + " " + margin));
-				System.out.println(docStyleParamName + " set to " + (eMarginStr + " " + margin));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + (eMarginStr + " " + margin));
 			}
 		}
 		
@@ -1074,13 +1076,13 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			Class paramValueClass = this.getParamValueClass(usp.docStyleParamName);
 			if (String.class.getName().equals(paramValueClass.getName())) {
 				docStyle.setSetting(usp.docStyleParamName, string);
-				System.out.println(usp.docStyleParamName + " set to " + string);
+				if (DEBUG_STYLE_UPDATES) System.out.println(usp.docStyleParamName + " set to " + string);
 			}
 			else if (String.class.getName().equals(DocumentStyle.getListElementClass(paramValueClass).getName())) {
 				String eString = docStyle.getSetting(usp.docStyleParamName, "").trim();
 				if (eString.length() == 0) {
 					docStyle.setSetting(usp.docStyleParamName, string);
-					System.out.println(usp.docStyleParamName + " set to " + string);
+					if (DEBUG_STYLE_UPDATES) System.out.println(usp.docStyleParamName + " set to " + string);
 				}
 				else {
 					TreeSet eStringSet = new TreeSet(Arrays.asList(eString.split("\\s+")));
@@ -1092,7 +1094,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							eStringsStr.append(' ');
 					}
 					docStyle.setSetting(usp.docStyleParamName, eStringsStr.toString());
-					System.out.println(usp.docStyleParamName + " set to " + eStringsStr.toString());
+					if (DEBUG_STYLE_UPDATES) System.out.println(usp.docStyleParamName + " set to " + eStringsStr.toString());
 				}
 			}
 		}
@@ -1293,11 +1295,11 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			BoundingBox eBounds = BoundingBox.parse(docStyle.getSetting(docStyleParamName));
 			if (eBounds == null) {
 				docStyle.setSetting(docStyleParamName, bounds.toString());
-				System.out.println(docStyleParamName + " set to " + bounds.toString());
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + bounds.toString());
 			}
 			else {
 				docStyle.setSetting(docStyleParamName, this.aggregateBoxes(eBounds, bounds).toString());
-				System.out.println(docStyleParamName + " set to " + this.aggregateBoxes(eBounds, bounds).toString());
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + this.aggregateBoxes(eBounds, bounds).toString());
 			}
 		}
 		
@@ -1305,7 +1307,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		else if (BoundingBox.class.getName().equals(DocumentStyle.getListElementClass(paramValueClass).getName())) {
 			String boundsStr = this.getBoxListString(docStyle.getSetting(docStyleParamName), bounds);
 			docStyle.setSetting(docStyleParamName, boundsStr);
-			System.out.println(docStyleParamName + " set to " + boundsStr);
+			if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + boundsStr);
 		}
 		
 		//	if style editor open, adjust tree path
@@ -1356,16 +1358,16 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			double bbOverlap = 0.9; // 90% is minimum overlap for merging
 			for (int b = 0; b < boundsList.size(); b++) {
 				BoundingBox tbb1 = ((BoundingBox) boundsList.get(b));
-				System.out.println("Testing for merger: " + tbb1);
+				if (DEBUG_STYLE_UPDATES) System.out.println("Testing for merger: " + tbb1);
 				for (int c = (b+1); c < boundsList.size(); c++) {
 					BoundingBox tbb2 = ((BoundingBox) boundsList.get(c));
 					double tbbOverlap = this.getBoxOverlap(tbb1, tbb2);
-					System.out.println(" - overlap with " + tbb2 + " is " + tbbOverlap);
+					if (DEBUG_STYLE_UPDATES) System.out.println(" - overlap with " + tbb2 + " is " + tbbOverlap);
 					if (bbOverlap < tbbOverlap) {
 						bbOverlap = tbbOverlap;
 						bb1 = tbb1;
 						bb2 = tbb2;
-						System.out.println(" ==> new best merger");
+						if (DEBUG_STYLE_UPDATES) System.out.println(" ==> new best merger");
 					}
 				}
 			}
@@ -1538,27 +1540,27 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		//	set font properties
 		if ((useMinFontSize != null) && useMinFontSize.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + ".minFontSize"), ("" + minFontSize));
-			System.out.println(docStyleParamGroupName + ".minFontSize set to " + minFontSize);
+			if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamGroupName + ".minFontSize set to " + minFontSize);
 		}
 		if ((useMaxFontSize != null) && useMaxFontSize.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + ".maxFontSize"), ("" + maxFontSize));
-			System.out.println(docStyleParamGroupName + ".maxFontSize set to " + maxFontSize);
+			if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamGroupName + ".maxFontSize set to " + maxFontSize);
 		}
 		if ((minFontSize == maxFontSize) && (useMinFontSize != null) && useMinFontSize.useParam.isSelected() && (useMaxFontSize != null) && useMaxFontSize.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + ".fontSize"), ("" + minFontSize));
-			System.out.println(docStyleParamGroupName + ".fontSize set to " + minFontSize);
+			if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamGroupName + ".fontSize set to " + minFontSize);
 		}
 		if ((useIsBold != null) && useIsBold.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + useIsBold.docStyleParamName.substring(useIsBold.docStyleParamName.lastIndexOf('.'))), "true");
-			System.out.println((docStyleParamGroupName + useIsBold.docStyleParamName.substring(useIsBold.docStyleParamName.lastIndexOf('.'))) + " set to true");
+			if (DEBUG_STYLE_UPDATES) System.out.println((docStyleParamGroupName + useIsBold.docStyleParamName.substring(useIsBold.docStyleParamName.lastIndexOf('.'))) + " set to true");
 		}
 		if ((useIsItalics != null) && useIsItalics.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + useIsItalics.docStyleParamName.substring(useIsItalics.docStyleParamName.lastIndexOf('.'))), "true");
-			System.out.println((docStyleParamGroupName + useIsItalics.docStyleParamName.substring(useIsItalics.docStyleParamName.lastIndexOf('.'))) + " set to true");
+			if (DEBUG_STYLE_UPDATES) System.out.println((docStyleParamGroupName + useIsItalics.docStyleParamName.substring(useIsItalics.docStyleParamName.lastIndexOf('.'))) + " set to true");
 		}
 		if ((useIsAllCaps != null) && useIsAllCaps.useParam.isSelected()) {
 			docStyle.setSetting((docStyleParamGroupName + useIsAllCaps.docStyleParamName.substring(useIsAllCaps.docStyleParamName.lastIndexOf('.'))), "true");
-			System.out.println((docStyleParamGroupName + useIsAllCaps.docStyleParamName.substring(useIsAllCaps.docStyleParamName.lastIndexOf('.'))) + " set to true");
+			if (DEBUG_STYLE_UPDATES) System.out.println((docStyleParamGroupName + useIsAllCaps.docStyleParamName.substring(useIsAllCaps.docStyleParamName.lastIndexOf('.'))) + " set to true");
 		}
 		
 		//	set string parameters
@@ -1577,13 +1579,13 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			
 			if (String.class.getName().equals(paramValueClass.getName())) {
 				docStyle.setSetting(docStyleParamName, string);
-				System.out.println(docStyleParamName + " set to " + string);
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + string);
 			}
 			else if (String.class.getName().equals(DocumentStyle.getListElementClass(paramValueClass).getName())) {
 				String eString = docStyle.getSetting(docStyleParamName, "").trim();
 				if (eString.length() == 0) {
 					docStyle.setSetting(docStyleParamName, string);
-					System.out.println(docStyleParamName + " set to " + string);
+					if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + string);
 				}
 				else {
 					TreeSet eStringSet = new TreeSet(Arrays.asList(eString.split("\\s+")));
@@ -1595,7 +1597,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							eStringsStr.append(' ');
 					}
 					docStyle.setSetting(docStyleParamName, eStringsStr.toString());
-					System.out.println(docStyleParamName + " set to " + eStringsStr.toString());
+					if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + eStringsStr.toString());
 				}
 			}
 		}
@@ -1616,11 +1618,11 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				BoundingBox eBounds = BoundingBox.parse(docStyle.getSetting(docStyleParamName));
 				if (eBounds == null) {
 					docStyle.setSetting(docStyleParamName, bounds.toString());
-					System.out.println(docStyleParamName + " set to " + bounds.toString());
+					if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + bounds.toString());
 				}
 				else {
 					docStyle.setSetting(docStyleParamName, this.aggregateBoxes(eBounds, bounds).toString());
-					System.out.println(docStyleParamName + " set to " + this.aggregateBoxes(eBounds, bounds).toString());
+					if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + this.aggregateBoxes(eBounds, bounds).toString());
 				}
 			}
 			
@@ -1628,7 +1630,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			else if (BoundingBox.class.getName().equals(DocumentStyle.getListElementClass(paramValueClass).getName())) {
 				String boundsStr = this.getBoxListString(docStyle.getSetting(docStyleParamName), bounds);
 				docStyle.setSetting(docStyleParamName, boundsStr);
-				System.out.println(docStyleParamName + " set to " + boundsStr);
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + boundsStr);
 			}
 		}
 		
@@ -2027,6 +2029,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			try {
 				ArrayList matchLog = new ArrayList();
 				boolean anchorMatch = DocumentStyleProvider.anchorMatches(this.testDoc,
+						this.testDoc.getFirstPageId(),
 						area,
 						Integer.parseInt(anchorParamList.getSetting("minFontSize", anchorParamList.getSetting("fontSize", "0"))),
 						Integer.parseInt(anchorParamList.getSetting("maxFontSize", anchorParamList.getSetting("fontSize", "72"))),

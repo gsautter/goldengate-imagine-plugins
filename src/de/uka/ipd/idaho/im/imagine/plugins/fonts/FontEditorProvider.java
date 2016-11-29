@@ -389,6 +389,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 							cStr = ("" + ((char) Integer.parseInt(imwCharCodes[c], 16)));
 							System.out.println("   --> using ASCII fallback '" + cStr + "'");
 						}
+						else cStr = dissolveLigature(cStr);
 						imwCharCodeLengths[c] = cStr.length();
 						if ((cStr.length() == 1) && (COMBINABLE_ACCENTS.indexOf(cStr) != -1) && (imwString.length() != 0)) {
 							char cChar = StringUtils.getCharForName("" + imwString.charAt(imwString.length() - 1) + "" + COMBINABLE_ACCENT_MAPPINGS.get(new Character(cStr.charAt(0))));
@@ -885,5 +886,15 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			}
 		}
 		COMBINABLE_ACCENTS = combinableAccentCollector.toString();
+	}
+	
+	private static String dissolveLigature(String rCh) {
+		if (rCh.length() != 1)
+			return rCh;
+		String nrCh = StringUtils.getNormalForm(rCh.charAt(0));
+		if (nrCh.length() == 1)
+			return rCh;
+		System.out.println("   --> dissolved '" + rCh + "' to '" + nrCh + "'");
+		return nrCh;
 	}
 }

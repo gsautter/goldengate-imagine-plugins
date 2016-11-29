@@ -707,7 +707,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			if (imw.getNextRelation() != ImWord.NEXT_RELATION_CONTINUE)
 				gotNonContinue = true;
 		}
-		return (gotNonContinue && (tokenizer == null) || (tokenizer.tokenize(joinResult).size() == 1));
+		return (gotNonContinue && ((tokenizer == null) || (tokenizer.tokenize(joinResult).size() == 1)));
 	}
 	
 	private boolean joinWords(ImWord start, ImWord end, ImDocument docForAll) {
@@ -805,9 +805,9 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			
 			//	get lines
 			ArrayList docLines = new ArrayList();
-			for (int p = 0; p < doc.getPageCount(); p++) {
-				ImPage page = doc.getPage(p);
-				ImRegion[] pageLines = page.getRegions(ImagingConstants.LINE_ANNOTATION_TYPE);
+			ImPage[] pages = doc.getPages();
+			for (int p = 0; p < pages.length; p++) {
+				ImRegion[] pageLines = pages[p].getRegions(ImagingConstants.LINE_ANNOTATION_TYPE);
 				Arrays.sort(pageLines, ImUtils.topDownOrder);
 				docLines.addAll(Arrays.asList(pageLines));
 			}
@@ -1704,9 +1704,9 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		
 		//	get lines
 		ArrayList docLines = new ArrayList();
-		for (int p = 0; p < doc.getPageCount(); p++) {
-			ImPage page = doc.getPage(p);
-			ImRegion[] pageLines = page.getRegions(ImagingConstants.LINE_ANNOTATION_TYPE);
+		ImPage[] pages = doc.getPages();
+		for (int p = 0; p < pages.length; p++) {
+			ImRegion[] pageLines = pages[p].getRegions(ImagingConstants.LINE_ANNOTATION_TYPE);
 			Arrays.sort(pageLines, ImUtils.topDownOrder);
 //			if (p == 0)
 			docLines.addAll(Arrays.asList(pageLines));

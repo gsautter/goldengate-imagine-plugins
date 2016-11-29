@@ -849,6 +849,20 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 				}
 			});
 			
+			//	offer copying attributes to other annotation
+			if (start == end)
+				actions.add(new TwoClickSelectionAction("copyAttributesAnnot", "Copy " + spanningAnnots[0].getType() + " Attributes", "Copy attributes of '" + spanningAnnots[0].getType() + "' annotation.") {
+					public ImWord getFirstWord() {
+						return start;
+					}
+					public boolean performAction(ImWord secondWord) {
+						return copyAnnotationAttributes(spanningAnnots[0], idmp, secondWord);
+					}
+					public String getActiveLabel() {
+						return ("Copy attributes of " + spanningAnnots[0].getType() + " annotation at '" + start.getString() + "'");
+					}
+				});
+			
 			//	remove existing annotation
 			actions.add(new SelectionAction("removeAnnot", ("Remove " + spanningAnnots[0].getType() + " Annotation"), ("Remove '" + spanningAnnots[0].getType() + "' annotation.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
@@ -918,6 +932,37 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					return pm;
 				}
 			});
+			
+			//	offer copying attributes to other annotation
+			if (start == end)
+				actions.add(new TwoClickSelectionAction("copyAttributesAnnot", "Copy Annotation Attributes ...", "Copy attributes of selected annotations.") {
+					private ImAnnotation sourceAnnot = null;
+					public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+						JMenu pm = new JMenu("Copy Annotation Attributes ...");
+						JMenuItem mi;
+						for (int a = 0; a < spanningAnnots.length; a++) {
+							final ImAnnotation spanningAnnot = spanningAnnots[a];
+							mi = new JMenuItem("- " + spanningAnnot.getType() + " '" + getAnnotationShortValue(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord()) + "'");
+							mi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									sourceAnnot = spanningAnnot;
+									performAction(invoker);
+								}
+							});
+							pm.add(mi);
+						}
+						return pm;
+					}
+					public ImWord getFirstWord() {
+						return start;
+					}
+					public boolean performAction(ImWord secondWord) {
+						return copyAnnotationAttributes(this.sourceAnnot, idmp, secondWord);
+					}
+					public String getActiveLabel() {
+						return ("Copy attributes of " + this.sourceAnnot.getType() + " annotation at '" + start.getString() + "'");
+					}
+				});
 			
 			//	remove existing annotation
 			actions.add(new SelectionAction("removeAnnot", "Remove Annotation ...", "Remove selected annotations.") {
@@ -1167,6 +1212,84 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	private boolean copyAnnotationAttributes(ImAnnotation sourceAnnot, ImDocumentMarkupPanel idmp, ImWord secondWord) {
+		
+		//	anything to copy from?
+		if (sourceAnnot == null)
+			return false;
+		
+		//	collect painted annotations spanning or overlapping second word
+		ImAnnotation[] allSpanningAnnots = idmp.document.getAnnotationsOverlapping(secondWord);
+		LinkedList spanningAnnotList = new LinkedList();
+		for (int a = 0; a < allSpanningAnnots.length; a++) {
+			if (!idmp.areAnnotationsPainted(allSpanningAnnots[a].getType()))
+				continue;
+			if (ImUtils.textStreamOrder.compare(secondWord, allSpanningAnnots[a].getFirstWord()) < 0)
+				continue;
+			if (ImUtils.textStreamOrder.compare(allSpanningAnnots[a].getLastWord(), secondWord) < 0)
+				continue;
+			spanningAnnotList.add(allSpanningAnnots[a]);
+		}
+		ImAnnotation[] spanningAnnots = ((ImAnnotation[]) spanningAnnotList.toArray(new ImAnnotation[spanningAnnotList.size()]));
+		if (spanningAnnots.length == 0)
+			return false;
+		
+		//	find target annotation
+		ImAnnotation targetAnnot = null;
+		
+		//	select target via exact match to source annotation type
+		if (targetAnnot == null) {
+			for (int a = 0; a < spanningAnnots.length; a++)
+				if (spanningAnnots[a].getType().equals(sourceAnnot.getType())) {
+					targetAnnot = spanningAnnots[a];
+					break;
+				}
+		}
+		
+		//	select target via prefix match to source annotation type
+		if (targetAnnot == null) {
+			for (int a = 0; a < spanningAnnots.length; a++)
+				if (spanningAnnots[a].getType().startsWith(sourceAnnot.getType())) {
+					targetAnnot = spanningAnnots[a];
+					break;
+				}
+		}
+		if (targetAnnot == null) {
+			for (int a = 0; a < spanningAnnots.length; a++)
+				if (sourceAnnot.getType().startsWith(spanningAnnots[a].getType())) {
+					targetAnnot = spanningAnnots[a];
+					break;
+				}
+		}
+		
+		//	select only spanning annot as target
+		if ((targetAnnot == null) && (spanningAnnots.length == 1))
+			targetAnnot = spanningAnnots[0];
+		
+		//	anything to work with?
+		if (targetAnnot == null)
+			return false;
+		
+		//	prepare target attribute editing
+		StringBuffer targetAnnotValue = new StringBuffer();
+		for (ImWord imw = targetAnnot.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+			if (imw.pageId != targetAnnot.getFirstWord().pageId)
+				break;
+			targetAnnotValue.append(imw.toString());
+			if (imw == targetAnnot.getLastWord())
+				break;
+		}
+		
+		//	copy attributes (using 'add' mode by default)
+		idmp.beginAtomicAction("Copy " + sourceAnnot.getType() + " Attributes");
+		AttributeUtils.copyAttributes(sourceAnnot, targetAnnot, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+		idmp.endAtomicAction();
+		
+		//	open attributes for editing
+		idmp.editAttributes(targetAnnot, targetAnnot.getType(), targetAnnotValue.toString());
+		return true;
 	}
 	
 	private String getAnnotationShortValue(ImWord start, ImWord end) {

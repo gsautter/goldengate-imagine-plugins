@@ -516,14 +516,12 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				if (pm != null)
 					pm.setStep("Checking document");
 				String precludingError = this.getPrecludingError(wrappedDoc);
-				if (precludingError != null) {
+				if ((idmp != null) && (precludingError != null)) {
 					boolean isWarning = false;
 					if (precludingError.startsWith("W:")) {
 						precludingError = precludingError.substring("W:".length());
 						isWarning = true;
 					}
-					if (idmp == null)
-						return;
 					int choice = DialogFactory.confirm(("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, (isWarning ? JOptionPane.WARNING_MESSAGE : JOptionPane.ERROR_MESSAGE));
 					if (choice != JOptionPane.YES_OPTION)
 						return;

@@ -159,6 +159,9 @@
 			<fileset dir="${src.home}">
 				<include name="**/imagine/plugins/doc/DocumentMetaDataEditorProvider.java" />
 			</fileset>
+			<fileset dir="${file.home}/Plugins/DocumentMetaDataEditorData">
+				<include name="*" />
+			</fileset>
 			<fileset dir="." includes="LICENSE.txt"/>
 		</jar>
 	</target>
@@ -243,6 +246,9 @@
 			<fileset dir="${src.home}">
 				<include name="**/imagine/plugins/tools/ImageMarkupObjectListProvider.java" />
 			</fileset>
+			<fileset dir="${file.home}/Plugins/ObjectListProviderData">
+				<include name="*" />
+			</fileset>
 			<fileset dir="." includes="LICENSE.txt"/>
 		</jar>
 	</target>
@@ -289,17 +295,17 @@
 		</jar>
 	</target>
 		
-		<target name="docstylemanjar">
-			<delete file="${jar.docstyleman}" />
-			<jar destfile="${jar.docstyleman}" manifest="${file.home}/MANIFEST.plugins.MF">
-				<fileset dir="${build.home}/classes">
-					<include name="**/imagine/plugins/doc/DocumentStyleManager.class" />
-					<include name="**/imagine/plugins/doc/DocumentStyleManager$*.class" />
-				</fileset>
-				<fileset dir="${src.home}">
-					<include name="**/imagine/plugins/doc/DocumentStyleManager.java" />
-				</fileset>
-				<fileset dir="." includes="LICENSE.txt"/>
-			</jar>
-		</target>
+	<target name="docstylemanjar">
+		<delete file="${jar.docstyleman}" />
+		<jar destfile="${jar.docstyleman}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/doc/DocumentStyleManager.class" />
+				<include name="**/imagine/plugins/doc/DocumentStyleManager$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/doc/DocumentStyleManager.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
 </project>
