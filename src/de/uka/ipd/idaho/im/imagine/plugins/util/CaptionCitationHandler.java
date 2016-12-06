@@ -811,20 +811,20 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 					else if (!letterRange) // no range expected, quit
 						break;
 					else if (maxLetter == -1) // end of range
-						maxLetter = Character.toLowerCase(imwString.charAt(0)) - 'a';
+						maxLetter = (Character.toLowerCase(imwString.charAt(0)) - 'a');
 					else break; // we've had enough index letters here
 				}
 				
 				//	upper case index letter
 				else if (imwString.matches("[A-Z]")) {
 					if (minLetter == -1) { // start of range
-						minLetter = (Character.toLowerCase(imwString.charAt(0)) - 'A');
+						minLetter = (Character.toUpperCase(imwString.charAt(0)) - 'A');
 						letterBase = 'A';
 					}
 					else if (!letterRange) // no range expected, quit
 						break;
 					else if (maxLetter == -1) // end of range
-						maxLetter = Character.toLowerCase(imwString.charAt(0)) - 'A';
+						maxLetter = (Character.toUpperCase(imwString.charAt(0)) - 'A');
 					else break; // we've had enough index letters here
 				}
 				
