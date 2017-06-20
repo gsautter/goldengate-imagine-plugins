@@ -28,7 +28,10 @@
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
 import java.awt.Point;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
 
 import de.uka.ipd.idaho.gamta.util.constants.LiteratureConstants;
@@ -57,6 +60,7 @@ import de.uka.ipd.idaho.im.util.ImUtils;
  * @author sautter
  */
 public class TextBlockActionProvider extends AbstractSelectionActionProvider implements LiteratureConstants {
+	private RegionActionProvider regionActions = null;
 	
 	/** public zero-argument constructor for class loading */
 	public TextBlockActionProvider() {}
@@ -68,6 +72,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		return "IM Text Block Actions";
 	}
 	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractGoldenGateImaginePlugin#initImagine()
+	 */
+	public void initImagine() {
+		
+		//	get region action provider
+		this.regionActions = ((RegionActionProvider) this.imagineParent.getPlugin(RegionActionProvider.class.getName()));
+	}
+
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.ImWord, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
@@ -315,27 +328,21 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 			}
 		});
 		
+		/* TODO offer sanitizing selected regions:
+		 * - shrink any selected 'column', 'block', 'paragraph', and 'line' regions to their contained words ...
+		 * - ... and remove duplicates afterwards
+		 * - also remove any regions nested in other regions of same type
+		 * 
+		 * - apply this to all regions that have at least one word selected (in terms of center point)
+		 * 
+		 * TODO also consider applying this to generic 'region' regions, or discarding these guys altogether
+		 */
+		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
 	private void markImageOrGraphics(ImWord[] words, ImPage page, BoundingBox selectedBox, String type, ImDocumentMarkupPanel idmp) {
-		
-		//	make words into 'label' text stream if document is born-digital
-		if (idmp.documentBornDigital) {
-			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_LABEL, null);
-			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-		}
-		
-		//	remove words if document is scanned (odds are most of them are artifacts)
-		else {
-			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
-			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-			for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord())
-				imw.setNextWord(null);
-			for (int w = 0; w < words.length; w++)
-				page.removeWord(words[w], true);
-		}
 		
 		//	shrink selection to what is actually painted
 		PageImage pi = page.getImage();
@@ -344,17 +351,79 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		ImagePartRectangle selectedIpr = ipr.getSubRectangle(Math.max(selectedBox.left, page.bounds.left), Math.min(selectedBox.right, page.bounds.right), Math.max(selectedBox.top, page.bounds.top), Math.min(selectedBox.bottom, page.bounds.bottom));
 		selectedIpr = Imaging.narrowLeftAndRight(selectedIpr);
 		selectedIpr = Imaging.narrowTopAndBottom(selectedIpr);
-		BoundingBox iogBox = new BoundingBox(selectedIpr.getLeftCol(), selectedIpr.getRightCol(), selectedIpr.getTopRow(), selectedIpr.getBottomRow());
+		BoundingBox iogBounds = new BoundingBox(selectedIpr.getLeftCol(), selectedIpr.getRightCol(), selectedIpr.getTopRow(), selectedIpr.getBottomRow());
+		HashMap colWordsByStreamId = null;
+		
+		//	make words into 'label' text stream if document is born-digital
+		if (idmp.documentBornDigital) {
+			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_LABEL, null);
+			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+			words = new ImWord[0];
+		}
+		
+		//	remove words if document is scanned (odds are most of them are artifacts)
+		else {
+			
+			//	spare any words of type 'caption' or 'label', though
+			ArrayList removeWordList = new ArrayList();
+			colWordsByStreamId = new HashMap();
+			for (int w = 0; w < words.length; w++) {
+				if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(words[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(words[w].getTextStreamType())) {
+					ArrayList colWordList = ((ArrayList) colWordsByStreamId.get(words[w].getTextStreamId()));
+					if (colWordList == null) {
+						colWordList = new ArrayList();
+						colWordsByStreamId.put(words[w].getTextStreamId(), colWordList);
+					}
+					colWordList.add(words[w]);
+				}
+				else removeWordList.add(words[w]);
+			}
+			words = ((ImWord[]) removeWordList.toArray(new ImWord[removeWordList.size()]));
+			
+			//	dissolve remaining words out of text streams (helps prevent cycles on block splitting)
+			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
+			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+			for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes to text stream ID
+				imw.setNextWord(null);
+		}
+		
+		//	split any overlapping block
+		if (this.regionActions != null) {
+			ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+			for (int b = 0; b < pageBlocks.length; b++) {
+				if (pageBlocks[b].bounds.overlaps(iogBounds))
+					this.regionActions.splitBlock(page, pageBlocks[b], iogBounds);
+			}
+			
+			//	restore text streams preserved above
+			if (colWordsByStreamId != null)
+				for (Iterator tsit = colWordsByStreamId.keySet().iterator(); tsit.hasNext();) {
+					ArrayList colWordList = ((ArrayList) colWordsByStreamId.get(tsit.next()));
+					ImUtils.makeStream(((ImWord[]) colWordList.toArray(new ImWord[colWordList.size()])), ((ImWord) colWordList.get(0)).getTextStreamType(), null);
+				}
+			
+			//	cut to-remove words out of text streams again (in case block splitting merged them back in some way)
+			if ((words != null) && (words.length != 0)) {
+				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
+				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+				for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes to text stream ID
+					imw.setNextWord(null);
+			}
+		}
+		
+		//	remove remaining words (only now that we're done with block splitting)
+		for (int w = 0; w < words.length; w++)
+			page.removeWord(words[w], true);
 		
 		//	clean up nested regions
-		ImRegion[] selectedRegions = page.getRegionsInside(selectedBox, true);
+		ImRegion[] selectedRegions = page.getRegionsInside(iogBounds, true);
 		for (int r = 0; r < selectedRegions.length; r++) {
-			if (!iogBox.liesIn(selectedRegions[r].bounds, false))
+			if (!iogBounds.liesIn(selectedRegions[r].bounds, false) || iogBounds.equals(selectedRegions[r].bounds))
 				page.removeRegion(selectedRegions[r]);
 		}
 		
 		//	mark image or graphics
-		ImRegion iog = new ImRegion(page, iogBox, type);
+		ImRegion iog = new ImRegion(page, iogBounds, type);
 		idmp.setRegionsPainted(type, true);
 		
 		//	consult document style regarding where captions might be located
@@ -362,11 +431,10 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		final DocumentStyle docLayout = docStyle.getSubset("layout");
 		boolean captionAbove = docLayout.getBooleanProperty("caption.aboveFigure", false);
 		boolean captionBelow = docLayout.getBooleanProperty("caption.belowFigure", true);
-//		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
+		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
 		
 		//	get potential captions
-		//	TODO also consider beside target captions (5-argument method) once ImUtils update is spread
-		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow/*, captionBeside*/, true);
+		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside, true);
 		
 		//	try setting attributes in unassigned captions first
 		for (int a = 0; a < captionAnnots.length; a++) {

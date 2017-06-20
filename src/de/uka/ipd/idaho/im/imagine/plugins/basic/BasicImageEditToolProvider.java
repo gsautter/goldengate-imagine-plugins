@@ -473,14 +473,14 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			final BufferedImage bi = iiep.getImage().getSubimage(left, top, (right - left), (bottom - top));
 			
 			final JTextField angleField = new JTextField("0.0");
-			final double[] angle = {Double.NaN};
+			final double[] angle = {0};
 			
 			final JPanel bip = new JPanel() {
 				public void paint(Graphics g) {
 					super.paint(g);
 					
 					AffineTransform at = null;
-					if ((angle[0] != Double.NaN) && (g instanceof Graphics2D)) {
+					if (!Double.isNaN(angle[0]) && (g instanceof Graphics2D)) {
 						at = ((Graphics2D) g).getTransform();
 						((Graphics2D) g).rotate(angle[0], (bi.getWidth() / 2), (bi.getHeight() / 2));
 					}
@@ -502,7 +502,8 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			angleField.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
 					try {
-						angle[0] = Double.parseDouble(angleField.getText().trim());
+						double degAngle = Double.parseDouble(angleField.getText().trim());
+						angle[0] = ((degAngle * Math.PI) / 180);
 						bip.validate();
 						bip.repaint();
 					} catch (Exception e) {}
@@ -512,7 +513,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			final DialogPanel dp = new DialogPanel("Rotate Image Part", true);
 			
 			JPanel ap = new JPanel(new BorderLayout(), true);
-			ap.add(new JLabel("Rotation Angle (hit 'Enter' to apply): "), BorderLayout.WEST);
+			ap.add(new JLabel("Rotation Angle in Degrees (hit 'Enter' to apply): "), BorderLayout.WEST);
 			ap.add(angleField, BorderLayout.CENTER);
 			
 			JButton ok = new JButton("Rotate");
@@ -520,7 +521,8 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			ok.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
 					try {
-						angle[0] = Double.parseDouble(angleField.getText().trim());
+						double degAngle = Double.parseDouble(angleField.getText().trim());
+						angle[0] = ((degAngle * Math.PI) / 180);
 						dp.dispose();
 					}
 					catch (Exception e) {
@@ -548,7 +550,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			dp.setLocationRelativeTo(dp.getOwner());
 			dp.setVisible(true);
 			
-			if ((angle[0] == Double.NaN) || (angle[0] == 0))
+			if (Double.isNaN(Double.NaN) || (angle[0] == 0))
 				return;
 			
 			BufferedImage cbi = new BufferedImage(bi.getWidth(), bi.getHeight(), bi.getType());
@@ -560,6 +562,7 @@ public class BasicImageEditToolProvider extends AbstractImageEditToolProvider {
 			
 			BufferedImage tbi = iiep.getImage();
 			Graphics2D tg = tbi.createGraphics();
+			tg.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 			tg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 			tg.rotate(angle[0], ((left + right) / 2), ((top + bottom) / 2));
 			tg.drawImage(cbi, left, top, null);

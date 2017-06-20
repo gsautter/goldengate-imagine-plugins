@@ -109,11 +109,11 @@ import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener;
 import de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
+import de.uka.ipd.idaho.im.util.ImDocumentIO;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
-import de.uka.ipd.idaho.im.util.ImfIO;
 import de.uka.ipd.idaho.im.util.SymbolTable;
 import de.uka.ipd.idaho.stringUtils.StringUtils;
 
@@ -1648,9 +1648,11 @@ UI: Make "Edit Page Image & Words" accessible from cluster representative contex
 				
 				//	measure similarity (in all 8 combinations of bold, italics, and serifs)
 				System.out.println("Super-rendering OCR result for cluster '" + wc.str + "'");
-				WordImageMatch swim = this.getMatch(wc, "Serif");
+//				WordImageMatch swim = this.getMatch(wc, "Serif");
+				WordImageMatch swim = this.getMatch(wc, "FreeSerif");
 				System.out.println(" - serif similarity is " + swim.sim + ", weight adjusted " + swim.waSim);
-				WordImageMatch pwim = this.getMatch(wc, "Sans");
+//				WordImageMatch pwim = this.getMatch(wc, "Sans");
+				WordImageMatch pwim = this.getMatch(wc, "FreeSans");
 				System.out.println(" - sans-serif similarity is " + pwim.sim + ", weight adjusted " + pwim.waSim);
 				WordImageMatch wim = ((pwim.sim < swim.sim) ? swim : pwim);
 				System.out.println(" --> similarity is " + wim.sim + ", weight adjusted " + wim.waSim);
@@ -5463,16 +5465,16 @@ most 1, and stem edit distance at most 1
 		} catch (Exception e) {}
 		
 		final String testFileName;
-		testFileName = "21330.pdf.boldTest.imf";
+//		testFileName = "21330.pdf.boldTest.imf";
 //		testFileName = "RSZ117_121.pdf.boldTest.imf";
 //		testFileName = "melander_1907.boldTest.pdf.imf";
 //		testFileName = "hesse_1974.pdf.boldTest.imf"; // many mis-OCRed male and female symbols on page 1, TODO good test for image clustering
 //		testFileName = "ZM1967042005.pdf.raw.imf"; // some OCR errors on page 2, if in italics
-//		testFileName = "paramonov_1950.pdf.imf"; // some OCR errors on page 1, if in italics
+		testFileName = "paramonov_1950.pdf.imf"; // some OCR errors on page 1, if in italics
 //		testFileName = "Kullander_ramirezi_1980.pdf.imf"; // some OCR errors on page 9, NOT in italics, but due to stains
 //		testFileName = "1104.pdf.test.imf"; // some OCR errors, NOT in italics, and no stains, use page 4 for clustering, several occurrences of 'with'
 		FileInputStream fis = new FileInputStream(new File("E:/Testdaten/PdfExtract/" + testFileName));
-		ImDocument doc = ImfIO.loadDocument(fis);
+		ImDocument doc = ImDocumentIO.loadDocument(fis);
 		fis.close();
 		
 		WordImageAnalysis.analyzeFontMetrics(doc, ProgressMonitor.dummy);

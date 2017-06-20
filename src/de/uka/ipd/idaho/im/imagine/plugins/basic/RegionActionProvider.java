@@ -77,6 +77,7 @@ import javax.swing.filechooser.FileFilter;
 import javax.swing.plaf.basic.BasicFileChooserUI;
 
 import de.uka.ipd.idaho.easyIO.streams.CharSequenceReader;
+import de.uka.ipd.idaho.gamta.AttributeUtils;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.constants.LiteratureConstants;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
@@ -539,12 +540,18 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						return true;
 					}
 				});
-				if (!idmp.documentBornDigital)
+				if (!idmp.documentBornDigital) {
 					actions.add(new SelectionAction("editPage", ("Edit Page Image & Words"), ("Edit page image and words recognized in page.")) {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
 							return idmp.editPage(page.pageId);
 						}
 					});
+					actions.add(new SelectionAction("cleanPageRegions", ("Cleanup Page Regions"), ("Clean up and sanitize all regions in this page, remove duplicates, etc.")) {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return cleanupPageRegions(page);
+						}
+					});
+				}
 			}
 			
 			//	check supplements to tell image from graphics if document born-digital
@@ -1146,6 +1153,255 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
+	private boolean cleanupPageRegions(ImPage page) {
+		
+		//	keep track of any changes
+		boolean pageRegionsChanged = false;
+		
+		//	get page regions and words
+		ArrayList pageRegions = new ArrayList(Arrays.asList(page.getRegions()));
+		ImWord[] pageWords = page.getWords();
+		
+		//	shrink any text regions to contained words (TODO really also take on columns?)
+		for (int r = 0; r < pageRegions.size(); r++) {
+			ImRegion pageRegion = ((ImRegion) pageRegions.get(r));
+			
+			//	discarding any generic 'region' regions right away (TODO do we really want this?)
+			if (ImRegion.REGION_ANNOTATION_TYPE.equals(pageRegion.getType())) {
+				page.removeRegion(pageRegion);
+				pageRegions.remove(r--);
+				pageRegionsChanged = true;
+				continue;
+			}
+			
+			//	we're only touching text regions here ...
+			if (false) {}
+			else if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(pageRegion.getType())) {}
+			else if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(pageRegion.getType())) {}
+			else if (ImRegion.PARAGRAPH_TYPE.equals(pageRegion.getType())) {}
+			else if (ImRegion.LINE_ANNOTATION_TYPE.equals(pageRegion.getType())) {}
+			else continue;
+			
+			//	shrink region to words
+			ImRegion sPageRegion = this.shrinkToWords(pageRegion, pageWords);
+			
+			//	no words contained at all
+			if (sPageRegion == null) {
+				page.removeRegion(pageRegion);
+				pageRegions.remove(r--);
+				pageRegionsChanged = true;
+			}
+			
+			//	region reduced in size
+			else if (sPageRegion != pageRegion) {
+				page.removeRegion(pageRegion);
+				pageRegions.set(r, sPageRegion);
+				pageRegionsChanged = true;
+			}
+		}
+		
+		//	shrink any image and graphics regions to content
+		AnalysisImage pai = Imaging.wrapImage(page.getImage().image, null);
+		for (int r = 0; r < pageRegions.size(); r++) {
+			ImRegion pageRegion = ((ImRegion) pageRegions.get(r));
+			
+			//	we're only touching image and graphics regions here ...
+			if (false) {}
+			else if (ImRegion.IMAGE_TYPE.equals(pageRegion.getType())) {}
+			else if (ImRegion.GRAPHICS_TYPE.equals(pageRegion.getType())) {}
+			else continue;
+			
+			//	shrink region to words
+			ImRegion sPageRegion = this.shrinkToContent(pageRegion, pai);
+			
+			//	nothing contained at all
+			if (sPageRegion == null) {
+				page.removeRegion(pageRegion);
+				pageRegions.remove(r--);
+				pageRegionsChanged = true;
+			}
+			
+			//	region reduced in size
+			else if (sPageRegion != pageRegion) {
+				page.removeRegion(pageRegion);
+				pageRegions.set(r, sPageRegion);
+				pageRegionsChanged = true;
+			}
+		}
+		
+		//	remove any duplicate regions, aggregating attributes
+		HashMap pageRegionIndex = new HashMap();
+		for (int r = 0; r < pageRegions.size(); r++) {
+			ImRegion pageRegion = ((ImRegion) pageRegions.get(r));
+			
+			//	get any potential duplicate region
+			String pageRegionKey = (pageRegion.getType() + "@" + pageRegion.bounds);
+			ImRegion dPageRegion = ((ImRegion) pageRegionIndex.get(pageRegionKey));
+			if (dPageRegion == null) {
+				pageRegionIndex.put(pageRegionKey, pageRegion);
+				continue;
+			}
+			
+			//	clean up duplicate region
+			AttributeUtils.copyAttributes(pageRegion, dPageRegion, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+			page.removeRegion(pageRegion);
+			pageRegions.remove(r--);
+			pageRegionsChanged = true;
+		}
+		
+		//	remove any text region contained in other region of same type, and aggregate overlapping ones
+		for (int r = 0; r < pageRegions.size(); r++) {
+			ImRegion pageRegion = ((ImRegion) pageRegions.get(r));
+			
+			//	we're only touching text regions here ...
+			if (false) {}
+			else if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(pageRegion.getType())) {}
+			else if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(pageRegion.getType())) {}
+			else if (ImRegion.PARAGRAPH_TYPE.equals(pageRegion.getType())) {}
+			else if (ImRegion.LINE_ANNOTATION_TYPE.equals(pageRegion.getType())) {}
+			else continue;
+			
+			//	compare to contained smaller regions of same type
+			for (int cr = (r+1); cr < pageRegions.size(); cr++) {
+				ImRegion cPageRegion = ((ImRegion) pageRegions.get(cr));
+				if (!pageRegion.getType().equals(cPageRegion.getType()))
+					continue;
+				
+				//	clean up contained region
+				if (pageRegion.bounds.includes(cPageRegion.bounds, false)) {
+					AttributeUtils.copyAttributes(cPageRegion, pageRegion, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+					page.removeRegion(cPageRegion);
+					pageRegions.remove(cr--);
+					pageRegionsChanged = true;
+				}
+				
+				//	merge with overlapping region
+				else if (pageRegion.bounds.overlaps(cPageRegion.bounds)) {
+					ImRegion mPageRegion = new ImRegion(page, this.getUnion(pageRegion.bounds, cPageRegion.bounds), pageRegion.getType());
+					AttributeUtils.copyAttributes(pageRegion, mPageRegion, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+					page.removeRegion(pageRegion);
+					pageRegions.set(r--, mPageRegion);
+					AttributeUtils.copyAttributes(cPageRegion, mPageRegion, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+					page.removeRegion(cPageRegion);
+					pageRegions.remove(cr--);
+					pageRegionsChanged = true;
+					break;
+				}
+			}
+		}
+		
+		//	finally ...
+		return pageRegionsChanged;
+	}
+	
+	private ImRegion shrinkToWords(ImRegion region, ImWord[] pageWords) {
+		
+		//	compute aggregate bounds of (fuzzy) included words
+		int left = Integer.MAX_VALUE;
+		int right = 0;
+		int top = Integer.MAX_VALUE;
+		int bottom = 0;
+		for (int w = 0; w < pageWords.length; w++)
+			if (region.bounds.includes(pageWords[w].bounds, true)) {
+				left = Math.min(left, pageWords[w].bounds.left);
+				right = Math.max(right, pageWords[w].bounds.right);
+				top = Math.min(top, pageWords[w].bounds.top);
+				bottom = Math.max(bottom, pageWords[w].bounds.bottom);
+			}
+		
+		//	any words contained at all?
+		if ((right <= left) || (bottom <= top))
+			return null;
+		
+		//	did we change anything?
+		BoundingBox regionWordBounds = new BoundingBox(left, right, top, bottom);
+		if (regionWordBounds.equals(region.bounds))
+			return region;
+		
+		//	shrink original region
+		ImRegion sRegion = new ImRegion(region.getPage(), regionWordBounds, region.getType());
+		sRegion.copyAttributes(region);
+		return sRegion;
+	}
+	
+	private ImRegion shrinkToContent(ImRegion imageOrGraphics, AnalysisImage pai) {
+		
+		//	get brightness
+		byte[][] paiBrightness = pai.getBrightness();
+		
+		//	compute aggregate bounds of (fuzzy) included words
+		int left = imageOrGraphics.bounds.left;
+		int right = imageOrGraphics.bounds.right;
+		int top = imageOrGraphics.bounds.top;
+		int bottom = imageOrGraphics.bounds.bottom;
+		for (boolean cut = true; cut;) {
+			cut = false;
+			
+			//	did we collapse the whole area?
+			if (right <= left)
+				return null;
+			if (bottom <= top)
+				return null;
+			
+			//	check edges
+			if (this.colBlank(left, top, bottom, paiBrightness)) {
+				left++;
+				cut = true;
+			}
+			if (this.colBlank((right-1), top, bottom, paiBrightness)) {
+				right--;
+				cut = true;
+			}
+			if (this.rowBlank(top, left, right, paiBrightness)) {
+				top++;
+				cut = true;
+			}
+			if (this.rowBlank((bottom-1), left, right, paiBrightness)) {
+				bottom--;
+				cut = true;
+			}
+		}
+		
+		//	did we collapse the whole area?
+		if ((right <= left) || (bottom <= top))
+			return null;
+		
+		//	did we change anything?
+		BoundingBox imageOrGraphicsBounds = new BoundingBox(left, right, top, bottom);
+		if (imageOrGraphicsBounds.equals(imageOrGraphics.bounds))
+			return imageOrGraphics;
+		
+		//	shrink original region
+		ImRegion sImageOrGraphics = new ImRegion(imageOrGraphics.getPage(), imageOrGraphicsBounds, imageOrGraphics.getType());
+		sImageOrGraphics.copyAttributes(imageOrGraphics);
+		return sImageOrGraphics;
+	}
+	
+	private boolean colBlank(int col, int top, int bottom, byte[][] brightness) {
+		for (int r = top; r < bottom; r++)
+			//	TODO make this threshold adjustable to lower values
+			if (brightness[col][r] < Byte.MAX_VALUE) {
+//				System.out.println("Found brightness " + brightness[col][r] + " at " + col + "/" + r);
+				return false;
+			}
+		return true;
+	}
+	
+	private boolean rowBlank(int row, int left, int right, byte[][] brightness) {
+		for (int c = left; c < right; c++)
+			//	TODO make this threshold adjustable to lower values
+			if (brightness[c][row] < Byte.MAX_VALUE) {
+//				System.out.println("Found brightness " + brightness[c][row] + " at " + c + "/" + row);
+				return false;
+			}
+		return true;
+	}
+	
+	private BoundingBox getUnion(BoundingBox bb1, BoundingBox bb2) {
+		BoundingBox[] bbs = {bb1, bb2};
+		return BoundingBox.aggregate(bbs);
+	}
+	
 	private boolean markImageOrGraphics(ImPage page, BoundingBox selectedBounds, ImRegion[] selectedRegions, String type, ImDocumentMarkupPanel idmp) {
 		
 		//	shrink selection
@@ -1162,13 +1418,18 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			return false;
 		}
 		
+		//	determine bounding box
+		BoundingBox iogBounds = new BoundingBox(selectedIpr.getLeftCol(), selectedIpr.getRightCol(), selectedIpr.getTopRow(), selectedIpr.getBottomRow());
+		
 		//	clean up nested regions
-		for (int r = 0; r < selectedRegions.length; r++)
+		for (int r = 0; r < selectedRegions.length; r++) {
+			if (type.equals(selectedRegions[r].getType()) && !iogBounds.includes(selectedRegions[r].bounds, true))
+				continue;
 			page.removeRegion(selectedRegions[r]);
+		}
 		
 		//	mark image or graphics
-		BoundingBox iogBox = new BoundingBox(selectedIpr.getLeftCol(), selectedIpr.getRightCol(), selectedIpr.getTopRow(), selectedIpr.getBottomRow());
-		ImRegion iog = new ImRegion(page, iogBox, type);
+		ImRegion iog = new ImRegion(page, iogBounds, type);
 		idmp.setRegionsPainted(type, true);
 		
 		//	consult document style regarding where captions might be located
@@ -1176,11 +1437,12 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		final DocumentStyle docLayout = docStyle.getSubset("layout");
 		boolean captionAbove = docLayout.getBooleanProperty("caption.aboveFigure", false);
 		boolean captionBelow = docLayout.getBooleanProperty("caption.belowFigure", true);
-//		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
+		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
+//		boolean captionInside = docLayout.getBooleanProperty("caption.insideFigure", false);
 		
 		//	get potential captions
-		//	TODO also consider beside target captions (5-argument method) once ImUtils update is spread
-		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow/*, captionBeside*/, true);
+		//	TODO also consider inside target captions (implement 6-argument method in ImUtils)
+		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside,/* captionInside,*/ true);
 		
 		//	try setting attributes in unassigned captions first
 		for (int a = 0; a < captionAnnots.length; a++) {
@@ -1217,8 +1479,6 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		else {
 			CharSequence svg = ImSupplement.getSvg(graphics, words, page);
 			ImUtils.copy(new StringSelection(svg.toString()));
-//			ImUtils.copy(new GraphicsSelection(svg));
-//			ImUtils.copy(new GraphicsSelection(svg.toString().getBytes()));
 		}
 	}
 	

@@ -124,6 +124,15 @@ import de.uka.ipd.idaho.stringUtils.StringVector;
  */
 public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvider implements SelectionActionProvider, BibRefConstants {
 	
+	/* TODO use date tagger to identify and parse publication date
+	 * - incurs dependency only in IDAHO extensions, which should be OK
+	 * - extract publication date using template, like other attributes ...
+	 * - ... and then run it through tagger to get it parsed
+	 * - add editing field to dialog, maybe next to year
+	 * 
+	 * ==> maybe also use this in RefParse to identify access dates on URL references
+	 */
+	
 	private static final String META_DATA_EDITOR_IMT_NAME = "MetaDataEditor";
 	private ImageMarkupTool metaDataEditor = new MetaDataEditor(META_DATA_EDITOR_IMT_NAME);
 	private static final String META_DATA_ADDER_IMT_NAME = "MetaDataAdder";
@@ -1666,7 +1675,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		/* TODO make this less speculative:
 		 * - if we have a lastname prefix like 'de', 'van', 'von', split before the first one
-		 * - if we have partial all-caps, use it to identify lastnames
+		 * - if we have partial all-caps, use it to identify lastnames (be careful about initials blocks, though)
 		 * 
 		 * - THINK OF FURTHER CRITERIA
 		 */

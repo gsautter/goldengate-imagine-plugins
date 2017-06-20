@@ -1405,6 +1405,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	 * surrounding text due to sloppy layout or even adjustment */
 	private static final String fontSizeVariablePunctuationMarks = ",.;:^°\"'=+-\u00B1\u00AD\u2010\u2012\u2011\u2013\u2014\u2015\u2212";
 	
+	/* string of punctuation marks whose font style (bold, italics) can differ
+	 * from the surrounding text due to sloppy layout or even adjustment */
+	private static final String fontStyleVariablePunctuationMarks = ",.°'=+-\u00B1\u00AD\u2010\u2012\u2011\u2013\u2014\u2015\u2212";
+	
 	private boolean isFontSizeMatch(String fontSize, ImWord imw) {
 		if (fontSize == null)
 			return true;
@@ -1625,9 +1629,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			//	concatenate words, checking style along the way
 			StringBuffer lineWordString = new StringBuffer();
 			for (int w = 0; w < lineWords.length; w++) {
-				if (this.isBold && !lineWords[w].hasAttribute(ImWord.BOLD_ATTRIBUTE))
-					return false;
 				String wordStr = lineWords[w].getString();
+				if (this.isBold && !lineWords[w].hasAttribute(ImWord.BOLD_ATTRIBUTE) && ((wordStr.length() > 1) || (fontStyleVariablePunctuationMarks.indexOf(wordStr) != -1)))
+					return false;
 				if (this.isAllCaps && !wordStr.equals(wordStr.toUpperCase()))
 					return false;
 				String wordFontSizeStr = ((String) lineWords[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
@@ -2046,6 +2050,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				int lineAllCapWordCount = 0;
 				int lineEmphasisWordCount = 0;
 				int lineBoldWordCount = 0;
+				int lineNonBoldBoldWordCount = 0;
 				int lineFontSizeSum = 0;
 				int lineFontSizeWordCount = 0;
 				for (int w = 0; w < lineWords[l].length; w++) {
@@ -2060,6 +2065,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 							lineEmphasisWordCount++;
 						if (lineWords[l][w].hasAttribute(ImWord.BOLD_ATTRIBUTE))
 							lineBoldWordCount++;
+						else if ((lineWords[l][w].getString().length() < 2) && (fontStyleVariablePunctuationMarks.indexOf(lineWords[l][w].getString()) != -1))
+							lineNonBoldBoldWordCount++;
 					}
 					String imwFontSize = ((String) lineWords[l][w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
 					if (imwFontSize != null) try {
@@ -2079,7 +2086,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				lineHasBoldEmphasis[l] = (lineBoldWordCount != 0);
 				if (lineHasBoldEmphasis[l])
 					pm.setInfo(" --> has bold emphasis");
-				lineIsBold[l] = ((lineWordCount != 0) && (lineBoldWordCount == lineWordCount));
+				lineIsBold[l] = ((lineWordCount != 0) && ((lineBoldWordCount + lineNonBoldBoldWordCount) == lineWordCount));
 				if (lineIsBold[l])
 					pm.setInfo(" --> bold");
 				lineFontSize[l] = ((lineFontSizeWordCount == 0) ? -1 : ((lineFontSizeSum + (lineFontSizeWordCount / 2)) / lineFontSizeWordCount));

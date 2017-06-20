@@ -37,6 +37,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Point;
+import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.font.FontRenderContext;
@@ -359,6 +360,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			PageImage pi = page.getPageImage();
 			BufferedImage pbi = new BufferedImage(pi.image.getWidth(), pi.image.getHeight(), pi.image.getType());
 			Graphics2D prg = pbi.createGraphics();
+			prg.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 			prg.drawImage(pi.image, 0, 0, null);
 			
 			//	get tokenizer
@@ -533,10 +535,14 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 		}
 		
 		private ImWord[] getFontWords(String fontName) {
+//			System.out.println("Getting words for font " + fontName);
 			TreeSet fontWords = ((TreeSet) this.fontWordsByName.get(fontName));
-			if (fontWords == null)
+			if (fontWords == null) {
+//				System.out.println(" ==> no words found");
 				return new ImWord[0];
+			}
 			if (fontWords.isEmpty()) {
+//				System.out.println(" - collecting words");
 				ImPage[] pages = this.doc.getPages();
 				for (int p = 0; p < pages.length; p++) {
 					ImWord[] pageWords = pages[p].getWords();
@@ -544,24 +550,32 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 						if (fontName.equals(pageWords[w].getAttribute(ImWord.FONT_NAME_ATTRIBUTE)))
 							fontWords.add(pageWords[w]);
 					}
+//					System.out.println("   - got " + fontWords.size() + " words after page " + p);
 				}
 			}
+//			System.out.println(" ==> got " + fontWords.size() + " words");
 			return ((ImWord[]) fontWords.toArray(new ImWord[fontWords.size()]));
 		}
 		
 		void showWords(String fontName, int cid) {
+//			System.out.println("Getting words for char code " + cid + " in font " + fontName);
 			ImWord[] words = this.getFontWords(fontName);
 			if (cid >= 0) {
 				ArrayList cidWords = new ArrayList();
 				String cidHex = Integer.toString(cid, 16).toUpperCase();
 				if (cidHex.length() < 2)
 					cidHex = ("0" + cidHex);
+//				System.out.println(" - char code hex is " + cidHex);
 				for (int w = 0; w < words.length; w++) {
 					String charCodes = ((String) words[w].getAttribute(ImFont.CHARACTER_CODE_STRING_ATTRIBUTE));
-					if ((charCodes != null) && ((charCodes.indexOf(cidHex) % 2) == 0))
+					if ((charCodes != null) && ((charCodes.indexOf(cidHex) % 2) == 0)) {
 						cidWords.add(words[w]);
+//						System.out.println("   - added word " + words[w].getString() + " with char codes " + charCodes);
+					}
+//					else System.out.println("   - ignored word " + words[w].getString() + " with char codes " + charCodes);
 				}
 				words = ((ImWord[]) cidWords.toArray(new ImWord[cidWords.size()]));
+//				System.out.println(" - got " + words.length + " words containing char code " + cidHex);
 			}
 			
 			String[] wordStrings = new String[words.length];
@@ -731,6 +745,12 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 					this.charId = cid;
 					this.oCharStr = font.getString(this.charId);
 					
+					String cidHex = Integer.toString(cid, 16).toUpperCase();
+					if (cidHex.length() < 2)
+						cidHex = ("0" + cidHex);
+					JLabel cidl = new JLabel(("<HTML><B>" + cidHex + "</B></HTML>"), JLabel.CENTER);
+					cidl.setBorder(BorderFactory.createLineBorder(cidl.getBackground(), 4));
+					
 					JLabel cil = new JLabel(new ImageIcon(ci), JLabel.CENTER);
 					cil.setOpaque(true);
 					cil.setBackground(Color.WHITE);
@@ -781,6 +801,10 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 						}
 					});
 					
+					JPanel cp = new JPanel(new BorderLayout(), true);
+					cp.add(cidl, BorderLayout.WEST);
+					cp.add(cil, BorderLayout.CENTER);
+					
 					JPanel dp = new JPanel(new BorderLayout(), true);
 					dp.add(this.charStr, BorderLayout.CENTER);
 					dp.add(this.charStrHex, BorderLayout.EAST);
@@ -789,7 +813,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 					bp.add(stb, BorderLayout.WEST);
 					bp.add(swb, BorderLayout.EAST);
 					
-					this.add(cil, BorderLayout.WEST);
+					this.add(cp, BorderLayout.WEST);
 					this.add(dp, BorderLayout.CENTER);
 					this.add(bp, BorderLayout.EAST);
 				}

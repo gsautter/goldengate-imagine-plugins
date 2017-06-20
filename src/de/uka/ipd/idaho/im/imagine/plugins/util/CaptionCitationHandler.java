@@ -40,6 +40,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -62,6 +63,7 @@ import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImSupplement;
 import de.uka.ipd.idaho.im.ImSupplement.Figure;
+import de.uka.ipd.idaho.im.ImSupplement.Graphics;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractReactionProvider;
@@ -107,8 +109,64 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		if (!start.getTextStreamId().equals(end.getTextStreamId()))
 			return null;
 		
+		//	offer 'Mark Citations' for click on caption proper
+		if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(start.getTextStreamType()))
+			return this.getMarkCaptionCitationsAction(start, end, idmp);
+		
+		//	offer 'Mark Figure/Table Citation' otherwise
+		else return this.getMarkCaptionCitationActions(start, end, idmp);
+	}
+	
+	private SelectionAction[] getMarkCaptionCitationsAction(final ImWord start, final ImWord end, final ImDocumentMarkupPanel idmp) {
+		
+		//	do we have a click on a single word?
+		if (start != end)
+			return null;
+		
+		//	are captions visible?
+		if (!idmp.areAnnotationsPainted(CAPTION_TYPE))
+			return null;
+		
+		//	get clicked caption
+		final ImAnnotation clickedCaption = this.getCaptionAt(idmp.document, start);
+		if (clickedCaption == null)
+			return null;
+		
+		//	collect actions
+		LinkedList actions = new LinkedList();
+		
+		//	offer marking citations of table clicked caption belongs to
+		if (clickedCaption.getFirstWord().getString().toLowerCase().startsWith("tab"))
+			actions.add(new SelectionAction("annotateCaptionCitations", "Mark Citations of Table", "Annotate citations of table belonging to this caption.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return annotateCaptionCitations(idmp.document, clickedCaption, idmp);
+				}
+			});
+		
+		//	offer marking citations of figure clicked caption belongs to
+		else actions.add(new SelectionAction("annotateCaptionCitations", "Mark Citations of Figure", "Annotate citations of figure belonging to this caption.") {
+			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				return annotateCaptionCitations(idmp.document, clickedCaption, idmp);
+			}
+		});
+		
+		//	finally ...
+		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	private ImAnnotation getCaptionAt(ImDocument doc, ImWord imw) {
+		ImAnnotation[] clickedPageCaptions = doc.getAnnotations(CAPTION_TYPE, imw.pageId);
+		for (int c = 0; c < clickedPageCaptions.length; c++) {
+			if (clickedPageCaptions[c].getFirstWord().getTextStreamId().equals(imw.getTextStreamId()))
+				return clickedPageCaptions[c];
+		}
+		return null;
+	}
+	
+	private SelectionAction[] getMarkCaptionCitationActions(final ImWord start, final ImWord end, final ImDocumentMarkupPanel idmp) {
+		
 		//	if selection starts with a word (not an index letter or Roman number), it has to be 'Tab*', 'Fig*', etc., whichever is present in the document
-		TreeSet docCaptionStarts = this.getDocumentCaptionStarts(idmp.document);
+		TreeSet docCaptionStarts = this.getDocumentCaptionStarts(idmp.document, true);
 		if ((start.getString().length() > 1) && Gamta.isWord(start.getString()) && !docCaptionStarts.contains(start.getString()) && !start.getString().matches("[IiVvXxLl]+"))
 			return null;
 		
@@ -172,12 +230,21 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		String ccHead = null;
 		ImWord ccNumStart = null;
 		if (docCaptionStarts.contains(start.getString())) {
-			ccHead = start.getString(); // TODO append connected words ('continue' or 'hyphenated' relation)
+			ccHead = start.getString();
 			ccNumStart = start.getNextWord();
+		}
+		else if (docCaptionStarts.contains(this.getStringFrom(start))) {
+			ccHead = this.getStringFrom(start); // this one will be rare enough for a twice computation to be alright
+			ccNumStart = this.getFollowingWordStart(start);
 		}
 		else for (ImWord imw = start.getPreviousWord(); imw != null; imw = imw.getPreviousWord()) {
 			if (docCaptionStarts.contains(imw.getString())) {
 				ccHead = imw.getString();
+				ccNumStart = start;
+				break;
+			}
+			else if (docCaptionStarts.contains(this.getStringFrom(imw))) {
+				ccHead = this.getStringFrom(start); // this one will be rare enough for a twice computation to be alright
 				ccNumStart = start;
 				break;
 			}
@@ -199,12 +266,12 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		if (ccHead.toLowerCase().startsWith("tab"))
 			actions.add(new SelectionAction("annotateTableCitation", "Annotate Table Citation", "Annotate selected words as a table citation and select cited table(s).") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return annotateCaptionCitation(idmp.document, true, start, end);
+					return annotateCaptionCitation(idmp.document, true, start, end, idmp);
 				}
 			});
 		else actions.add(new SelectionAction("annotateFigureCitation", "Annotate Figure Citation", "Annotate selected words as a figure citation and select cited figure(s).") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				return annotateCaptionCitation(idmp.document, false, start, end);
+				return annotateCaptionCitation(idmp.document, false, start, end, idmp);
 			}
 		});
 		
@@ -212,7 +279,20 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
-	private boolean annotateCaptionCitation(ImDocument doc, boolean isTableCitation, ImWord start, ImWord end) {
+	private String getStringFrom(ImWord start) {
+		ImWord end = start;
+		while ((end.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) || (end.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED))
+			end = end.getNextWord();
+		return ImUtils.getString(start, end, true);
+	}
+	
+	private ImWord getFollowingWordStart(ImWord start) {
+		while ((start.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) || (start.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED))
+			start = start.getNextWord();
+		return start.getNextWord();
+	}
+	
+	private boolean annotateCaptionCitation(ImDocument doc, boolean isTableCitation, ImWord start, ImWord end, ImDocumentMarkupPanel idmp) {
 		
 		//	get applicable captions
 		ImAnnotation[] allCaptions = doc.getAnnotations(ImAnnotation.CAPTION_TYPE);
@@ -276,34 +356,45 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		if (citedCaptions.isEmpty())
 			return false;
 		
-		//	add annotation
-		this.annotateCaptionCitation(doc, (isTableCitation ? "table" : "figure"), start, end, citedCaptions);
+		//	add annotation ...
+		String captionCitationType =  this.annotateCaptionCitation(doc, (isTableCitation ? "table" : "figure"), start, end, citedCaptions);
+		
+		//	... and make it show
+		if (idmp != null)
+			idmp.setAnnotationsPainted(captionCitationType, true);
 		return true;
 	}
 	
 	private HashMap documentCaptionStarts = new HashMap();
-	private TreeSet getDocumentCaptionStarts(ImDocument doc) {
+	private TreeSet getDocumentCaptionStarts(ImDocument doc, boolean create) {
 		TreeSet captionStarts = ((TreeSet) this.documentCaptionStarts.get(doc.docId));
 		
 		//	collect caption starts if not done before
-		if (captionStarts == null) {
+		if ((captionStarts == null) && create) {
 			captionStarts = new TreeSet(String.CASE_INSENSITIVE_ORDER);
 			ImAnnotation[] captions = doc.getAnnotations(ImAnnotation.CAPTION_TYPE);
-			for (int c = 0; c < captions.length; c++) {
-				String captionStart = captions[c].getFirstWord().getString();
-				if (captionStartMappings.containsKey(captionStart))
-					captionStart = ((String) captionStartMappings.get(captionStart));
-				for (int e = 3; e <= (captionStart.length() - (captionStart.toLowerCase().endsWith("s") ? 1 : 0)); e++) {
-					captionStarts.add(captionStart.substring(0, e));
-					captionStarts.add(captionStart.substring(0, e) + "s");
-				}
-			}
+			for (int c = 0; c < captions.length; c++)
+				this.addCaptionStarts(captionStarts, captions[c]);
 			this.documentCaptionStarts.put(doc.docId, captionStarts);
 		}
 		
 		//	finally ...
 		return captionStarts;
 	}
+	
+	private void addCaptionStarts(TreeSet captionStarts, ImAnnotation caption) {
+		String captionStart = this.getStringFrom(caption.getFirstWord());
+		if (captionStartMappings.containsKey(captionStart))
+			captionStart = ((String) captionStartMappings.get(captionStart));
+		if (captionStartAbbreviationMappings.containsKey(captionStart))
+			captionStarts.addAll((Set) captionStartAbbreviationMappings.get(captionStart));
+		for (int e = 3; e <= (captionStart.length() - (captionStart.toLowerCase().endsWith("s") ? 1 : 0)); e++) {
+			captionStarts.add(captionStart.substring(0, e));
+			captionStarts.add(captionStart.substring(0, e) + "s");
+		}
+	}
+	
+	
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument)
@@ -349,6 +440,10 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 			ImDocument doc = object.getDocument();
 			if (doc == null)
 				return;
+			
+			//	clean up document caption starts
+			if (ImAnnotation.FIRST_WORD_ATTRIBUTE.equals(attributeName))
+				this.documentCaptionStarts.remove(doc.docId);
 			
 			//	get caption attributes
 			ImAnnotation caption = ((ImAnnotation) object);
@@ -414,6 +509,10 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 			ImDocument doc = object.getDocument();
 			if (doc == null)
 				return;
+			
+			//	clean up document caption starts
+			if (ImAnnotation.FIRST_WORD_ATTRIBUTE.equals(attributeName))
+				this.documentCaptionStarts.remove(doc.docId);
 			
 			//	find affected caption
 			ImAnnotation[] wordCaptions = doc.getAnnotationsSpanning((ImWord) object);
@@ -608,60 +707,19 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		//	finally ...
 		return ImUtils.getString(caption.getFirstWord(), ((captionStartEnd == null) ? caption.getLastWord() : captionStartEnd), true);
 	}
-//	
-//	private String getCaptionStart(ImAnnotation caption) {
-//		ImWord captionStartEnd = null;
-//		boolean lastWasIndex = false;
-//		for (ImWord imw = caption.getFirstWord().getNextWord(); imw != null; imw = imw.getNextWord()) {
-//			String imwString = imw.getString();
-//			if ((imwString == null) || (imwString.trim().length() == 0))
-//				continue;
-//			
-//			//	index number or letter
-//			if (imwString.matches("([0-9]+(\\s*[a-z])?)|[IiVvXxLl]+|[a-zA-Z]")) {
-//				captionStartEnd = imw;
-//				lastWasIndex = true;
-//			}
-//			
-//			//	enumeration separator or range marker
-//			else if (imwString.equals(",") || imwString.equals("&") || (";and;und;et;y;".indexOf(";" + imwString.toLowerCase() + ";") != -1) || imwString.matches("[\\-\\u00AD\\u2010-\\u2015\\u2212]+")) {
-//				if (!lastWasIndex) // no enumeration or range open, we're done here
-//					break;
-//				lastWasIndex = false;
-//			}
-//			
-//			//	ignore dots
-//			else if (!".".equals(imwString))
-//				break;
-//		}
-//		
-//		//	finally ...
-//		return ImUtils.getString(caption.getFirstWord(), ((captionStartEnd == null) ? caption.getLastWord() : captionStartEnd), true);
-//	}
 	
 	private String getCaptionTargetSupplementId(ImPage targetPage, BoundingBox captionTargetBox) {
 		ImSupplement[] targetPageSupplements = targetPage.getSupplements();
-		for (int s = 0; s < targetPageSupplements.length; s++) {
-			if (!(targetPageSupplements[s] instanceof Figure))
-				continue;
-			BoundingBox pageSupplementBox = ((Figure) targetPageSupplements[s]).getBounds();
-			if (pageSupplementBox == null)
-				continue;
-			if (captionTargetBox.liesIn(pageSupplementBox, true) && pageSupplementBox.liesIn(captionTargetBox, true))
-				return targetPageSupplements[s].getId();
-		}
+		for (int s = 0; s < targetPageSupplements.length; s++)
+			if ((targetPageSupplements[s] instanceof Figure) || (targetPageSupplements[s] instanceof Graphics)) {
+				BoundingBox pageSupplementBox = ((Figure) targetPageSupplements[s]).getBounds();
+				if (pageSupplementBox == null)
+					continue;
+				if (captionTargetBox.liesIn(pageSupplementBox, true) && pageSupplementBox.liesIn(captionTargetBox, true))
+					return targetPageSupplements[s].getId();
+			}
 		return null;
 	}
-	
-	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#regionAdded(de.uka.ipd.idaho.im.ImRegion, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
-	 */
-	public void regionAdded(ImRegion region, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
-	
-	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#regionRemoved(de.uka.ipd.idaho.im.ImRegion, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
-	 */
-	public void regionRemoved(ImRegion region, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider#annotationAdded(de.uka.ipd.idaho.im.ImAnnotation, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
@@ -677,19 +735,40 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		if (doc == null)
 			return;
 		
+		//	update document caption starts
+		TreeSet captionStarts = this.getDocumentCaptionStarts(doc, false);
+		if (captionStarts != null)
+			this.addCaptionStarts(captionStarts, annotation);
+		
+		//	annotate caption citations
+		this.annotateCaptionCitations(doc, annotation, idmp);
+	}
+	
+	private boolean annotateCaptionCitations(ImDocument doc, ImAnnotation caption, ImDocumentMarkupPanel idmp) {
+		
 		//	collect caption start words, and generate all their prefixes
 		TreeMap captionStartsToNumbers = this.getCaptionStartNumberIndex(doc);
 		
 		//	tag and connect caption citations TODO use caption citation properties from document style (patterns, first and foremost)
 		ImWord[] textStreamHeads = doc.getTextStreamHeads();
+		boolean ccMarked = false;
 		for (int h = 0; h < textStreamHeads.length; h++) {
 			if (ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(textStreamHeads[h].getTextStreamType()))
-				this.markCaptionCitations(doc, textStreamHeads[h], captionStartsToNumbers);
+				ccMarked = (this.markCaptionCitations(doc, textStreamHeads[h], captionStartsToNumbers, caption) || ccMarked);
 		}
 		
 		//	remove nested caption citations
 		this.removeNestedAnnotations(doc, doc.getAnnotations("figure" + CITATION_TYPE_SUFFIX));
 		this.removeNestedAnnotations(doc, doc.getAnnotations(ImRegion.TABLE_TYPE + CITATION_TYPE_SUFFIX));
+		
+		//	make any changes show
+		if (ccMarked && (idmp != null)) {
+			idmp.setAnnotationsPainted(("figure" + CITATION_TYPE_SUFFIX), true);
+			idmp.setAnnotationsPainted((ImRegion.TABLE_TYPE + CITATION_TYPE_SUFFIX), true);
+		}
+		
+		//	did we change anything?
+		return ccMarked;
 	}
 	
 	private void removeNestedAnnotations(ImDocument doc, ImAnnotation[] annots) {
@@ -731,6 +810,24 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		}
 	};
 	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractReactionProvider#annotationRemoved(de.uka.ipd.idaho.im.ImAnnotation, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel, boolean)
+	 */
+	public void annotationRemoved(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {
+		
+		//	we're only interested in captions
+		if (!CAPTION_TYPE.equals(annotation.getType()))
+			return;
+		
+		//	get document
+		ImDocument doc = annotation.getDocument();
+		if (doc == null)
+			return;
+		
+		//	clean up document caption starts
+		this.documentCaptionStarts.remove(doc.docId);
+	}
+	
 	/**
 	 * Mark caption citations in a document. This method expects captions to be
 	 * already marked, seeking only citations of theirs.
@@ -754,7 +851,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		//	tag and connect caption citations TODO use caption citation properties from document style (patterns, first and foremost)
 		for (int h = 0; h < textStreamHeads.length; h++) {
 			if (ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(textStreamHeads[h].getTextStreamType()))
-				this.markCaptionCitations(doc, textStreamHeads[h], captionStartsToNumbers);
+				this.markCaptionCitations(doc, textStreamHeads[h], captionStartsToNumbers, null);
 		}
 	}
 	
@@ -930,23 +1027,38 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		return captionStartsToNumbers;
 	}
 	
-	private static final boolean DEBUG_MARK_CAPTION_CITATIONS = false;
-	private void markCaptionCitations(ImDocument doc, ImWord textStreamHead, TreeMap captionStartsToNumbers) {
+	private static final boolean DEBUG_MARK_CAPTION_CITATIONS = true;
+	
+	private boolean markCaptionCitations(ImDocument doc, ImWord textStreamHead, TreeMap captionStartsToNumbers, ImAnnotation targetCaption) {
+		
+		//	try marking caption citations in title case first (way faster, and usually sufficient) ...
+		return (this.markCaptionCitations(doc, textStreamHead, captionStartsToNumbers, true, targetCaption)
+			
+			//	... and try case insensitive only if none found
+			|| this.markCaptionCitations(doc, textStreamHead, captionStartsToNumbers, false, targetCaption));
+	}
+	
+	private boolean markCaptionCitations(ImDocument doc, ImWord textStreamHead, TreeMap captionStartsToNumbers, boolean titleCaseOnly, ImAnnotation targetCaption) {
+		boolean ccMarked = false;
 		for (ImWord imw = textStreamHead; imw.getNextWord() != null; imw = imw.getNextWord()) {
 			String imwString = imw.getString();
 			if (imwString == null)
 				continue;
-			if (Character.toTitleCase(imwString.charAt(0)) != imwString.charAt(0))
+			if (titleCaseOnly && (Character.toTitleCase(imwString.charAt(0)) != imwString.charAt(0)))
 				continue;
 			TreeMap captionStartNumbers = ((TreeMap) captionStartsToNumbers.get(imwString));
 			if (captionStartNumbers == null)
 				continue;
 			if (DEBUG_MARK_CAPTION_CITATIONS) System.out.println("Starting caption citation with " + imwString + " on page " + imw.pageId + " at " + imw.bounds);
-			imw = this.markCaptionCitation(doc, imw, captionStartNumbers);
+//			imw = this.markCaptionCitation(doc, imw, captionStartNumbers);
+			ImWord ccEnd = this.markCaptionCitation(doc, imw, captionStartNumbers, targetCaption);
+			ccMarked = (ccMarked || (ccEnd != imw));
+			imw = ccEnd;
 		}
+		return ccMarked;
 	}
 	
-	private ImWord markCaptionCitation(ImDocument doc, ImWord ccHead, TreeMap captionStartNumbers) {
+	private ImWord markCaptionCitation(ImDocument doc, ImWord ccHead, TreeMap captionStartNumbers, ImAnnotation targetCaption) {
 		
 		//	get caption citations
 		ArrayList ccList = this.getCaptionCitations(ccHead, ccHead.getNextWord(), null, captionStartNumbers);
@@ -1003,13 +1115,17 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		}
 		
 		//	mark caption citation, distinguishing table citations from figure citations
+		ImWord lastCcLastWord = ccHead;
 		for (int c = 0; c < ccList.size(); c++) {
 			CaptionCitation cc = ((CaptionCitation) ccList.get(c));
-			this.annotateCaptionCitation(doc, ccHead.getString(), cc.firstWord, cc.lastWord, cc.citedCaptions);
+			if ((targetCaption == null) || cc.citedCaptions.contains(targetCaption)) {
+				this.annotateCaptionCitation(doc, ccHead.getString(), cc.firstWord, cc.lastWord, cc.citedCaptions);
+				lastCcLastWord = cc.lastWord;
+			}
 		}
 		
 		//	return last word of last caption citation
-		return ((CaptionCitation) ccList.get(ccList.size()-1)).lastWord;
+		return lastCcLastWord;
 	}
 	
 	private ArrayList getCaptionCitations(ImWord ccHead, ImWord ccNumStart, ImWord ccEnd, TreeMap captionStartNumbers) {
@@ -1228,7 +1344,7 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		return ccList;
 	}
 	
-	private void annotateCaptionCitation(ImDocument doc, String ccHead, ImWord firstWord, ImWord lastWord, Collection citedCaptions) {
+	private String annotateCaptionCitation(ImDocument doc, String ccHead, ImWord firstWord, ImWord lastWord, Collection citedCaptions) {
 		ImAnnotation captionCitation = doc.addAnnotation(firstWord, lastWord, ((ccHead.toLowerCase().startsWith("tab") ? ImRegion.TABLE_TYPE : "figure") + CITATION_TYPE_SUFFIX));
 		int ccIndex = 0;
 		for (Iterator ccit = citedCaptions.iterator(); ccit.hasNext();) {
@@ -1275,6 +1391,8 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 			if (ccAnnot.length != 0)
 				System.out.println(" - " + ccAnnot[0].toXML());
 		}
+		
+		return captionCitation.getType();
 	}
 	
 	private static TreeMap captionStartMappings = new TreeMap(String.CASE_INSENSITIVE_ORDER);
@@ -1285,6 +1403,16 @@ public class CaptionCitationHandler extends AbstractReactionProvider implements 
 		captionStartMappings.put("Diag", "Diagram");
 		captionStartMappings.put("Diags", "Diagrams");
 		captionStartMappings.put("Tab", "Table");
+	}
+	
+	private static TreeMap captionStartAbbreviationMappings = new TreeMap(String.CASE_INSENSITIVE_ORDER);
+	static {
+		Set captionStartAbbreviations;
+		captionStartAbbreviations = new TreeSet();
+		captionStartAbbreviations.add("Pl");
+		captionStartAbbreviations.add("Plt");
+		captionStartAbbreviationMappings.put("Plate", captionStartAbbreviations);
+		//	TODO think of more
 	}
 	
 	private static class CaptionCitation {
