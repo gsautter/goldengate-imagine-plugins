@@ -27,6 +27,7 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
+import java.awt.Color;
 import java.awt.Point;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
@@ -60,6 +61,8 @@ import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.MutableAnnotation;
 import de.uka.ipd.idaho.gamta.TokenSequenceUtils;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
+import de.uka.ipd.idaho.gamta.util.gPath.GPath;
+import de.uka.ipd.idaho.gamta.util.gPath.exceptions.GPathException;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
@@ -111,6 +114,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 	private static final String CUT_SECOND_TO_END_OPERATION = "cutSecondToEnd";
 	
 	private Properties annotTypeOperations = new Properties();
+	private LinkedHashMap annotPathOperations = new LinkedHashMap();
 	
 	private TreeSet annotTypes = new TreeSet(String.CASE_INSENSITIVE_ORDER);
 	
@@ -150,9 +154,13 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					continue;
 				if (typeOperation.startsWith("//"))
 					continue;
-				String[] typeAndOperation = typeOperation.split("\\s+");
-				if (typeAndOperation.length == 2)
-					this.annotTypeOperations.setProperty(typeAndOperation[0], typeAndOperation[1]);
+				String[] typeAndOperation = typeOperation.split("\\t");
+				if (typeAndOperation.length != 2)
+					continue;
+				typeAndOperation[0] = typeAndOperation[0].trim();
+				if (typeAndOperation[0].startsWith("/"))
+					this.annotPathOperations.put(typeAndOperation[0], typeAndOperation[1].trim());
+				else this.annotTypeOperations.setProperty(typeAndOperation[0], typeAndOperation[1].trim());
 			}
 		} catch (IOException ioe) {}
 	}
@@ -303,6 +311,9 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			//	we only process the document as a whole
 			if (annot != null)
 				return;
+			
+			//	clean up document data structures so we have a clean basis to start from 
+			doc.cleanupAnnotations();
 			
 			//	get document annotations
 			ImAnnotation[] annots = doc.getAnnotations();
@@ -463,9 +474,37 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			pm.setProgress(60);
 			pm.setInfo(" - checking structural annotation nesting");
 			this.cleanUpInterleavingAnnots(doc, structAnnotList);
-			pm.setProgress(80);
+			pm.setProgress(annotPathOperations.isEmpty() ? 80 : 73);
 			pm.setInfo(" - checking detail annotation nesting");
 			this.cleanUpInterleavingAnnots(doc, detailAnnotList);
+			
+			//	any custom cleanup rules to apply? (we can save the XML wrapper hassle if not)
+			if (annotPathOperations.isEmpty())
+				return;
+			
+			//	create XML wrapper to execute path expressions
+			ArrayList annotList = (structAnnotList.isEmpty() ? detailAnnotList : structAnnotList);
+			ImWord firstWord = ((ImAnnotation) annotList.get(0)).getFirstWord();
+			while (firstWord.getPreviousWord() != null)
+				firstWord = firstWord.getPreviousWord();
+			ImWord lastWord = ((ImAnnotation) annotList.get(annotList.size()-1)).getLastWord();
+			while (lastWord.getNextWord() != null)
+				lastWord = lastWord.getNextWord();
+			ImDocumentRoot xmlDoc = new ImDocumentRoot(firstWord, lastWord, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS);
+			
+			//	apply custom cleanup rules
+			pm.setProgress(87);
+			pm.setInfo(" - applying custom cleanup rules");
+			for (Iterator pit = annotPathOperations.keySet().iterator(); pit.hasNext();) try {
+				String path = ((String) pit.next());
+				String operation = ((String) annotPathOperations.get(path));
+				Annotation[] pAnnots = GPath.evaluatePath(xmlDoc, path, null);
+				for (int a = 0; a < pAnnots.length; a++) {
+					if (REMOVE_OPERATION.equals(operation))
+						xmlDoc.removeAnnotation(pAnnots[a]);
+					else pAnnots[a].changeTypeTo(operation);
+				}
+			} catch (GPathException gpe) {}
 		}
 		
 		private void cleanUpInterleavingAnnots(ImDocument doc, ArrayList annotList) {
@@ -730,9 +769,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotation to create", annotTypes, null, true);
 					if (annotType == null)
 						return false;
-					annotateAll(idmp.document, start, end, annotType);
-					idmp.setAnnotationsPainted(annotType, true);
-					return true;
+					if (annotateAll(idmp.document, start, end, annotType)) {
+						idmp.setAnnotationsPainted(annotType, true);
+						return true;
+					}
+					else return false;
 				}
 			});
 		}
@@ -775,6 +816,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 								invoker.repaint();
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(annotType);
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -792,11 +838,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 							String annotType = ImUtils.promptForObjectType("Enter Annotation Type", "Enter or select type of annotations to create", annotTypes, null, true);
 							if (annotType != null) {
 								invoker.beginAtomicAction("Annotate All");
-								annotateAll(idmp.document, start, end, annotType);
-								invoker.endAtomicAction();
-								invoker.setAnnotationsPainted(annotType, true);
-								invoker.validate();
-								invoker.repaint();
+								if (annotateAll(idmp.document, start, end, annotType)) {
+									invoker.endAtomicAction();
+									invoker.setAnnotationsPainted(annotType, true);
+									invoker.validate();
+									invoker.repaint();
+								}
 							}
 						}
 					});
@@ -807,13 +854,19 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
 								invoker.beginAtomicAction("Annotate All");
-								annotateAll(idmp.document, start, end, annotType);
-								invoker.setAnnotationsPainted(annotType, true);
-								invoker.endAtomicAction();
-								invoker.validate();
-								invoker.repaint();
+								if (annotateAll(idmp.document, start, end, annotType)) {
+									invoker.setAnnotationsPainted(annotType, true);
+									invoker.endAtomicAction();
+									invoker.validate();
+									invoker.repaint();
+								}
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(annotType);
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -847,6 +900,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					idmp.editAttributes(spanningAnnots[0], spanningAnnots[0].getType(), spanningAnnotValue.toString());
 					return true;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(spanningAnnots[0].getType());
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
+				}
 			});
 			
 			//	offer copying attributes to other annotation
@@ -861,6 +923,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					public String getActiveLabel() {
 						return ("Copy attributes of " + spanningAnnots[0].getType() + " annotation at '" + start.getString() + "'");
 					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnots[0].getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
+						return mi;
+					}
 				});
 			
 			//	remove existing annotation
@@ -869,15 +940,30 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					idmp.document.removeAnnotation(spanningAnnots[0]);
 					return true;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(spanningAnnots[0].getType());
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
+				}
 			});
 			
 			//	remove all existing annotation with selected value
 			actions.add(new SelectionAction("removeAllAnnot", ("Remove All '" + getAnnotationShortValue(start, end) + "' " + spanningAnnots[0].getType() + " Annotations"), ("Remove all '" + spanningAnnots[0].getType() + "' annotations with value '" + getAnnotationShortValue(start, end) + "'.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					idmp.beginAtomicAction("Remove All");
-					removeAll(idmp.document, spanningAnnots[0]);
-					idmp.endAtomicAction();
-					return true;
+					return removeAll(idmp.document, spanningAnnots[0]);
+				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(spanningAnnots[0].getType());
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
 				}
 			});
 			
@@ -890,6 +976,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					spanningAnnots[0].setType(annotType);
 					idmp.setAnnotationsPainted(annotType, true);
 					return true;
+				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(spanningAnnots[0].getType());
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
 				}
 			});
 		}
@@ -927,6 +1022,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 								invoker.repaint();
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -949,6 +1049,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 									performAction(invoker);
 								}
 							});
+							Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+							if (annotTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(annotTypeColor);
+							}
 							pm.add(mi);
 						}
 						return pm;
@@ -984,6 +1089,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 								invoker.repaint();
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -1004,12 +1114,18 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
 								invoker.beginAtomicAction("Remove All");
-								removeAll(idmp.document, selectedAnnot);
-								invoker.endAtomicAction();
-								invoker.validate();
-								invoker.repaint();
+								if (removeAll(idmp.document, selectedAnnot)) {
+									invoker.endAtomicAction();
+									invoker.validate();
+									invoker.repaint();
+								}
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(selectedAnnot.getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -1040,6 +1156,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 								}
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -1087,6 +1208,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						idmp.document.cleanupAnnotations();
 						return true;
 					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
+						return mi;
+					}
 				});
 			}
 			
@@ -1102,6 +1232,13 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						spanningAnnot.setLastWord(start);
 						idmp.document.cleanupAnnotations();
 						return true;
+					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+						if (annotTypeColor != null)
+							mi.setBackground(annotTypeColor);
+						return mi;
 					}
 				});
 			}
@@ -1128,6 +1265,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					idmp.document.cleanupAnnotations();
 					return true;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(type);
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
+				}
 			});
 		}
 		
@@ -1149,6 +1295,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					idmp.document.cleanupAnnotations();
 					return true;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(overlappingAnnot.getType());
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
+				}
 			});
 		}
 		
@@ -1159,11 +1314,29 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					ImUtils.copy(new StringSelection(ImUtils.getString(spanningAnnots[0].getFirstWord(), spanningAnnots[0].getLastWord(), true)));
 					return false;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(spanningAnnots[0].getType());
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
+				}
 			});
 			actions.add(new SelectionAction("copyAnnotXML", ("Copy " + spanningAnnots[0].getType() + " XML"), ("Copy the '" + spanningAnnots[0].getType() + "' annotation to the system clipboard as XML")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					copyAnnotationXML(spanningAnnots[0]);
 					return false;
+				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color annotTypeColor = idmp.getAnnotationColor(spanningAnnots[0].getType());
+					if (annotTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(annotTypeColor);
+					}
+					return mi;
 				}
 			});
 		}
@@ -1183,6 +1356,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 								ImUtils.copy(new StringSelection(ImUtils.getString(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord(), true)));
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -1203,6 +1381,11 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 								copyAnnotationXML(spanningAnnot);
 							}
 						});
+						Color annotTypeColor = idmp.getAnnotationColor(spanningAnnot.getType());
+						if (annotTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -1292,7 +1475,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		return true;
 	}
 	
-	private String getAnnotationShortValue(ImWord start, ImWord end) {
+	private static String getAnnotationShortValue(ImWord start, ImWord end) {
 		if (start == end)
 			return start.getString();
 		else if (start.getNextWord() == end)
@@ -1305,7 +1488,7 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		//	wrap annotation
 		ImDocumentRoot wrappedAnnot = new ImDocumentRoot(annot, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS);
 		
-		//	write annotation as XML (filter out implicit paragraphs, though)
+		//	write annotation as XML (filter out implicit paragraphs, though) TODO do we really need this filter ???
 		StringWriter annotData = new StringWriter();
 		try {
 			AnnotationUtils.writeXML(wrappedAnnot, annotData, true, new HashSet() {
@@ -1319,12 +1502,14 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		ImUtils.copy(new StringSelection(annotData.toString()));
 	}
 	
-	private void annotateAll(ImDocument doc, ImWord start, ImWord end, String annotType) {
+	private boolean annotateAll(ImDocument doc, ImWord start, ImWord end, String annotType) {
 		
 		//	annotate selected occurrence
 		ImWord fw = ((ImUtils.textStreamOrder.compare(start, end) < 0) ? start : end);
 		ImWord lw = ((ImUtils.textStreamOrder.compare(start, end) < 0) ? end : start);
 		ImAnnotation annot = doc.addAnnotation(fw, lw, annotType);
+		if (annot == null)
+			return false;
 		
 		//	wrap document (we can normalize all the way, as this is fastest, and annotations refer to a single text stream anyway)
 		ImDocumentRoot wrapperDoc = new ImDocumentRoot(doc, ImTokenSequence.NORMALIZATION_LEVEL_STREAMS);
@@ -1337,9 +1522,12 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		//	add annotations (we can simply add them all, as ImDocument prevents duplicates internally)
 		for (int a = 0; a < annots.length; a++)
 			wrapperDoc.addAnnotation(annotType, annots[a].getStartIndex(), annots[a].size());
+		
+		//	we added at least one annotation ...
+		return true;
 	}
 	
-	private void removeAll(ImDocument doc, ImAnnotation annot) {
+	private boolean removeAll(ImDocument doc, ImAnnotation annot) {
 		
 		//	get all annotations of selected type
 		ImAnnotation[] annots = doc.getAnnotations(annot.getType());
@@ -1348,11 +1536,17 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		String removeValue = TokenSequenceUtils.concatTokens(new ImTokenSequence(annot.getFirstWord(), annot.getLastWord()), true, true);
 		
 		//	remove annotations
+		boolean removed = false;
 		for (int a = 0; a < annots.length; a++) {
 			String annotValue = TokenSequenceUtils.concatTokens(new ImTokenSequence(annots[a].getFirstWord(), annots[a].getLastWord()), true, true);
-			if (annotValue.equals(removeValue))
+			if (annotValue.equals(removeValue)) {
 				doc.removeAnnotation(annots[a]);
+				removed = true;
+			}
 		}
+		
+		//	report any changes
+		return removed;
 	}
 	
 	/* (non-Javadoc)

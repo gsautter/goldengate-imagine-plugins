@@ -24,7 +24,9 @@
 	<target name="fetch-ie" depends="check-fetch-ie" if="${ie.exists}">
     	<copy file="../idaho-extensions/dist/GamtaImagingAPI.jar" todir="${lib.home}" overwrite="true" verbose="false" />
     	<copy file="../idaho-extensions/dist/GamtaFeedbackAPI.jar" todir="${lib.home}" overwrite="true" verbose="false" />
+		<!--copy file="../idaho-extensions/dist/DocumentErrorLogging.jar" todir="${lib.home}" overwrite="true" verbose="false" /-->
 		<copy file="../idaho-extensions/dist/BibRefUtils.jar" todir="${lib.home}" overwrite="true" verbose="false" />
+		<copy file="../idaho-extensions/dist/DateTimeUtils.jar" todir="${lib.home}" overwrite="true" verbose="false" />
 	</target>
 	
 	<target name="check-fetch-im" unless="im.exists">
@@ -34,6 +36,7 @@
     	<copy file="../idaho-imagemarkup/dist/ImageMarkup.jar" todir="${lib.home}" overwrite="true" verbose="false" />
     	<copy file="../idaho-imagemarkup/dist/ImageMarkup.bin.jar" todir="${lib.home}" overwrite="true" verbose="false" />
 		<copy file="../idaho-imagemarkup/dist/ImageMarkupOCR.jar" todir="${lib.home}" overwrite="true" verbose="false" />
+    	<copy file="../idaho-imagemarkup/dist/ImageMarkupPDF.jar" todir="${lib.home}" overwrite="true" verbose="false" />
 	</target>
 	
 	<target name="check-fetch-gg" unless="gg.exists">

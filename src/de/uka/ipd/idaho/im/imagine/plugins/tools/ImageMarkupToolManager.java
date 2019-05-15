@@ -194,7 +194,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 		LinkedList actions = new LinkedList();
 		
 		//	test spanning annotations inside out, and collect actions
-		for (int a = spanningAnnots.length; a > 0; a--) {
+		for (int a = spanningAnnots.length; a > 0; a--) try {
 			ImDocumentRoot wrappedAnnot = new ImDocumentRoot(spanningAnnots[a-1], ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS);
 			for (int t = 0; t < this.contextMenuTools.length; t++)
 				if (this.contextMenuTools[t].displayFor(wrappedAnnot)) {
@@ -209,6 +209,12 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				}
 			if (actions.size() != 0)
 				break;
+		}
+		
+		//	catch occasional exception from XML wrapper (can happen if text streams are messed up, and we need the other functions to repair this)
+		catch (RuntimeException re) {
+			System.out.println("Error checking applicability of markup tools to " + spanningAnnots[a-1].getType() + ": " + re.getMessage());
+			re.printStackTrace(System.out);
 		}
 		
 		//	finally ...
@@ -525,6 +531,16 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 					int choice = DialogFactory.confirm(("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, (isWarning ? JOptionPane.WARNING_MESSAGE : JOptionPane.ERROR_MESSAGE));
 					if (choice != JOptionPane.YES_OPTION)
 						return;
+//					if (precludingError.startsWith("W:")) {
+//						precludingError = precludingError.substring("W:".length());
+//						int choice = DialogFactory.confirm(("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+//						if (choice != JOptionPane.YES_OPTION)
+//							return;
+//					}
+//					else {
+//						DialogFactory.alert(("The document is fit for " + this.label + ":\n" + precludingError), ("Document not Fit for '" + this.label + "'"), JOptionPane.ERROR_MESSAGE);
+//						return;
+//					}
 				}
 			}
 			
@@ -804,7 +820,7 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 		private JComboBox location = new JComboBox(LOCATIONS);
 		
 		private JComboBox normalizationLevel = new JComboBox(NORMALIZATION_LEVELS);
-		private JCheckBox normalizeChars = new JCheckBox("Normalize Chars");
+		private JCheckBox normalizeChars = new JCheckBox("Normalize Characters");
 		
 		private JCheckBox excludeTables = new JCheckBox("Exclude Tables");
 		private JCheckBox excludeCaptionsFootnotes = new JCheckBox("Exclude Captions & Footnotes");
@@ -2355,5 +2371,4 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			return ((String[]) filters.toArray(new String[filters.size()]));
 		}
 	}
-	
 }

@@ -27,12 +27,15 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
+import java.awt.Color;
 import java.awt.Point;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
+
+import javax.swing.JMenuItem;
 
 import de.uka.ipd.idaho.gamta.util.constants.LiteratureConstants;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
@@ -183,6 +186,7 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 					//	link caption to target
 					caption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + targets[t].pageId));
 					caption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, targets[t].bounds.toString());
+					caption.setAttribute("startId", caption.getFirstWord().getLocalID());
 					if (isTableCaption)
 						caption.setAttribute("targetIsTable");
 					break;
@@ -190,6 +194,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				
 				//	finally ...
 				return true;
+			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getTextStreamTypeColor(ImWord.TEXT_STREAM_TYPE_CAPTION);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
 			}
 		});
 		
@@ -202,6 +215,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				footnote.getLastWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
 				invoker.setAnnotationsPainted(FOOTNOTE_TYPE, true);
 				return true;
+			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getTextStreamTypeColor(ImWord.TEXT_STREAM_TYPE_FOOTNOTE);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
 			}
 		});
 		
@@ -240,6 +262,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				//	finally ...
 				return true;
 			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getTextStreamTypeColor(ImWord.TEXT_STREAM_TYPE_TABLE_NOTE);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
+			}
 		});
 		
 		//	mark selected words as a page header
@@ -252,6 +283,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				invoker.setAnnotationsPainted(PAGE_TITLE_TYPE, true);
 				return true;
 			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getTextStreamTypeColor(ImWord.TEXT_STREAM_TYPE_PAGE_TITLE);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
+			}
 		});
 		
 		//	mark selected words as a page header
@@ -263,6 +303,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				pageTitle.getLastWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
 				invoker.setAnnotationsPainted(PARENTHESIS_TYPE, true);
 				return true;
+			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getTextStreamTypeColor(ImWord.TEXT_STREAM_TYPE_MAIN_TEXT);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
 			}
 		});
 		
@@ -280,6 +329,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				
 				//	indicate change
 				return true;
+			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getTextStreamTypeColor(ImWord.TEXT_STREAM_TYPE_ARTIFACT);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
 			}
 		});
 		
@@ -303,7 +361,7 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 			//	area mostly (>= 80%) covered by figures, any graphics are likely decoration
 			if ((figureArea * 5) >= (selectedBox.getArea() * 4))
 				isImage = true;
-			//	area contains more figures that graphics
+			//	area contains more figures than graphics
 			else if (figureArea > graphicsArea)
 				isImage = true;
 			//	less figures than graphics
@@ -318,6 +376,15 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 					markImageOrGraphics(words, page, selectedBox, ImRegion.IMAGE_TYPE, idmp);
 					return true;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+					if (regionTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(regionTypeColor);
+					}
+					return mi;
+				}
 			});
 		
 		//	mark selected non-white area as graphics (case without words comes from region actions)
@@ -326,17 +393,16 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 				markImageOrGraphics(words, page, selectedBox, ImRegion.GRAPHICS_TYPE, idmp);
 				return true;
 			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
+			}
 		});
-		
-		/* TODO offer sanitizing selected regions:
-		 * - shrink any selected 'column', 'block', 'paragraph', and 'line' regions to their contained words ...
-		 * - ... and remove duplicates afterwards
-		 * - also remove any regions nested in other regions of same type
-		 * 
-		 * - apply this to all regions that have at least one word selected (in terms of center point)
-		 * 
-		 * TODO also consider applying this to generic 'region' regions, or discarding these guys altogether
-		 */
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
@@ -415,7 +481,7 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		for (int w = 0; w < words.length; w++)
 			page.removeWord(words[w], true);
 		
-		//	clean up nested regions
+		//	clean up nested regions (repetitively, as some removals trigger adding new regions via reactions)
 		ImRegion[] selectedRegions = page.getRegionsInside(iogBounds, true);
 		for (int r = 0; r < selectedRegions.length; r++) {
 			if (!iogBounds.liesIn(selectedRegions[r].bounds, false) || iogBounds.equals(selectedRegions[r].bounds))
@@ -432,9 +498,10 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		boolean captionAbove = docLayout.getBooleanProperty("caption.aboveFigure", false);
 		boolean captionBelow = docLayout.getBooleanProperty("caption.belowFigure", true);
 		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
+		boolean captionInside = docLayout.getBooleanProperty("caption.insideFigure", true);
 		
 		//	get potential captions
-		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside, true);
+		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside, captionInside, true);
 		
 		//	try setting attributes in unassigned captions first
 		for (int a = 0; a < captionAnnots.length; a++) {

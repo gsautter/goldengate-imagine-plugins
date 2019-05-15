@@ -27,13 +27,16 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.doc;
 
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Point;
+import java.awt.Shape;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -43,6 +46,7 @@ import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.geom.Rectangle2D;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -54,6 +58,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Map;
@@ -79,6 +84,8 @@ import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JTree;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 import javax.swing.event.TreeSelectionEvent;
@@ -92,18 +99,30 @@ import de.uka.ipd.idaho.easyIO.settings.Settings;
 import de.uka.ipd.idaho.gamta.Annotation;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.Tokenizer;
+import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterDescription;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterGroupDescription;
 import de.uka.ipd.idaho.gamta.util.swing.AnnotationDisplayDialog;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
+import de.uka.ipd.idaho.htmlXmlUtil.Parser;
+import de.uka.ipd.idaho.htmlXmlUtil.TokenReceiver;
+import de.uka.ipd.idaho.htmlXmlUtil.TreeNodeAttributeSet;
+import de.uka.ipd.idaho.htmlXmlUtil.grammars.Grammar;
+import de.uka.ipd.idaho.htmlXmlUtil.grammars.StandardGrammar;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImWord;
+import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.gamta.ImTokenSequence;
 import de.uka.ipd.idaho.im.imagine.GoldenGateImagine;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.DisplayExtensionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
+import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtension;
+import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtensionGraphics;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefTypeSystem;
@@ -115,7 +134,30 @@ import de.uka.ipd.idaho.stringUtils.StringUtils;
  * 
  * @author sautter
  */
-public class DocumentStyleManager extends AbstractSelectionActionProvider implements GoldenGateImagineDocumentListener {
+public class DocumentStyleManager extends AbstractSelectionActionProvider implements GoldenGateImagineDocumentListener, DisplayExtensionProvider {
+	private static final ParameterGroupDescription anchorDescription = new ParameterGroupDescription("anchor");
+	static {
+		anchorDescription.setLabel("Anchors");
+		anchorDescription.setDescription("Anchors automate the assignment of document styles to individual documents. In particular, anchors match on distinctive landmark features on the very first page of documents, e.g. a journal name in a specific position and font size.");
+		anchorDescription.setParamLabel("minFontSize", "Minimum Font Size");
+		anchorDescription.setParamDescription("minFontSize", "The minimum font size of the anchor target (use only if variation present or to be expected, otherwise use exact font size)");
+		anchorDescription.setParamLabel("maxFontSize", "Maximum Font Size");
+		anchorDescription.setParamDescription("maxFontSize", "The maximum font size of the anchor target (use only if variation present or to be expected, otherwise use exact font size)");
+		anchorDescription.setParamLabel("fontSize", "Exact Font Size");
+		anchorDescription.setParamDescription("fontSize", "The exact font size of the anchor target (use minimum and maximum font size if variation present or to be expected)");
+		anchorDescription.setParamLabel("isBold", "Is the Anchor Target Bold?");
+		anchorDescription.setParamDescription("isBold", "Is the anchor target set in bold face?");
+		anchorDescription.setParamLabel("isItalics", "Is the Anchor Target in Italics?");
+		anchorDescription.setParamDescription("isItalics", "Is the anchor target set in italics?");
+		anchorDescription.setParamLabel("isAllCaps", "Is the Anchor Target in All-Caps?");
+		anchorDescription.setParamDescription("isAllCaps", "Is the anchor target set in all-caps?");
+		anchorDescription.setParamLabel("pattern", "Pattern Matching Anchor Target");
+		anchorDescription.setParamDescription("pattern", "A pattern matching the anchor target; should be as restrictive as possible to avoid ambiguity.");
+		anchorDescription.setParamLabel("area", "Anchor Target Area");
+		anchorDescription.setParamDescription("area", "A bounding box locating the anchor target; should be as precise as possible to avoid ambiguity.");
+	}
+	
+	private GoldenGateImagine ggImagine;
 	private Settings parameterValueClassNames;
 	private Map parameterValueClasses = Collections.synchronizedMap(new HashMap());
 	private BibRefTypeSystem refTypeSystem;
@@ -162,6 +204,13 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		catch (IOException ioe) {
 			ioe.printStackTrace(System.out);
 		}
+		
+		//	read and hash available parameter group descriptions
+		String[] dataNames = this.dataProvider.getDataNames();
+		for (int d = 0; d < dataNames.length; d++) {
+			if (dataNames[d].endsWith(".pgd.xml"))
+				this.loadParameterGroupDescription(dataNames[d].substring(0, (dataNames[d].length() - ".pgd.xml".length())));
+		}
 	}
 	
 	/* (non-Javadoc)
@@ -193,6 +242,204 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		catch (IOException ioe) {
 			ioe.printStackTrace(System.out);
 		}
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.DisplayExtensionProvider#getDisplayExtensions()
+	 */
+	public DisplayExtension[] getDisplayExtensions() {
+		return ((this.docStyleEditor == null) ? NO_DISPLAY_EXTENSIONS : this.docStyleEditorDisplayExtension);
+	}
+	
+	private ParameterGroupDescription getParameterGroupDescription(String pnp) {
+		if (pnp.startsWith("anchor."))
+			return anchorDescription;
+		ParameterGroupDescription pgd = DocumentStyle.getParameterGroupDescription(pnp);
+		if (pgd == null)
+			return this.loadParameterGroupDescription(pnp);
+		else {
+			this.storeParameterGroupDescription(pgd);
+			return pgd;
+		}
+	}
+	
+	private static final Grammar xmlGrammar = new StandardGrammar();
+	private static final Parser xmlParser = new Parser(xmlGrammar);
+	private HashMap paramGroupDescriptionsByName = new HashMap();
+	private HashSet paramGroupDescriptionsStored = new HashSet();
+	private HashMap paramGroupDescriptionHashes = new HashMap();
+	
+	private ParameterGroupDescription loadParameterGroupDescription(String pnp) {
+		
+		//	check cache first
+		if (this.paramGroupDescriptionsByName.containsKey(pnp))
+			return ((ParameterGroupDescription) this.paramGroupDescriptionsByName.get(pnp));
+		
+		//	resort to previously persisted parameter group description
+		if (this.dataProvider.isDataAvailable(pnp + ".pgd.xml")) try {
+			final StringBuffer pgdSb = new StringBuffer();
+			BufferedReader pgdBr = new BufferedReader(new InputStreamReader(this.dataProvider.getInputStream(pnp + ".pgd.xml"), "UTF-8") {
+				public int read() throws IOException {
+					int r = super.read();
+					if (r != -1)
+						pgdSb.append((char) r);
+					return r;
+				}
+				public int read(char[] cbuf, int offset, int length) throws IOException {
+					int r = super.read(cbuf, offset, length);
+					if (r != -1)
+						pgdSb.append(cbuf, offset, r);
+					return r;
+				}
+			});
+			final ParameterGroupDescription pgd = new ParameterGroupDescription(pnp);
+			xmlParser.parse(pgdBr, new TokenReceiver() {
+				private ParameterDescription pd = null;
+				private ArrayList pvs = null;
+				public void storeToken(String token, int treeDepth) throws IOException {
+					if (!xmlGrammar.isTag(token))
+						return;
+					String type = xmlGrammar.getType(token);
+					if ("paramGroup".equals(type)) {
+						if (!xmlGrammar.isEndTag(token)) {
+							TreeNodeAttributeSet tnas = TreeNodeAttributeSet.getTagAttributes(token, xmlGrammar);
+							pgd.setLabel(tnas.getAttribute("label", ""));
+							pgd.setDescription(tnas.getAttribute("description", ""));
+						}
+					}
+					else if ("param".equals(type)) {
+						if (xmlGrammar.isEndTag(token)) {
+							this.pd.setValues((String[]) this.pvs.toArray(new String[this.pvs.size()]));
+							this.pvs = null;
+							this.pd = null;
+						}
+						else {
+							TreeNodeAttributeSet tnas = TreeNodeAttributeSet.getTagAttributes(token, xmlGrammar);
+							String pn = tnas.getAttribute("name");
+							pgd.setParamLabel(pn, tnas.getAttribute("label", ""));
+							pgd.setParamDescription(pn, tnas.getAttribute("description", ""));
+							if (!xmlGrammar.isSingularTag(token)) {
+								this.pd = pgd.getParameterDescription(pn);
+								this.pvs = new ArrayList(2);
+							}
+						}
+					}
+					else if ("value".equals(type)) {
+						TreeNodeAttributeSet tnas = TreeNodeAttributeSet.getTagAttributes(token, xmlGrammar);
+						String pvn = tnas.getAttribute("name");
+						this.pvs.add(pvn);
+						String pvl = tnas.getAttribute("label");
+						if (pvl != null)
+							this.pd.setValueLabel(pvn, pvl);
+					}
+				}
+				public void close() throws IOException {}
+			});
+			pgdBr.close();
+			
+			//	cache parameter group description for reuse
+			this.paramGroupDescriptionsByName.put(pnp, pgd);
+			
+			//	remember hash of what we read
+			this.paramGroupDescriptionHashes.put(pnp, Integer.valueOf(computeHashCode(pgdSb)));
+			
+			//	finally ...
+			return pgd;
+		}
+		catch (IOException ioe) {
+			ioe.printStackTrace(System.out);
+		}
+		
+		//	little we can do about this one ...
+		return null;
+	}
+	
+	private void storeParameterGroupDescription(ParameterGroupDescription pgd) {
+		
+		//	check if we saved this one before in current life cycle
+		if (this.paramGroupDescriptionsStored.contains(pgd.parameterNamePrefix))
+			return;
+		
+		//	little we can do about this one ...
+		if (!this.dataProvider.isDataEditable(pgd.parameterNamePrefix + ".pgd.xml"))
+			return;
+		
+		//	get parameter names
+		String[] pgdPns = pgd.getParameterNames();
+		
+		//	write XML to buffer
+		StringBuffer pgdSb = new StringBuffer();
+		pgdSb.append("<paramGroup");
+		pgdSb.append(" name=\"" + pgd.parameterNamePrefix + "\"");
+		if (pgd.getLabel() != null)
+			pgdSb.append(" label=\"" + xmlGrammar.escape(pgd.getLabel()) + "\"");
+		if (pgd.getDescription() != null)
+			pgdSb.append(" description=\"" + xmlGrammar.escape(pgd.getDescription()) + "\"");
+		if (pgdPns.length == 0)
+			pgdSb.append("/>\r\n");
+		else {
+			pgdSb.append(">\r\n");
+			for (int p = 0; p < pgdPns.length; p++) {
+				ParameterDescription pd = pgd.getParameterDescription(pgdPns[p]);
+				if (pd == null)
+					continue;
+				pgdSb.append("  <param");
+				pgdSb.append(" name=\"" + pgdPns[p] + "\"");
+				if (pd.getLabel() != null)
+					pgdSb.append(" label=\"" + xmlGrammar.escape(pd.getLabel()) + "\"");
+				if (pd.getDescription() != null)
+					pgdSb.append(" description=\"" + xmlGrammar.escape(pd.getDescription()) + "\"");
+				String[] pvs = pd.getValues();
+				if ((pvs == null) || (pvs.length == 0))
+					pgdSb.append("/>\r\n");
+				else {
+					pgdSb.append(">\r\n");
+					for (int v = 0; v < pvs.length; v++) {
+						pgdSb.append("    <value");
+						pgdSb.append(" name=\"" + xmlGrammar.escape(pvs[v]) + "\"");
+						if (pd.getValueLabel(pvs[v]) != null)
+							pgdSb.append(" label=\"" + xmlGrammar.escape(pd.getValueLabel(pvs[v])) + "\"");
+						pgdSb.append("/>\r\n");
+					}
+					pgdSb.append("  </param>\r\n");
+				}
+			}
+			pgdSb.append("</paramGroup>\r\n");
+		}
+		
+		//	check for changes via hash
+		Integer pgdHash = Integer.valueOf(computeHashCode(pgdSb));
+		if (this.paramGroupDescriptionHashes.containsKey(pgd.parameterNamePrefix) && this.paramGroupDescriptionHashes.get(pgd.parameterNamePrefix).equals(pgdHash))
+			return;
+		
+		//	persist any changes
+		try {
+			
+			//	write data
+			BufferedWriter pgdBw = new BufferedWriter(new OutputStreamWriter(this.dataProvider.getOutputStream(pgd.parameterNamePrefix + ".pgd.xml"), "UTF-8"));
+			pgdBw.write(pgdSb.toString());
+			pgdBw.flush();
+			pgdBw.close();
+			
+			//	remember data written ...
+			this.paramGroupDescriptionsStored.add(pgd.parameterNamePrefix);
+			
+			//	... as well as current status hash
+			this.paramGroupDescriptionHashes.put(pgd.parameterNamePrefix, pgdHash);
+		}
+		catch (IOException ioe) {
+			ioe.printStackTrace(System.out);
+		}
+	}
+	
+	//	courtesy of java.lang.String
+	private static int computeHashCode(CharSequence chars) {
+		if (chars.length() == 0)
+			return 0;
+		int h = 0;
+		for (int c = 0; c < chars.length(); c++)
+			h = 31*h + chars.charAt(c);
+		return h;
 	}
 	
 	private boolean checkParamValueClass(String docStyleParamName, Class cls, boolean includeArray) {
@@ -236,7 +483,9 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImaginePlugin#setImagineParent(de.uka.ipd.idaho.im.imagine.GoldenGateImagine)
 	 */
-	public void setImagineParent(GoldenGateImagine ggImagine) { /* we don't really need GG Imagine, at least for now */ }
+	public void setImagineParent(GoldenGateImagine ggImagine) {
+		this.ggImagine = ggImagine; // we need this to issue display extension change notifications
+	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImaginePlugin#initImagine()
@@ -244,19 +493,24 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	public void initImagine() { /* nothing to initialize */ }
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
 	 */
-	public void documentOpened(ImDocument doc) { /* we only react to documents being closed */ }
+	public void documentOpened(ImDocument doc, Object source, ProgressMonitor pm) { /* we only react to documents being closed */ }
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSelected(de.uka.ipd.idaho.im.ImDocument)
 	 */
-	public void documentSaving(ImDocument doc) { /* we only react to documents being closed */ }
+	public void documentSelected(ImDocument doc) { /* we only react to documents being selected */ }
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
 	 */
-	public void documentSaved(ImDocument doc) { /* we only react to documents being closed */ }
+	public void documentSaving(ImDocument doc, Object dest, ProgressMonitor pm) { /* we only react to documents being closed */ }
+
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentSaved(ImDocument doc, Object dest, ProgressMonitor pm) { /* we only react to documents being closed */ }
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentClosed(java.lang.String)
@@ -331,7 +585,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				isAllCaps = (isAllCaps && start.getString().equals(start.getString().toUpperCase()));
 				hasCaps = (hasCaps || !start.getString().equals(start.getString().toLowerCase()));
 				try {
-					int fs = Integer.parseInt((String) start.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+					int fs = start.getFontSize();
 					minFontSize = Math.min(minFontSize, fs);
 					maxFontSize = Math.max(maxFontSize, fs);
 				} catch (RuntimeException re) {}
@@ -350,7 +604,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					isAllCaps = (isAllCaps && imw.getString().equals(imw.getString().toUpperCase()));
 					hasCaps = (hasCaps || !imw.getString().equals(imw.getString().toLowerCase()));
 					try {
-						int fs = Integer.parseInt((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+						int fs = imw.getFontSize();
 						minFontSize = Math.min(minFontSize, fs);
 						maxFontSize = Math.max(maxFontSize, fs);
 					} catch (RuntimeException re) {}
@@ -361,7 +615,9 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					if (imw == end)
 						break;
 				}
-				fWordString = (((end.getTextStreamPos() - start.getTextStreamPos()) < 15) ? ImUtils.getString(start, end, true) : null);
+				
+				//	get word string (allowing more words on page 0 for metadata extraction)
+				fWordString = (((end.getTextStreamPos() - start.getTextStreamPos()) < ((start.pageId == 0) ? 50 : 15)) ? ImUtils.getString(start, end, true) : null);
 			}
 		}
 		
@@ -372,7 +628,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			isAllCaps = (isAllCaps && start.getString().equals(start.getString().toUpperCase()));
 			hasCaps = (hasCaps || !start.getString().equals(start.getString().toLowerCase()));
 			try {
-				int fs = Integer.parseInt((String) start.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+				int fs = start.getFontSize();
 				minFontSize = Math.min(minFontSize, fs);
 				maxFontSize = Math.max(maxFontSize, fs);
 			} catch (RuntimeException re) {}
@@ -386,7 +642,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			isAllCaps = (isAllCaps && end.getString().equals(end.getString().toUpperCase()));
 			hasCaps = (hasCaps || !end.getString().equals(end.getString().toLowerCase()));
 			try {
-				int fs = Integer.parseInt((String) end.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+				int fs = end.getFontSize();
 				minFontSize = Math.min(minFontSize, fs);
 				maxFontSize = Math.max(maxFontSize, fs);
 			} catch (RuntimeException re) {}
@@ -412,9 +668,11 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		/* cut word based bounding boxes a little slack, adding some pixels in
 		 * each direction, maybe (DPI / 12), a.k.a. some 2 millimeters, to help
 		 * with slight word placement variations */
-		final BoundingBox fWordBounds = DocumentStyle.scaleBox(new BoundingBox((left - (pageDpi / 12)), (right + (pageDpi / 12)), (top - (pageDpi / 12)), (bottom + (pageDpi / 12))), pageDpi, 72);
-		final int fHoriMargin = ((horiMargin < 0) ? 0 : DocumentStyle.scaleInt(horiMargin, pageDpi, 72));
-		final int fVertMargin = ((vertMargin < 0) ? 0 : DocumentStyle.scaleInt(vertMargin, pageDpi, 72));
+		final BoundingBox fWordBounds = DocumentStyle.scaleBox(new BoundingBox((left - (pageDpi / 12)), (right + (pageDpi / 12)), (top - (pageDpi / 12)), (bottom + (pageDpi / 12))), pageDpi, 72, 'O');
+		final int fHoriMargin = ((horiMargin < 0) ? 0 : DocumentStyle.scaleInt(horiMargin, pageDpi, 72, 'F'));
+		final int cHoriMargin = ((horiMargin < 0) ? 0 : DocumentStyle.scaleInt(horiMargin, pageDpi, 72, 'C'));
+		final int fVertMargin = ((vertMargin < 0) ? 0 : DocumentStyle.scaleInt(vertMargin, pageDpi, 72, 'F'));
+		final int cVertMargin = ((vertMargin < 0) ? 0 : DocumentStyle.scaleInt(vertMargin, pageDpi, 72, 'C'));
 		
 		//	get available parameter names, including ones from style proper (anchors !!!)
 		TreeSet docStyleParamNameSet = new TreeSet(Arrays.asList(this.parameterValueClassNames.getKeys()));
@@ -591,7 +849,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							mi.setText("<HTML><B>" + pn + "</B></HTML>");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								useMargin(idmp.document.docId, docStyle, pn, fHoriMargin);
+								useMargin(idmp.document.docId, docStyle, pn, fHoriMargin, cHoriMargin);
 							}
 						});
 						m.add(mi);
@@ -601,7 +859,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					return m;
 				}
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fHoriMargin);
+					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fHoriMargin, cHoriMargin);
 					return false;
 				}
 			});
@@ -624,7 +882,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							mi.setText("<HTML><B>" + pn + "</B></HTML>");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								useMargin(idmp.document.docId, docStyle, pn, fVertMargin);
+								useMargin(idmp.document.docId, docStyle, pn, fVertMargin, cVertMargin);
 							}
 						});
 						m.add(mi);
@@ -634,7 +892,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					return m;
 				}
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fVertMargin);
+					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fVertMargin, cVertMargin);
 					return false;
 				}
 			});
@@ -728,9 +986,11 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		int bottom = Math.max(start.y, end.y);
 		
 		//	fix parameter values, scaling bounds and margins to default 72 DPI
-		final BoundingBox fWordBounds = DocumentStyle.scaleBox(new BoundingBox(left, right, top, bottom), page.getImageDPI(), 72);
-		final int fHoriMargin = DocumentStyle.scaleInt((right - left), page.getImageDPI(), 72);
-		final int fVertMargin = DocumentStyle.scaleInt((bottom - top), page.getImageDPI(), 72);
+		final BoundingBox fWordBounds = DocumentStyle.scaleBox(new BoundingBox(left, right, top, bottom), page.getImageDPI(), 72, 'O');
+		final int fHoriMargin = DocumentStyle.scaleInt((right - left), page.getImageDPI(), 72, 'F');
+		final int cHoriMargin = DocumentStyle.scaleInt((right - left), page.getImageDPI(), 72, 'C');
+		final int fVertMargin = DocumentStyle.scaleInt((bottom - top), page.getImageDPI(), 72, 'F');
+		final int cVertMargin = DocumentStyle.scaleInt((bottom - top), page.getImageDPI(), 72, 'C');
 		
 		//	get available parameter names, including ones from style proper (anchors !!!)
 		TreeSet docStyleParamNameSet = new TreeSet(Arrays.asList(this.parameterValueClassNames.getKeys()));
@@ -817,7 +1077,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							mi.setText("<HTML><B>" + pn + "</B></HTML>");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								useMargin(idmp.document.docId, docStyle, pn, fHoriMargin);
+								useMargin(idmp.document.docId, docStyle, pn, fHoriMargin, cHoriMargin);
 							}
 						});
 						m.add(mi);
@@ -827,7 +1087,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					return m;
 				}
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fHoriMargin);
+					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fHoriMargin, cHoriMargin);
 					return false;
 				}
 			});
@@ -850,7 +1110,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							mi.setText("<HTML><B>" + pn + "</B></HTML>");
 						mi.addActionListener(new ActionListener() {
 							public void actionPerformed(ActionEvent ae) {
-								useMargin(idmp.document.docId, docStyle, pn, fVertMargin);
+								useMargin(idmp.document.docId, docStyle, pn, fVertMargin, cVertMargin);
 							}
 						});
 						m.add(mi);
@@ -860,7 +1120,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 					return m;
 				}
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fVertMargin);
+					useMargin(idmp.document.docId, docStyle, ((String) mDocStyleParamNames.first()), fVertMargin, cVertMargin);
 					return false;
 				}
 			});
@@ -877,6 +1137,10 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	
 	private void useFontProperties(String docId, Settings docStyle, String docStyleParamGroupName, String[] docStyleParamNames, int minFontSize, int maxFontSize, boolean isBold, boolean isItalics, boolean isAllCaps) {
 		
+		//	get parameter group description and group label
+		ParameterGroupDescription pgd = this.getParameterGroupDescription(docStyleParamGroupName);
+		String pgl = ((pgd == null) ? null : pgd.getLabel());
+		
 		//	ask for properties to use
 		JPanel fpPanel = new JPanel(new GridLayout(0, 1, 0, 0), true);
 		UseBooleanPanel useMinFontSize = null;
@@ -887,7 +1151,12 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				eMinFontSize = Integer.parseInt(docStyle.getSetting((docStyleParamGroupName + ".minFontSize"), "72"));
 			} catch (NumberFormatException nfe) {}
 			if (minFontSize < eMinFontSize) {
-				useMinFontSize = new UseBooleanPanel((docStyleParamGroupName + ".minFontSize"), ("Use " + minFontSize + " as Minimum Font Size (currently " + eMinFontSize + ")"), true);
+				String pl;
+				if (pgl == null)
+					pl = ("Use " + minFontSize + " as Minimum Font Size (currently " + eMinFontSize + ")");
+				else pl = ("Use " + minFontSize + " as Minimum Font Size for " + pgl + " (currently " + eMinFontSize + ")");
+				String pd = ((pgd == null) ? null : pgd.getParamDescription("minFontSize"));
+				useMinFontSize = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".minFontSize"), pl, pd, true);
 				fpPanel.add(useMinFontSize);
 			}
 			int eMaxFontSize = 0;
@@ -895,7 +1164,12 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				eMaxFontSize = Integer.parseInt(docStyle.getSetting((docStyleParamGroupName + ".maxFontSize"), "0"));
 			} catch (NumberFormatException nfe) {}
 			if (eMaxFontSize < maxFontSize) {
-				useMaxFontSize = new UseBooleanPanel((docStyleParamGroupName + ".maxFontSize"), ("Use " + maxFontSize + " as Maximum Font Size (currently " + eMaxFontSize + ")"), true);
+				String pl;
+				if (pgl == null)
+					pl = ("Use " + maxFontSize + " as Maximum Font Size (currently " + eMaxFontSize + ")");
+				else pl = ("Use " + maxFontSize + " as Maximum Font Size for " + pgl + " (currently " + eMaxFontSize + ")");
+				String pd = ((pgd == null) ? null : pgd.getParamDescription("minFontSize"));
+				useMaxFontSize = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".maxFontSize"), pl, pd, true);
 				fpPanel.add(useMaxFontSize);
 			}
 		}
@@ -903,11 +1177,21 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		if (isBold) {
 			for (int p = 0; p < docStyleParamNames.length; p++) {
 				if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isBold")) {
-					useIsBold = new UseBooleanPanel((docStyleParamGroupName + ".isBold"), "Require Values to be Bold", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values to be Bold";
+					else pl = ("Require Values for " + pgl + " to be Bold");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("isBold"));
+					useIsBold = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isBold"), pl, pd, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsBold")) {
-					useIsBold = new UseBooleanPanel((docStyleParamGroupName + ".startIsBold"), "Require Value Starts to be Bold", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Value Starts to be Bold";
+					else pl = ("Require Values for " + pgl + " to Start in Bold");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("startIsBold"));
+					useIsBold = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsBold"), pl, pd, true);
 					break;
 				}
 			}
@@ -918,11 +1202,21 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		if (isItalics) {
 			for (int p = 0; p < docStyleParamNames.length; p++) {
 				if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isItalics")) {
-					useIsItalics = new UseBooleanPanel((docStyleParamGroupName + ".isItalics"), "Require Values to be in Italics", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values to be in Italics";
+					else pl = ("Require Values for " + pgl + " to be in Italics");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("isItalics"));
+					useIsItalics = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isItalics"), pl, pd, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsItalics")) {
-					useIsItalics = new UseBooleanPanel((docStyleParamGroupName + ".startIsItalics"), "Require Value Starts to be in Italics", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values Starts to be in Italics";
+					else pl = ("Require Values for " + pgl + " to Start in Italics");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("startIsItalics"));
+					useIsItalics = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsItalics"), pl, pd, true);
 					break;
 				}
 			}
@@ -933,11 +1227,21 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		if (isAllCaps) {
 			for (int p = 0; p < docStyleParamNames.length; p++) {
 				if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isAllCaps")) {
-					useIsAllCaps = new UseBooleanPanel((docStyleParamGroupName + ".isAllCaps"), "Require Values to be All Caps", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values to be in All Caps";
+					else pl = ("Require Values for " + pgl + " to be in All Caps");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("isAllCaps"));
+					useIsAllCaps = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isAllCaps"), pl, pd, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsAllCaps")) {
-					useIsAllCaps = new UseBooleanPanel((docStyleParamGroupName + ".startIsAllCaps"), "Require Value Starts to be All Caps", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values Starts to be in All Caps";
+					else pl = ("Require Values for " + pgl + " to Start in All Caps");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("startIsAllCaps"));
+					useIsAllCaps = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsAllCaps"), pl, pd, true);
 					break;
 				}
 			}
@@ -946,7 +1250,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		}
 		
 		//	prompt
-		int choice = JOptionPane.showConfirmDialog(null, fpPanel, "Select Font Properties to Use", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+		int choice = JOptionPane.showConfirmDialog(null, fpPanel, ("Select Font Properties to Use" + ((pgl == null) ? "" : (" in " + pgl))), JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION)
 			return;
 		
@@ -984,27 +1288,27 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		this.docStylesByDocId.put(docId, docStyle);
 	}
 	
-	private void useMargin(String docId, Settings docStyle, String docStyleParamName, int margin) {
+	private void useMargin(String docId, Settings docStyle, String docStyleParamName, int fMargin, int cMargin) {
 		Class paramValueClass = this.getParamValueClass(docStyleParamName);
 		
 		//	single integer, expand or overwrite
 		if (Integer.class.getName().equals(paramValueClass.getName())) {
 			int eMargin = Integer.parseInt(docStyle.getSetting(docStyleParamName, "-1"));
 			if (eMargin == -1) {
-				docStyle.setSetting(docStyleParamName, ("" + margin));
-				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + margin);
+				docStyle.setSetting(docStyleParamName, ("" + fMargin));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + fMargin);
 			}
 			else if (docStyleParamName.startsWith(".min", docStyleParamName.lastIndexOf('.'))) {
-				docStyle.setSetting(docStyleParamName, ("" + Math.min(eMargin,  margin)));
-				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + Math.min(eMargin,  margin));
+				docStyle.setSetting(docStyleParamName, ("" + Math.min(((eMargin == -1) ? fMargin : eMargin),  fMargin)));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + Math.min(eMargin,  Math.min(((eMargin == -1) ? cMargin : eMargin),  fMargin)));
 			}
 			else if (docStyleParamName.startsWith(".max", docStyleParamName.lastIndexOf('.'))) {
-				docStyle.setSetting(docStyleParamName, ("" + Math.max(eMargin,  margin)));
-				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + Math.max(eMargin,  margin));
+				docStyle.setSetting(docStyleParamName, ("" + Math.max(((eMargin == -1) ? fMargin : eMargin),  cMargin)));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + Math.max(eMargin,  Math.max(((eMargin == -1) ? cMargin : eMargin),  cMargin)));
 			}
 			else {
-				docStyle.setSetting(docStyleParamName, ("" + margin));
-				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + margin);
+				docStyle.setSetting(docStyleParamName, ("" + fMargin));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + fMargin);
 			}
 		}
 		
@@ -1012,17 +1316,17 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		else if (Integer.class.getName().equals(DocumentStyle.getListElementClass(paramValueClass).getName())) {
 			String eMarginStr = docStyle.getSetting(docStyleParamName);
 			if ((eMarginStr == null) || (eMarginStr.trim().length() == 0)) {
-				docStyle.setSetting(docStyleParamName, ("" + margin));
-				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + margin);
+				docStyle.setSetting(docStyleParamName, ("" + fMargin));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + fMargin);
 			}
 			else {
 				String[] eMarginStrs = eMarginStr.split("[^0-9]+");
 				for (int e = 0; e < eMarginStrs.length; e++) {
-					if (margin == Integer.parseInt(eMarginStrs[e]))
+					if (fMargin == Integer.parseInt(eMarginStrs[e]))
 						return;
 				}
-				docStyle.setSetting(docStyleParamName, (eMarginStr + " " + margin));
-				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + (eMarginStr + " " + margin));
+				docStyle.setSetting(docStyleParamName, (eMarginStr + " " + fMargin));
+				if (DEBUG_STYLE_UPDATES) System.out.println(docStyleParamName + " set to " + (eMarginStr + " " + fMargin));
 			}
 		}
 		
@@ -1036,20 +1340,38 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	
 	private void useString(final ImDocument doc, Settings docStyle, String docStyleParamGroupName, String[] docStyleParamNames, String string) {
 		
+		//	get parameter group description and group label
+		ParameterGroupDescription pgd = this.getParameterGroupDescription(docStyleParamGroupName);
+		String pgl = ((pgd == null) ? null : pgd.getLabel());
+		
 		//	collect style parameter names in argument group that use string properties, constructing string usage panels on the fly
 		TreeSet sDocStyleParamPanels = new TreeSet();
-		final ImTokenSequence[] docTokens = {null};
-		for (int p = 0; p < docStyleParamNames.length; p++)
-			if (docStyleParamNames[p].startsWith(docStyleParamGroupName + ".")) {
-				if (checkParamValueClass(docStyleParamNames[p], String.class, true))
-					sDocStyleParamPanels.add(new UseStringPanel(docStyleParamNames[p], true, string, true) {
-						ImTokenSequence getTestDocTokens() {
-							if (docTokens[0] == null)
-								docTokens[0] = new ImTokenSequence(((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), doc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
-							return docTokens[0];
-						}
-					});
-			}
+		final ImTokenSequence[] docTokens = {null}; // using array facilitates sharing tokens and still generating them on demand
+		for (int p = 0; p < docStyleParamNames.length; p++) {
+			if (!docStyleParamNames[p].startsWith(docStyleParamGroupName + "."))
+				continue;
+			if (!checkParamValueClass(docStyleParamNames[p], String.class, true))
+				continue;
+			String localDspn = docStyleParamNames[p].substring(docStyleParamNames[p].lastIndexOf('.') + ".".length());
+			String pl = ((pgd == null) ? null : pgd.getParamLabel(localDspn));
+			if (pl == null)
+				pl = (" Use as " + localDspn);
+			else pl = (" Use as " + pl);
+			String pd = ((pgd == null) ? null : pgd.getParamDescription(localDspn));
+			sDocStyleParamPanels.add(new UseStringPanel(this.docStyleEditor, docStyleParamNames[p], pl, pd, true, string, true) {
+				ImTokenSequence getTestDocTokens() {
+					if (docTokens[0] == null)
+						docTokens[0] = new ImTokenSequence(((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), doc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
+					return docTokens[0];
+				}
+				DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+					if (this.docStyleParamName.endsWith(".pattern") || this.docStyleParamName.endsWith("Pattern"))
+						return getPatternVisualizationGraphics(this.parent, page, this.getValue());
+					//	TODO think of more
+					return NO_DISPLAY_EXTENSION_GRAPHICS;
+				}
+			});
+		}
 		
 		//	nothing to work with
 		if (sDocStyleParamPanels.isEmpty())
@@ -1061,7 +1383,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			sPanel.add((UseStringPanel) ppit.next());
 		
 		//	prompt
-		int choice = JOptionPane.showConfirmDialog(null, sPanel, ("Select how to Use '" + string + "'"), JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+		int choice = JOptionPane.showConfirmDialog(null, sPanel, ("Select how to Use '" + string + "'" + ((pgl == null) ? "" : (" in " + pgl))), JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION)
 			return;
 		
@@ -1108,12 +1430,18 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	}
 	
 	private static abstract class UseParamPanel extends JPanel implements Comparable {
+		final DocStyleEditor parent;
 		final String docStyleParamName;
 		final JCheckBox useParam;
-		UseParamPanel(String docStyleParamName, String label, boolean use) {
+		//	TODO store display extension here (saves re-computation)
+		//	TODO accept label and description/tooltip
+		UseParamPanel(DocStyleEditor parent, String docStyleParamName, String label, String description, boolean use) {
 			super(new BorderLayout(), true);
+			this.parent = parent;
 			this.docStyleParamName = docStyleParamName;
 			this.useParam = new JCheckBox(label, use);
+			if (description != null)
+				this.useParam.setToolTipText(description);
 		}
 		public int compareTo(Object obj) {
 			return this.docStyleParamName.compareTo(((UseParamPanel) obj).docStyleParamName);
@@ -1123,12 +1451,40 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		boolean verifyValue(String value) {
 			return true;
 		}
+		void notifyActivated() {
+			if (this.parent != null)
+				this.parent.setActiveParamPanel(this);
+		}
+		void notifyModified() {
+			if (this.parent != null)
+				this.parent.setActiveParamPanel(this);
+		}
+		void notifyDeactivated() {
+//			BETTER STAY ON FOR VISUALIZATION, USER MIGHT WANT TO SCROLL THROUGH MAIN WINDOW, AND WE LOSE FOVUS FROM THAT
+//			if (this.parent != null)
+//				this.parent.setActiveParamPanel(null);
+		}
+		abstract DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page);
 	}
 	
 	private static class UseBooleanPanel extends UseParamPanel {
-		UseBooleanPanel(String docStyleParamName, String label, boolean selected) {
-			super(docStyleParamName, label, selected);
+		UseBooleanPanel(DocStyleEditor parent, String docStyleParamName, String label, String description, boolean selected) {
+			super(parent, docStyleParamName, label, description, selected);
 			this.add(this.useParam, BorderLayout.CENTER);
+			
+			this.useParam.addFocusListener(new FocusListener() {
+				public void focusGained(FocusEvent fe) {
+					notifyActivated();
+				}
+				public void focusLost(FocusEvent fe) {
+					notifyDeactivated();
+				}
+			});
+			this.useParam.addItemListener(new ItemListener() {
+				public void itemStateChanged(ItemEvent ie) {
+					notifyModified();
+				}
+			});
 		}
 		String getValue() {
 			return (this.useParam.isSelected() ? "true" : "false");
@@ -1136,12 +1492,26 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		void setValue(String value) {
 			this.useParam.setSelected("true".equals(value));
 		}
+		DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+			if (!this.useParam.isSelected())
+				return NO_DISPLAY_EXTENSION_GRAPHICS;
+			if (this.docStyleParamName.endsWith(".bold") || this.docStyleParamName.endsWith("Bold"))
+				return getFontStyleVisualizationGraphics(this.parent, page, ImWord.BOLD_ATTRIBUTE);
+			if (this.docStyleParamName.endsWith(".italics") || this.docStyleParamName.endsWith("Italics"))
+				return getFontStyleVisualizationGraphics(this.parent, page, ImWord.ITALICS_ATTRIBUTE);
+			if (this.docStyleParamName.endsWith(".allCaps") || this.docStyleParamName.endsWith("AllCaps"))
+				return getFontStyleVisualizationGraphics(this.parent, page, "allCaps");
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
 	}
 	
-	private static class UseStringPanel extends UseParamPanel {
+	private static abstract class UseStringPanel extends UseParamPanel {
 		JTextField string;
-		UseStringPanel(String docStyleParamName, boolean selected, String string, boolean escapePattern) {
-			super(docStyleParamName, (" Use as " + docStyleParamName.substring(docStyleParamName.lastIndexOf('.') + ".".length())), selected);
+//		UseStringPanel(DocStyleEditor parent, String docStyleParamName, boolean selected, String string, boolean escapePattern) {
+//			this(parent, docStyleParamName, (" Use as " + docStyleParamName.substring(docStyleParamName.lastIndexOf('.') + ".".length())), null, selected, string, escapePattern);
+//		}
+		UseStringPanel(DocStyleEditor parent, String docStyleParamName, String label, String description, boolean selected, String string, boolean escapePattern) {
+			super(parent, docStyleParamName, label, description, selected);
 			String localDspn = this.docStyleParamName.substring(this.docStyleParamName.lastIndexOf('.') + ".".length());
 			this.add(this.useParam, BorderLayout.WEST);
 			
@@ -1159,6 +1529,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				});
 				this.add(testButton, BorderLayout.EAST);
 			}
+			
 			this.string = new JTextField(string);
 			this.string.setBorder(BorderFactory.createLoweredBevelBorder());
 			this.string.setPreferredSize(new Dimension(Math.max(this.string.getWidth(), (this.string.getFont().getSize() * string.length())), this.string.getHeight()));
@@ -1166,13 +1537,24 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				private String oldValue = null;
 				public void focusGained(FocusEvent fe) {
 					this.oldValue = UseStringPanel.this.string.getText().trim();
+					notifyActivated();
 				}
 				public void focusLost(FocusEvent fe) {
 					String value = UseStringPanel.this.string.getText().trim();
 					if (!value.equals(this.oldValue))
 						stringChanged(value);
 					this.oldValue = null;
+					notifyDeactivated();
 				}
+			});
+			this.string.getDocument().addDocumentListener(new DocumentListener() {
+				public void insertUpdate(DocumentEvent de) {
+					notifyModified();
+				}
+				public void removeUpdate(DocumentEvent de) {
+					notifyModified();
+				}
+				public void changedUpdate(DocumentEvent de) {}
 			});
 			
 			this.add(this.string, BorderLayout.CENTER);
@@ -1235,12 +1617,83 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		}
 	}
 	
+	private static class UseStringOptionPanel extends UseParamPanel {
+		JComboBox string;
+		UseStringOptionPanel(DocStyleEditor parent, String docStyleParamName, String[] values, String[] valueLabels, String label, String description, boolean selected, String string, boolean escapePattern) {
+			super(parent, docStyleParamName, label, description, selected);
+			this.add(this.useParam, BorderLayout.WEST);
+			
+			StringOption[] options = new StringOption[values.length];
+			for (int v = 0; v < values.length; v++)
+				options[v] = new StringOption(values[v], valueLabels[v]);
+			
+			this.string = new JComboBox(options);
+			this.string.setEditable(false);
+			this.string.setBorder(BorderFactory.createLoweredBevelBorder());
+			this.string.setPreferredSize(new Dimension(Math.max(this.string.getWidth(), (this.string.getFont().getSize() * string.length())), this.string.getHeight()));
+			this.string.setSelectedItem(new StringOption(string, null));
+			this.string.addFocusListener(new FocusListener() {
+				private String oldValue = null;
+				public void focusGained(FocusEvent fe) {
+					this.oldValue = UseStringOptionPanel.this.getValue();
+					notifyActivated();
+				}
+				public void focusLost(FocusEvent fe) {
+					String value = UseStringOptionPanel.this.getValue();
+					if (!value.equals(this.oldValue))
+						stringChanged(value);
+					this.oldValue = null;
+					notifyDeactivated();
+				}
+			});
+			this.string.addItemListener(new ItemListener() {
+				public void itemStateChanged(ItemEvent ie) {
+					stringChanged(UseStringOptionPanel.this.getValue());
+					notifyModified();
+				}
+			});
+			
+			this.add(this.string, BorderLayout.CENTER);
+		}
+		String getValue() {
+			Object vObj = this.string.getSelectedItem();
+			return ((vObj == null) ? "" : ((StringOption) vObj).value);
+		}
+		void setValue(String value) {
+			this.string.setSelectedItem(new StringOption(value, null));
+			if (value.length() != 0)
+				this.useParam.setSelected(true);
+		}
+		void stringChanged(String string) {}
+		DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+			return NO_DISPLAY_EXTENSION_GRAPHICS; // no way of visualizing choice generically
+		}
+		private static class StringOption {
+			final String value;
+			final String label;
+			StringOption(String value, String label) {
+				this.value = value;
+				this.label = ((label == null) ? value : label);
+			}
+			public boolean equals(Object obj) {
+				return ((obj instanceof StringOption) ? this.value.equals(((StringOption) obj).value) : false);
+			}
+			public String toString() {
+				return this.label; // need to show the label
+			}
+		}
+	}
+	
 	private static abstract class UseListPanel extends UseParamPanel {
 		JTextArea list;
-		UseListPanel(String docStyleParamName, boolean selected, String string) {
-			super(docStyleParamName, (" Use as " + docStyleParamName.substring(docStyleParamName.lastIndexOf('.') + ".".length())), selected);
+//		UseListPanel(DocStyleEditor parent, String docStyleParamName, boolean selected, String string) {
+//			this(parent, docStyleParamName, (" Use as " + docStyleParamName.substring(docStyleParamName.lastIndexOf('.') + ".".length())), null, selected, string);
+//		}
+		UseListPanel(DocStyleEditor parent, String docStyleParamName, String label, String description, boolean selected, String string) {
+			super(parent, docStyleParamName, label, description, selected);
 			String localDspn = this.docStyleParamName.substring(this.docStyleParamName.lastIndexOf('.') + ".".length());
 			this.add(this.useParam, BorderLayout.WEST);
+			
 			if (localDspn.equals("patterns") || localDspn.endsWith("Patterns")) {
 				JButton testButton = new JButton("Test");
 				testButton.setBorder(BorderFactory.createRaisedBevelBorder());
@@ -1256,19 +1709,31 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				});
 				this.add(testButton, BorderLayout.EAST);
 			}
+			
 			this.list = new JTextArea((string == null) ? "" : string.trim().replaceAll("\\s+", "\r\n"));
 			this.list.setBorder(BorderFactory.createLoweredBevelBorder());
 			this.list.addFocusListener(new FocusListener() {
 				private String oldValue = null;
 				public void focusGained(FocusEvent fe) {
 					this.oldValue = UseListPanel.this.list.getText().trim();
+					notifyActivated();
 				}
 				public void focusLost(FocusEvent fe) {
 					String value = UseListPanel.this.list.getText().trim();
 					if (!value.equals(this.oldValue))
 						stringChanged(value);
 					this.oldValue = null;
+					notifyDeactivated();
 				}
+			});
+			this.list.getDocument().addDocumentListener(new DocumentListener() {
+				public void insertUpdate(DocumentEvent de) {
+					notifyModified();
+				}
+				public void removeUpdate(DocumentEvent de) {
+					notifyModified();
+				}
+				public void changedUpdate(DocumentEvent de) {}
 			});
 			
 			this.add(this.list, BorderLayout.CENTER);
@@ -1391,6 +1856,10 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	private void useSelection(final ImDocument doc, Settings docStyle, String docStyleParamGroupName, String[] docStyleParamNames, int minFontSize, int maxFontSize, boolean isBold, boolean isItalics, boolean isAllCaps, String string, BoundingBox bounds) {
 		JPanel sPanel = new JPanel(new GridLayout(0, 1, 0, 0), true);
 		
+		//	get parameter group description and group label
+		ParameterGroupDescription pgd = this.getParameterGroupDescription(docStyleParamGroupName);
+		String pgl = ((pgd == null) ? null : pgd.getLabel());
+		
 		//	if creating anchor, add name field at top, pre-filled with string less all non-letters
 		JTextField createAnchorName = null;
 		if ("anchor.<create>".equals(docStyleParamGroupName)) {
@@ -1410,7 +1879,12 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				eMinFontSize = Integer.parseInt(docStyle.getSetting((docStyleParamGroupName + ".minFontSize"), "72"));
 			} catch (NumberFormatException nfe) {}
 			if (minFontSize < eMinFontSize) {
-				useMinFontSize = new UseBooleanPanel((docStyleParamGroupName + ".minFontSize"), ("Use " + minFontSize + " as Minimum Font Size (currently " + eMinFontSize + ")"), true);
+				String pl;
+				if (pgl == null)
+					pl = ("Use " + minFontSize + " as Minimum Font Size (currently " + eMinFontSize + ")");
+				else pl = ("Use " + minFontSize + " as Minimum Font Size for " + pgl + " (currently " + eMinFontSize + ")");
+				String pd = ((pgd == null) ? null : pgd.getParamDescription("minFontSize"));
+				useMinFontSize = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".minFontSize"), pl, pd, true);
 				sPanel.add(useMinFontSize);
 			}
 			int eMaxFontSize = 0;
@@ -1418,25 +1892,64 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				eMaxFontSize = Integer.parseInt(docStyle.getSetting((docStyleParamGroupName + ".maxFontSize"), "0"));
 			} catch (NumberFormatException nfe) {}
 			if (eMaxFontSize < maxFontSize) {
-				useMaxFontSize = new UseBooleanPanel((docStyleParamGroupName + ".maxFontSize"), ("Use " + maxFontSize + " as Maximum Font Size (currently " + eMaxFontSize + ")"), true);
+				String pl;
+				if (pgl == null)
+					pl = ("Use " + maxFontSize + " as Maximum Font Size (currently " + eMaxFontSize + ")");
+				else pl = ("Use " + maxFontSize + " as Maximum Font Size for " + pgl + " (currently " + eMaxFontSize + ")");
+				String pd = ((pgd == null) ? null : pgd.getParamDescription("minFontSize"));
+				useMaxFontSize = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".maxFontSize"), pl, pd, true);
 				sPanel.add(useMaxFontSize);
 			}
+//			int eMinFontSize = 72;
+//			try {
+//				eMinFontSize = Integer.parseInt(docStyle.getSetting((docStyleParamGroupName + ".minFontSize"), "72"));
+//			} catch (NumberFormatException nfe) {}
+//			if (minFontSize < eMinFontSize) {
+//				useMinFontSize = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".minFontSize"), ("Use " + minFontSize + " as Minimum Font Size (currently " + eMinFontSize + ")"), true);
+//				sPanel.add(useMinFontSize);
+//			}
+//			int eMaxFontSize = 0;
+//			try {
+//				eMaxFontSize = Integer.parseInt(docStyle.getSetting((docStyleParamGroupName + ".maxFontSize"), "0"));
+//			} catch (NumberFormatException nfe) {}
+//			if (eMaxFontSize < maxFontSize) {
+//				useMaxFontSize = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".maxFontSize"), ("Use " + maxFontSize + " as Maximum Font Size (currently " + eMaxFontSize + ")"), true);
+//				sPanel.add(useMaxFontSize);
+//			}
 		}
 		UseBooleanPanel useIsBold = null;
 		if (isBold) {
 			for (int p = 0; p < docStyleParamNames.length; p++) {
 				if (docStyleParamGroupName.startsWith("anchor.")) {
-					useIsBold = new UseBooleanPanel((docStyleParamGroupName + ".isBold"), "Require Anchor Value to be Bold", true);
+					useIsBold = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isBold"), "Require Anchor Value to be Bold", null, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isBold")) {
-					useIsBold = new UseBooleanPanel((docStyleParamGroupName + ".isBold"), "Require Values to be Bold", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values to be Bold";
+					else pl = ("Require Values for " + pgl + " to be Bold");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("isBold"));
+					useIsBold = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isBold"), pl, pd, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsBold")) {
-					useIsBold = new UseBooleanPanel((docStyleParamGroupName + ".startIsBold"), "Require Value Starts to be Bold", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Value Starts to be Bold";
+					else pl = ("Require Values for " + pgl + " to Start in Bold");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("startIsBold"));
+					useIsBold = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsBold"), pl, pd, true);
 					break;
 				}
+//				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isBold")) {
+//					useIsBold = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isBold"), "Require Values to be Bold", true);
+//					break;
+//				}
+//				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsBold")) {
+//					useIsBold = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsBold"), "Require Value Starts to be Bold", true);
+//					break;
+//				}
 			}
 			if (useIsBold != null)
 				sPanel.add(useIsBold);
@@ -1445,17 +1958,35 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		if (isItalics) {
 			for (int p = 0; p < docStyleParamNames.length; p++) {
 				if (docStyleParamGroupName.startsWith("anchor.")) {
-					useIsItalics = new UseBooleanPanel((docStyleParamGroupName + ".isItalics"), "Require Anchor Value to be in Italics", true);
+					useIsItalics = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isItalics"), "Require Anchor Value to be in Italics", null, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isItalics")) {
-					useIsItalics = new UseBooleanPanel((docStyleParamGroupName + ".isItalics"), "Require Values to be in Italics", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values to be in Italics";
+					else pl = ("Require Values for " + pgl + " to be in Italics");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("isItalics"));
+					useIsItalics = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isItalics"), pl, pd, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsItalics")) {
-					useIsItalics = new UseBooleanPanel((docStyleParamGroupName + ".startIsItalics"), "Require Value Starts to be in Italics", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values Starts to be in Italics";
+					else pl = ("Require Values for " + pgl + " to Start in Italics");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("startIsItalics"));
+					useIsItalics = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsItalics"), pl, pd, true);
 					break;
 				}
+//				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isItalics")) {
+//					useIsItalics = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isItalics"), "Require Values to be in Italics", true);
+//					break;
+//				}
+//				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsItalics")) {
+//					useIsItalics = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsItalics"), "Require Value Starts to be in Italics", true);
+//					break;
+//				}
 			}
 			if (useIsItalics != null)
 				sPanel.add(useIsItalics);
@@ -1464,17 +1995,35 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		if (isAllCaps) {
 			for (int p = 0; p < docStyleParamNames.length; p++) {
 				if (docStyleParamGroupName.startsWith("anchor.")) {
-					useIsAllCaps = new UseBooleanPanel((docStyleParamGroupName + ".isAllCaps"), "Require Anchor Value to be All Caps", true);
+					useIsAllCaps = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isAllCaps"), "Require Anchor Value to be in All Caps", null, true);
 					break;
 				}
-				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isAllCaps")) {
-					useIsAllCaps = new UseBooleanPanel((docStyleParamGroupName + ".isAllCaps"), "Require Values to be All Caps", true);
+				if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isAllCaps")) {
+					String pl;
+					if (pgl == null)
+						pl = "Require Values to be in All Caps";
+					else pl = ("Require Values for " + pgl + " to be in All Caps");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("isAllCaps"));
+					useIsAllCaps = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isAllCaps"), pl, pd, true);
 					break;
 				}
 				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsAllCaps")) {
-					useIsAllCaps = new UseBooleanPanel((docStyleParamGroupName + ".startIsAllCaps"), "Require Value Starts to be All Caps", true);
+					String pl;
+					if (pgl == null)
+						pl = "Require Values Starts to be in All Caps";
+					else pl = ("Require Values for " + pgl + " to Start in All Caps");
+					String pd = ((pgd == null) ? null : pgd.getParamDescription("startIsAllCaps"));
+					useIsAllCaps = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsAllCaps"), pl, pd, true);
 					break;
 				}
+//				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".isAllCaps")) {
+//					useIsAllCaps = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".isAllCaps"), "Require Values to be All Caps", true);
+//					break;
+//				}
+//				else if (docStyleParamNames[p].equals(docStyleParamGroupName + ".startIsAllCaps")) {
+//					useIsAllCaps = new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".startIsAllCaps"), "Require Value Starts to be All Caps", true);
+//					break;
+//				}
 			}
 			if (useIsAllCaps != null)
 				sPanel.add(useIsAllCaps);
@@ -1482,27 +2031,41 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		
 		//	collect style parameter names in argument group that use string properties, constructing string usage panels on the fly
 		TreeSet sDocStyleParamPanels = new TreeSet();
-		final ImTokenSequence[] docTokens = {null};
-		for (int p = 0; p < docStyleParamNames.length; p++)
-			if (docStyleParamNames[p].startsWith(docStyleParamGroupName + ".")) {
-				String localDspn = docStyleParamNames[p].substring(docStyleParamNames[p].lastIndexOf('.') + ".".length());
-				if (!docStyleParamNames[p].equals(docStyleParamGroupName + "." + localDspn))
-					continue;
-				if (checkParamValueClass(docStyleParamNames[p], String.class, true))
-					sDocStyleParamPanels.add(new UseStringPanel(docStyleParamNames[p], true, string, true) {
-						ImTokenSequence getTestDocTokens() {
-							if (docTokens[0] == null)
-								docTokens[0] = new ImTokenSequence(((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), doc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
-							return docTokens[0];
-						}
-					});
-			}
-		if (docStyleParamGroupName.equals("anchor.<create>") && sDocStyleParamPanels.isEmpty()) {
-			sDocStyleParamPanels.add(new UseStringPanel((docStyleParamGroupName + ".pattern"), true, string, true) {
+		final ImTokenSequence[] docTokens = {null}; // using array facilitates sharing tokens and still generating them on demand
+		for (int p = 0; p < docStyleParamNames.length; p++) {
+			if (!docStyleParamNames[p].startsWith(docStyleParamGroupName + "."))
+				continue;
+			if (!checkParamValueClass(docStyleParamNames[p], String.class, true))
+				continue;
+			String localDspn = docStyleParamNames[p].substring(docStyleParamNames[p].lastIndexOf('.') + ".".length());
+			String pl = ((pgd == null) ? null : pgd.getParamLabel(localDspn));
+			if (pl == null)
+				pl = (" Use as " + localDspn);
+			else pl = (" Use as " + pl);
+			String pd = ((pgd == null) ? null : pgd.getParamDescription(localDspn));
+			sDocStyleParamPanels.add(new UseStringPanel(this.docStyleEditor, docStyleParamNames[p], pl, pd, true, string, true) {
 				ImTokenSequence getTestDocTokens() {
 					if (docTokens[0] == null)
 						docTokens[0] = new ImTokenSequence(((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), doc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
 					return docTokens[0];
+				}
+				DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+					if (this.docStyleParamName.endsWith(".pattern") || this.docStyleParamName.endsWith("Pattern"))
+						return getPatternVisualizationGraphics(this.parent, page, this.getValue());
+					//	TODO think of more
+					return NO_DISPLAY_EXTENSION_GRAPHICS;
+				}
+			});
+		}
+		if (docStyleParamGroupName.equals("anchor.<create>") && sDocStyleParamPanels.isEmpty()) {
+			sDocStyleParamPanels.add(new UseStringPanel(this.docStyleEditor, (docStyleParamGroupName + ".pattern"), "Use as Anchor Value Pattern", null, true, string, true) {
+				ImTokenSequence getTestDocTokens() {
+					if (docTokens[0] == null)
+						docTokens[0] = new ImTokenSequence(((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), doc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
+					return docTokens[0];
+				}
+				DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+					return getPatternVisualizationGraphics(this.parent, page, this.getValue());
 				}
 			});
 		}
@@ -1516,16 +2079,22 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				String localDspn = docStyleParamNames[p].substring(docStyleParamNames[p].lastIndexOf('.') + ".".length());
 				if (!docStyleParamNames[p].equals(docStyleParamGroupName + "." + localDspn))
 					continue;
-				if (checkParamValueClass(docStyleParamNames[p], BoundingBox.class, true))
-					bbDocStyleParamPanels.add(new UseBooleanPanel(docStyleParamNames[p], ("Use Bounding Box as " + localDspn), true));
+				if (!checkParamValueClass(docStyleParamNames[p], BoundingBox.class, true))
+					continue;
+				String pl;
+				if (pgl == null)
+					pl = ("Use Bounding Box as " + localDspn);
+				else pl = ("Use Bounding Box as " + pgl);
+				String pd = ((pgd == null) ? null : pgd.getParamDescription(localDspn));
+				bbDocStyleParamPanels.add(new UseBooleanPanel(this.docStyleEditor, docStyleParamNames[p], pl, pd, true));
 			}
 		for (Iterator pnit = bbDocStyleParamPanels.iterator(); pnit.hasNext();)
 			sPanel.add((UseParamPanel) pnit.next());
 		if (docStyleParamGroupName.equals("anchor.<create>") && bbDocStyleParamPanels.isEmpty()) // an anchor always requires a bounding box, so we don't display the checkbox, but simply use it
-			bbDocStyleParamPanels.add(new UseBooleanPanel((docStyleParamGroupName + ".area"), ("Use Bounding Box as Area"), true));
+			bbDocStyleParamPanels.add(new UseBooleanPanel(this.docStyleEditor, (docStyleParamGroupName + ".area"), "Require Anchor Value to be inside Bounding Box", null, true));
 		
 		//	prompt
-		int choice = JOptionPane.showConfirmDialog(null, sPanel, "Select Properties to Use", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+		int choice = JOptionPane.showConfirmDialog(null, sPanel, ("Select Properties to Use" + ((pgl == null) ? "" : (" in " + pgl))), JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION)
 			return;
 		
@@ -1728,9 +2297,13 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	private SelectionAction getEditDocStyleAction(final ImDocument doc, final String docStyleName, final Settings docStyle) {
 		return new SelectionAction("styleEdit", "Edit Document Style", "Open the style template assigned to this document for editing") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				if (docStyleEditor == null)
+				if (docStyleEditor == null) {
 					docStyleEditor = new DocStyleEditor();
+					docStyleEditorDisplayExtension = new DisplayExtension[1];
+					docStyleEditorDisplayExtension[0] = docStyleEditor;
+				}
 				docStyleEditor.setDocStyle(doc, docStyleName, docStyle);
+				ggImagine.notifyDisplayExtensionsModified(null);
 				docStyleEditor.setVisible(true);
 				return false;
 			}
@@ -1738,22 +2311,30 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 	}
 	
 	private DocStyleEditor docStyleEditor = null;
+	private DisplayExtension[] docStyleEditorDisplayExtension = null;
 	
-	private class DocStyleEditor extends DialogPanel {
+	/**
+	 * @author sautter
+	 *
+	 */
+	private class DocStyleEditor extends DialogPanel implements DisplayExtension {
 		private JTree paramTree = new JTree();
-		private JPanel paremPanel = new JPanel(new GridBagLayout(), true) {
+		private JPanel paramPanel = new JPanel(new GridBagLayout(), true) {
 			public void add(Component comp, Object constraints) {
 				super.add(comp, ((GridBagConstraints) constraints).clone());
 				((GridBagConstraints) constraints).gridy++;
 			}
 		};
+		private JButton saveDocStyleButton = new JButton("Save Document Style Template");
 		
 		DocStyleEditor() {
 			super("Edit Document Style Template", false);
 			
 			this.addWindowListener(new WindowAdapter() {
 				public void windowClosing(WindowEvent we) {
-					docStyleEditor = null;
+					docStyleEditor = null; // make way on closing
+					docStyleEditorDisplayExtension = null;
+					ggImagine.notifyDisplayExtensionsModified(null);
 				}
 			});
 			
@@ -1767,21 +2348,31 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			});
 			this.paramTree.setModel(this.paramTreeModel);
 			
+			this.saveDocStyleButton.setBorder(BorderFactory.createRaisedBevelBorder());
+			this.saveDocStyleButton.setEnabled(false);
+			this.saveDocStyleButton.addActionListener(new ActionListener() {
+				public void actionPerformed(ActionEvent ae) {
+					saveDocStyle();
+				}
+			});
+			
 			JScrollPane paramTreeBox = new JScrollPane(this.paramTree);
 			paramTreeBox.getHorizontalScrollBar().setBlockIncrement(20);
 			paramTreeBox.getHorizontalScrollBar().setUnitIncrement(20);
 			paramTreeBox.getVerticalScrollBar().setBlockIncrement(20);
 			paramTreeBox.getVerticalScrollBar().setUnitIncrement(20);
 			
-			JSplitPane paramSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, paramTreeBox, this.paremPanel);
+			JSplitPane paramSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, paramTreeBox, this.paramPanel);
 			
 			this.add(paramSplit, BorderLayout.CENTER);
+			this.add(this.saveDocStyleButton, BorderLayout.SOUTH);
 			this.setSize(400, 600);
 			this.setLocationRelativeTo(this.getOwner());
 		}
 		
 		String docStyleName = null;
 		private Settings docStyle = null;
+		private boolean docStyleDirty = false;
 		
 		private ImDocument testDoc;
 		private ImTokenSequence testDocTokens;
@@ -1801,6 +2392,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			//	update data fields
 			this.docStyleName = docStyleName;
 			this.docStyle = docStyle;
+			this.setDocStyleDirty(false);
 			
 			//	clear index fields
 			this.paramGroupName = null;
@@ -1858,7 +2450,63 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			this.updateParamTree();
 		}
 		
-		private class ParamTreeNode implements Comparable{
+		void setDocStyleDirty(boolean dirty) {
+			this.docStyleDirty = dirty;
+			this.saveDocStyleButton.setEnabled(dirty);
+		}
+		
+		void saveDocStyle() {
+			if ((this.docStyleName == null) || (this.docStyle == null))
+				return;
+			if (!this.docStyleDirty)
+				return;
+			styleProvider.storeStyle(this.docStyleName, this.docStyle);
+			this.setDocStyleDirty(false);
+		}
+		
+		/* (non-Javadoc)
+		 * @see de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtension#isActive()
+		 */
+		public boolean isActive() {
+			return true;
+		}
+		
+		/* (non-Javadoc)
+		 * @see de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtension#getExtensionGraphics(de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
+		 */
+		public DisplayExtensionGraphics[] getExtensionGraphics(ImPage page, ImDocumentMarkupPanel idmp) {
+			if (idmp.document == this.testDoc) { /* we're working with this one */ }
+			else if ((this.testDoc != null) && this.testDoc.docId.equals(idmp.document.docId)) { /* we're still working with this one */ }
+			else if ((this.docStyleName != null) && this.docStyleName.equals(idmp.document.getAttribute(DocumentStyle.DOCUMENT_STYLE_NAME_ATTRIBUTE))) { /* this one fits the template we're working on */ }
+			else return NO_DISPLAY_EXTENSION_GRAPHICS; // this one is none of our business
+			
+			//	highlight current field in any custom way available
+			if (this.activeParamDescription instanceof DisplayExtension)
+				return ((DisplayExtension) this.activeParamDescription).getExtensionGraphics(page, idmp);
+			
+			//	highlight content of current field, or what it represents or matches
+			else if (this.activeParamPanel != null)
+				return this.activeParamPanel.getDisplayExtensionGraphics(page);
+			
+			//	highlight match of group as a whole (anchors, document metadata, etc.) if parameter description exists and represents a display extension
+			else if (this.paramGroupDesciption instanceof DisplayExtension)
+				return ((DisplayExtension) this.paramGroupDesciption).getExtensionGraphics(page, idmp);
+			
+			//	nothing to show right now
+			else return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+		
+		void setActiveParamPanel(UseParamPanel activeParamPanel) {
+			this.activeParamPanel = activeParamPanel;
+			if (this.activeParamPanel == null)
+				this.activeParamDescription = null;
+			else this.activeParamDescription = ((this.paramGroupDesciption == null) ? null : this.paramGroupDesciption.getParameterDescription(this.activeParamPanel.docStyleParamName));
+			ggImagine.notifyDisplayExtensionsModified(null);
+		}
+		private UseParamPanel activeParamPanel = null;
+		private ParameterDescription activeParamDescription = null;
+		
+		private class ParamTreeNode implements Comparable {
 			final String prefix;
 			final ParamTreeNode parent;
 			private ArrayList children = null;
@@ -1959,9 +2607,10 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			
 			//	remember selected param group
 			this.paramGroupName = ptn.prefix;
+			this.paramGroupDesciption = getParameterGroupDescription(this.paramGroupName);
 			
 			//	clear param panel
-			this.paremPanel.removeAll();
+			this.paramPanel.removeAll();
 			
 			//	update param panel
 			if (ptn.paramNames != null) {
@@ -1978,11 +2627,32 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 				gbc.weighty = 0;
 				gbc.gridheight = 1;
 				
+				//	add top spacer
 				gbc.weighty = 1;
-				this.paremPanel.add(new JPanel(), gbc);
+				this.paramPanel.add(new JPanel(), ((GridBagConstraints) gbc.clone()));
+				gbc.gridy++;
+				
+				//	add group label and description if group description present
+				if (this.paramGroupDesciption != null) {
+					gbc.weighty = 0;
+					if (this.paramGroupDesciption.getLabel() != null) {
+						this.paramPanel.add(new JLabel("<HTML><B>" + this.paramGroupDesciption.getLabel() + "</B></HTML>"), ((GridBagConstraints) gbc.clone()));
+						gbc.gridy++;
+					}
+					if (this.paramGroupDesciption.getDescription() != null) {
+						this.paramPanel.add(new JLabel("<HTML>" + this.paramGroupDesciption.getDescription() + "</HTML>"), ((GridBagConstraints) gbc.clone()));
+						gbc.gridy++;
+					}
+				}
+				
+				//	add parameters
 				gbc.weighty = 0;
-				for (Iterator pnit = ptn.paramNames.iterator(); pnit.hasNext();)
-					this.paremPanel.add(this.getParamValueField((String) pnit.next()), gbc);
+				for (Iterator pnit = ptn.paramNames.iterator(); pnit.hasNext();) {
+					this.paramPanel.add(this.getParamValueField((String) pnit.next()), ((GridBagConstraints) gbc.clone()));
+					gbc.gridy++;
+				}
+				
+				//	add anchor test facilities
 				if (this.paramGroupName.startsWith("anchor.")) {
 					JButton testButton = new JButton("Test Anchor");
 					testButton.setBorder(BorderFactory.createRaisedBevelBorder());
@@ -1991,7 +2661,8 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							testAnchor(ptn);
 						}
 					});
-					this.paremPanel.add(testButton, gbc);
+					this.paramPanel.add(testButton, ((GridBagConstraints) gbc.clone()));
+					gbc.gridy++;
 					JButton removeButton = new JButton("Remove Anchor");
 					removeButton.setBorder(BorderFactory.createRaisedBevelBorder());
 					removeButton.addActionListener(new ActionListener() {
@@ -1999,15 +2670,35 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							removeAnchor(ptn);
 						}
 					});
-					this.paremPanel.add(removeButton, gbc);
+					this.paramPanel.add(removeButton, ((GridBagConstraints) gbc.clone()));
+					gbc.gridy++;
 				}
+				
+				//	add group test button if group description can visualize its content
+				else if (this.paramGroupDesciption instanceof DisplayExtension) {
+					JButton testButton = new JButton("Test");
+					testButton.setBorder(BorderFactory.createRaisedBevelBorder());
+					testButton.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							setActiveParamPanel(null); // this triggers update of display extensions
+						}
+					});
+					this.paramPanel.add(testButton, ((GridBagConstraints) gbc.clone()));
+					gbc.gridy++;
+				}
+				
+				//	add bottom spacer
 				gbc.weighty = 1;
-				this.paremPanel.add(new JPanel(), gbc);
+				this.paramPanel.add(new JPanel(), ((GridBagConstraints) gbc.clone()));
+				gbc.gridy++;
 			}
 			
 			//	make changes show
-			this.paremPanel.validate();
-			this.paremPanel.repaint();
+			this.paramPanel.validate();
+			this.paramPanel.repaint();
+			
+			//	update display extensions
+			this.setActiveParamPanel(null);
 		}
 		
 		void testAnchor(ParamTreeNode ptn) {
@@ -2070,6 +2761,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		}
 		
 		String paramGroupName;
+		ParameterGroupDescription paramGroupDesciption;
 		
 		void setParamGroupName(String pgn) {
 			
@@ -2092,6 +2784,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			
 			//	set param group name and get corresponding tree node
 			this.paramGroupName = pgn;
+			this.paramGroupDesciption = getParameterGroupDescription(this.paramGroupName);
 			ParamTreeNode ptn = ((ParamTreeNode) this.paramTreeNodesByPrefix.get(this.paramGroupName));
 			
 			//	if we're creating an anchor, and only then, the tree node is null
@@ -2120,10 +2813,10 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 		
 		private TreeMap paramValueFields = new TreeMap();
 		
-		private UseParamPanel getParamValueField(final String pn) {
+		private UseParamPanel getParamValueField(String pn) {
 			UseParamPanel pvf = ((UseParamPanel) this.paramValueFields.get(pn));
 			if (pvf == null) {
-				pvf = this.createParamValueField(pn);
+				pvf = this.createParamValueField(this, pn);
 				this.paramValueFields.put(pn, pvf);
 			}
 			return pvf;
@@ -2144,20 +2837,38 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			}
 		}
 		
-		private UseParamPanel createParamValueField(final String pn) {
+		private UseParamPanel createParamValueField(DocStyleEditor parent, final String pn) {
 			final Class pvc = getParamValueClass(pn);
 			String pv = ((this.docStyle == null) ? null : this.docStyle.getSetting(pn));
 			
+			String pl = null;
+			String pd = null;
+			String[] pvs = null;
+			String[] pvls = null;
+			if (this.paramGroupDesciption != null) {
+				String lpn = pn.substring(pn.lastIndexOf('.') + ".".length());
+				pl = this.paramGroupDesciption.getParamLabel(lpn);
+				pd = this.paramGroupDesciption.getParamDescription(lpn);
+				pvs = this.paramGroupDesciption.getParamValues(lpn);
+				if (pvs != null) {
+					pvls = new String[pvs.length];
+					for (int v = 0; v < pvs.length; v++)
+						pvls[v] = this.paramGroupDesciption.getParamValueLabel(lpn, pvs[v]);
+				}
+			}
+			if (pl == null)
+				pl = paramNamesLabels.getProperty(pn, pn);
+			
 			//	boolean, use plain checkbox
 			if (Boolean.class.getName().equals(pvc.getName())) {
-				final UseBooleanPanel pvf = new UseBooleanPanel(pn, paramNamesLabels.getProperty(pn, pn), "true".equals(pv));
+				final UseBooleanPanel pvf = new UseBooleanPanel(parent, pn, pl, pd, "true".equals(pv));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
 			
 			//	number, use string field
 			else if (Integer.class.getName().equals(pvc.getName())) {
-				final UseStringPanel pvf = new UseStringPanel(pn, (pv != null), ((pv == null) ? "" : pv), false) {
+				final UseStringPanel pvf = new UseStringPanel(parent, pn, pl, pd, (pv != null), ((pv == null) ? "" : pv), false) {
 					boolean verifyValue(String value) {
 						try {
 							Integer.parseInt(this.getValue());
@@ -2172,14 +2883,22 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
 							docStyle.setSetting(this.docStyleParamName, string);
+						setDocStyleDirty(true);
+					}
+					DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+						if (this.docStyleParamName.endsWith(".fontSize") || this.docStyleParamName.endsWith("FontSize"))
+							return getFontSizeVisualizationGraphics(this.parent, page, this.getValue());
+						if (this.docStyleParamName.endsWith(".margin") || this.docStyleParamName.endsWith("Margin"))
+							return getMarginVisualizationGraphics(this.parent, page, this.getValue());
+						//	TODO think of more
+						return NO_DISPLAY_EXTENSION_GRAPHICS;
 					}
 				};
-				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
 			else if (Float.class.getName().equals(pvc.getName())) {
-				final UseStringPanel pvf = new UseStringPanel(pn, (pv != null), ((pv == null) ? "" : pv), false) {
+				final UseStringPanel pvf = new UseStringPanel(parent, pn, pl, pd, (pv != null), ((pv == null) ? "" : pv), false) {
 					boolean verifyValue(String value) {
 						try {
 							Float.parseFloat(this.getValue());
@@ -2194,14 +2913,17 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
 							docStyle.setSetting(this.docStyleParamName, string);
+						setDocStyleDirty(true);
+					}
+					DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+						return NO_DISPLAY_EXTENSION_GRAPHICS;
 					}
 				};
-				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
 			else if (Double.class.getName().equals(pvc.getName())) {
-				final UseStringPanel pvf = new UseStringPanel(pn, (pv != null), ((pv == null) ? "" : pv), false) {
+				final UseStringPanel pvf = new UseStringPanel(parent, pn, pl, pd, (pv != null), ((pv == null) ? "" : pv), false) {
 					boolean verifyValue(String value) {
 						try {
 							Double.parseDouble(this.getValue());
@@ -2216,16 +2938,19 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
 							docStyle.setSetting(this.docStyleParamName, string);
+						setDocStyleDirty(true);
+					}
+					DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+						return NO_DISPLAY_EXTENSION_GRAPHICS;
 					}
 				};
-				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
 			
 			//	bounding box, use string field
 			else if (BoundingBox.class.getName().equals(pvc.getName())) {
-				final UseStringPanel pvf = new UseStringPanel(pn, (pv != null), ((pv == null) ? "" : pv), false) {
+				final UseStringPanel pvf = new UseStringPanel(parent, pn, pl, pd, (pv != null), ((pv == null) ? "" : pv), false) {
 					boolean verifyValue(String value) {
 						try {
 							return (BoundingBox.parse(this.getValue()) != null);
@@ -2239,41 +2964,60 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
 							docStyle.setSetting(this.docStyleParamName, string);
+						setDocStyleDirty(true);
+					}
+					DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+						return getBoundingBoxVisualizationGraphics(this.parent, page, this.getValue());
 					}
 				};
-				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
 			
 			//	string, use string field
 			else if (String.class.getName().equals(pvc.getName())) {
-				final UseStringPanel pvf = new UseStringPanel(pn, (pv != null), ((pv == null) ? "" : pv), false) {
-					ImTokenSequence getTestDocTokens() {
-						if (testDocTokens == null)
-							testDocTokens = new ImTokenSequence(((Tokenizer) testDoc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), testDoc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
-						return testDocTokens;
-					}
-					boolean verifyValue(String value) {
-						if (pn.endsWith(".pattern") || pn.endsWith("Pattern")) {
-							try {
-								Pattern.compile(value);
-								return true;
-							}
-							catch (PatternSyntaxException pse) {
-								return false;
-							}
+				final UseParamPanel pvf;
+				if (pvs == null)
+					pvf = new UseStringPanel(parent, pn, pl, pd, (pv != null), ((pv == null) ? "" : pv), false) {
+						ImTokenSequence getTestDocTokens() {
+							if (testDocTokens == null)
+								testDocTokens = new ImTokenSequence(((Tokenizer) testDoc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), testDoc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
+							return testDocTokens;
 						}
-						else return true;
-					}
+						boolean verifyValue(String value) {
+							if (pn.endsWith(".pattern") || pn.endsWith("Pattern")) {
+								try {
+									Pattern.compile(value);
+									return true;
+								}
+								catch (PatternSyntaxException pse) {
+									return false;
+								}
+							}
+							else return true;
+						}
+						void stringChanged(String string) {
+							if (string.length() == 0)
+								this.useParam.setSelected(false);
+							else if (this.useParam.isSelected() && this.verifyValue(string))
+								docStyle.setSetting(this.docStyleParamName, string);
+							setDocStyleDirty(true);
+						}
+						DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+							if (pn.endsWith(".pattern") || pn.endsWith("Pattern"))
+								return getPatternVisualizationGraphics(this.parent, page, this.getValue());
+							return NO_DISPLAY_EXTENSION_GRAPHICS;
+						}
+					};
+				else pvf = new UseStringOptionPanel(parent, pn, pvs, pvls, pl, pd, (pv != null), ((pv == null) ? "" : pv), false) {
 					void stringChanged(String string) {
 						if (string.length() == 0)
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
 							docStyle.setSetting(this.docStyleParamName, string);
+						setDocStyleDirty(true);
 					}
 				};
-				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
@@ -2281,7 +3025,7 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 			//	list, use list field
 			else if (DocumentStyle.getListElementClass(pvc) != pvc) {
 				final Class pvlec = DocumentStyle.getListElementClass(pvc);
-				final UseListPanel pvf = new UseListPanel(pn, (pv != null), ((pv == null) ? "" : pv)) {
+				final UseListPanel pvf = new UseListPanel(parent, pn, pl, pd, (pv != null), ((pv == null) ? "" : pv)) {
 					ImTokenSequence getTestDocTokens() {
 						if (testDocTokens == null)
 							testDocTokens = new ImTokenSequence(((Tokenizer) testDoc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER)), testDoc.getTextStreamHeads(), (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
@@ -2352,27 +3096,186 @@ public class DocumentStyleManager extends AbstractSelectionActionProvider implem
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
 							docStyle.setSetting(this.docStyleParamName, string.replaceAll("\\s+", " "));
+						setDocStyleDirty(true);
+					}
+					DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+						String[] valueParts = this.getValue().split("\\s+");
+						ArrayList degList = new ArrayList();
+						for (int p = 0; p < valueParts.length; p++)
+							degList.addAll(Arrays.asList(this.getDisplayExtensionGraphicsPart(page, valueParts[p])));
+						return ((DisplayExtensionGraphics[]) degList.toArray(new DisplayExtensionGraphics[degList.size()]));
+					}
+					DisplayExtensionGraphics[] getDisplayExtensionGraphicsPart(ImPage page, String valuePart) {
+						if (Integer.class.getName().equals(pvlec.getName())) {
+							if (this.docStyleParamName.endsWith(".fontSize") || this.docStyleParamName.endsWith("FontSize"))
+								return getFontSizeVisualizationGraphics(this.parent, page, valuePart);
+							if (this.docStyleParamName.endsWith(".margin") || this.docStyleParamName.endsWith("Margin"))
+								return getMarginVisualizationGraphics(this.parent, page, valuePart);
+							//	TODO think of more
+						}
+						else if (BoundingBox.class.getName().equals(pvlec.getName()))
+							return getBoundingBoxVisualizationGraphics(this.parent, page, valuePart);
+						else if (String.class.getName().equals(pvlec.getName())) {
+							if (pn.endsWith(".patterns") || pn.endsWith("Patterns"))
+								return getPatternVisualizationGraphics(this.parent, page, valuePart);
+						}
+						return NO_DISPLAY_EXTENSION_GRAPHICS;
 					}
 				};
-				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
 			
 			//	as the ultimate fallback, use string field
 			else {
-				final UseStringPanel pvf = new UseStringPanel(pn, (pv != null), ((pv == null) ? "" : pv), false) {
+				final UseStringPanel pvf = new UseStringPanel(parent, pn, pl, pd, (pv != null), ((pv == null) ? "" : pv), false) {
 					void stringChanged(String string) {
 						if (string.length() == 0)
 							this.useParam.setSelected(false);
 						else if (this.useParam.isSelected() && this.verifyValue(string))
 							docStyle.setSetting(this.docStyleParamName, string);
+						setDocStyleDirty(true);
+					}
+					DisplayExtensionGraphics[] getDisplayExtensionGraphics(ImPage page) {
+						return NO_DISPLAY_EXTENSION_GRAPHICS;
 					}
 				};
-				pvf.useParam.setText(" " + paramNamesLabels.getProperty(pn, pn));
 				pvf.useParam.addItemListener(new ParamToggleListener(pvf));
 				return pvf;
 			}
+		}
+	}
+	
+	private static DisplayExtensionGraphics[] getPatternVisualizationGraphics(DocStyleEditor parent, ImPage page, String pattern) {
+		try {
+			ImDocumentRoot pageTokens = new ImDocumentRoot(page, (ImTokenSequence.NORMALIZATION_LEVEL_PARAGRAPHS | ImTokenSequence.NORMALIZE_CHARACTERS));
+			Annotation[] patternMatches = Gamta.extractAllMatches(pageTokens, pattern, 32);
+			ArrayList pmWords = new ArrayList();
+			for (int m = 0; m < patternMatches.length; m++) {
+				ImWord pmStartWord = pageTokens.wordAtIndex(patternMatches[m].getStartIndex());
+				ImWord pmEndWord = pageTokens.wordAtIndex(patternMatches[m].getEndIndex() - 1);
+				for (ImWord pmWord = pmStartWord; pmWord != null; pmWord = pmWord.getNextWord()) {
+					if (pmWord.pageId != page.pageId)
+						break;
+					pmWords.add(pmWord);
+					if (pmWord == pmEndWord)
+						break;
+				}
+			}
+			return getWordVisualizationGraphics(parent, page, ((ImWord[]) pmWords.toArray(new ImWord[pmWords.size()])));
+		}
+		catch (IllegalArgumentException iae) {
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+		catch (Exception e) {
+			e.printStackTrace(System.out);
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+	}
+	
+	private static DisplayExtensionGraphics[] getFontSizeVisualizationGraphics(DocStyleEditor parent, ImPage page, String fontSize) {
+		if (fontSize == null)
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		fontSize = fontSize.trim();
+		if (fontSize.length() == 0)
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		try {
+			ArrayList fsWords = new ArrayList();
+			ImWord[] pWords = page.getWords();
+			for (int w = 0; w < pWords.length; w++) {
+				if (fontSize.equals(pWords[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE)))
+					fsWords.add(pWords[w]);
+			}
+			return getWordVisualizationGraphics(parent, page, ((ImWord[]) fsWords.toArray(new ImWord[fsWords.size()])));
+		}
+		catch (Exception e) {
+			e.printStackTrace(System.out);
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+	}
+	
+	private static DisplayExtensionGraphics[] getFontStyleVisualizationGraphics(DocStyleEditor parent, ImPage page, String attributeName) {
+		if (attributeName == null)
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		attributeName = attributeName.trim();
+		if (attributeName.length() == 0)
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		try {
+			ArrayList fsWords = new ArrayList();
+			ImWord[] pWords = page.getWords();
+			for (int w = 0; w < pWords.length; w++) {
+				if (pWords[w].hasAttribute(attributeName))
+					fsWords.add(pWords[w]);
+				else if ("allCaps".equals(attributeName) && isAllCaps(pWords[w].getString()))
+					fsWords.add(pWords[w]);
+			}
+			return getWordVisualizationGraphics(parent, page, ((ImWord[]) fsWords.toArray(new ImWord[fsWords.size()])));
+		}
+		catch (Exception e) {
+			e.printStackTrace(System.out);
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+	}
+	private static boolean isAllCaps(String str) {
+		return (str.equals(str.toUpperCase()) && !str.equals(str.toLowerCase()));
+	}
+	
+	private static final Color wordLineColor = Color.ORANGE;
+	private static final BasicStroke wordLineStroke = new BasicStroke(1);
+	private static final Color wordFillColor = new Color(wordLineColor.getRed(), wordLineColor.getGreen(), wordLineColor.getBlue(), 64);
+	private static DisplayExtensionGraphics[] getWordVisualizationGraphics(DocStyleEditor parent, ImPage page, ImWord[] words) {
+		Shape[] shapes = new Shape[words.length];
+		for (int w = 0; w < words.length; w++)
+			shapes[w] = new Rectangle2D.Float(words[w].bounds.left, words[w].bounds.top, words[w].bounds.getWidth(), words[w].bounds.getHeight());
+		DisplayExtensionGraphics[] degs = {new DisplayExtensionGraphics(parent, null, page, shapes, wordLineColor, wordLineStroke, wordFillColor) {
+			public boolean isActive() {
+				return true;
+			}
+		}};
+		return degs;
+	}
+	
+	private static DisplayExtensionGraphics[] getMarginVisualizationGraphics(DocStyleEditor parent, ImPage page, String margin) {
+		try {
+			/* TODO figure out how to implement this:
+			 * - based upon lines?
+			 * - based upon paragraphs?
+			 * - based upon blocks?
+			 */
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+		catch (IllegalArgumentException iae) {
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+		catch (Exception e) {
+			e.printStackTrace(System.out);
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+	}
+	
+	private static final Color boundingBoxLineColor = Color.GREEN;
+	private static final BasicStroke boundingBoxLineStroke = new BasicStroke(3);
+	private static final Color boundingBoxFillColor = new Color(boundingBoxLineColor.getRed(), boundingBoxLineColor.getGreen(), boundingBoxLineColor.getBlue(), 64);
+	private static DisplayExtensionGraphics[] getBoundingBoxVisualizationGraphics(DocStyleEditor parent, ImPage page, String box) {
+		try {
+			BoundingBox bb = BoundingBox.parse(box);
+			if (bb == null)
+				return NO_DISPLAY_EXTENSION_GRAPHICS;
+			bb = bb.scale(((float) page.getImageDPI()) / DocumentStyle.DEFAULT_DPI);
+			Shape[] shapes = {new Rectangle2D.Float(bb.left, bb.top, bb.getWidth(), bb.getHeight())};
+			DisplayExtensionGraphics[] degs = {new DisplayExtensionGraphics(parent, null, page, shapes, boundingBoxLineColor, boundingBoxLineStroke, boundingBoxFillColor) {
+				public boolean isActive() {
+					return true;
+				}
+			}};
+			return degs;
+		}
+		catch (IllegalArgumentException iae) {
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+		catch (Exception e) {
+			e.printStackTrace(System.out);
+			return NO_DISPLAY_EXTENSION_GRAPHICS;
 		}
 	}
 	

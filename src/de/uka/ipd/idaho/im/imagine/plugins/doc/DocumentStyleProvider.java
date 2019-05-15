@@ -328,7 +328,7 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 			if (isAllCaps && !words[w].getString().equals(words[w].getString().toUpperCase()))
 				continue;
 			try {
-				int wfs = Integer.parseInt((String) words[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "0"));
+				int wfs = words[w].getFontSize();
 				if (wfs < minFontSize)
 					continue;
 				if (maxFontSize < wfs)

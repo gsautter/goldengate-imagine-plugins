@@ -5,9 +5,7 @@
 -->
 
 <project name="dist">
-	<target name="plugins" depends="annotationsjar,attributesjar,basicimageeditjar,navigationjar,blockocr,ocrcheck,regionsjar,textjar,textblocksjar,textstreamsjar,docmeatdatajar,docstructurejar,captioncitationjar,fontsjar,urldroplinkerjar,tablesjar,objectlistjar,dpimtoolsjar,xmlviewerjar,docstyleprovjar,docstylemanjar">
-		<!-- proxy target only -->
-	</target>
+	<target name="plugins" depends="annotationsjar,attributesjar,basicimageeditjar,navigationjar,blockocr,ocrcheck,regionsjar,textjar,textblocksjar,textstreamsjar,docerrorsjar,docmeatdatajar,docstructurejar,captioncitationjar,fontsjar,urldroplinkerjar,tablesjar,objectlistjar,dpimtoolsjar,xmlviewerjar,docstyleprovjar,docstylemanjar" />
 	
 	<target name="annotationsjar">
 		<delete file="${jar.annotations}" />
@@ -166,6 +164,23 @@
 		</jar>
 	</target>
 	
+	<target name="docerrorsjar">
+		<delete file="${jar.docerrors}" />
+		<jar destfile="${jar.docerrors}" manifest="${file.home}/MANIFEST.plugins.MF">
+			<fileset dir="${build.home}/classes">
+				<include name="**/imagine/plugins/doc/DocumentErrorCheckListManager.class" />
+				<include name="**/imagine/plugins/doc/DocumentErrorCheckListManager$*.class" />
+				<include name="**/imagine/plugins/doc/DocumentErrorManager.class" />
+				<include name="**/imagine/plugins/doc/DocumentErrorManager$*.class" />
+			</fileset>
+			<fileset dir="${src.home}">
+				<include name="**/imagine/plugins/doc/DocumentErrorCheckListManager.java" />
+				<include name="**/imagine/plugins/doc/DocumentErrorManager.java" />
+			</fileset>
+			<fileset dir="." includes="LICENSE.txt"/>
+		</jar>
+	</target>
+	
 	<target name="docstructurejar">
 		<delete file="${jar.docstructure}" />
 		<jar destfile="${jar.docstructure}" manifest="${file.home}/MANIFEST.plugins.MF">
@@ -228,9 +243,15 @@
 			<fileset dir="${build.home}/classes">
 				<include name="**/imagine/plugins/tables/TableActionProvider.class" />
 				<include name="**/imagine/plugins/tables/TableActionProvider$*.class" />
+				<include name="**/imagine/plugins/tables/TableAreaStatistics.class" />
+				<include name="**/imagine/plugins/tables/TableAreaStatistics$*.class" />
+				<include name="**/imagine/plugins/tables/TableDetectorProvider.class" />
+				<include name="**/imagine/plugins/tables/TableDetectorProvider$*.class" />
 			</fileset>
 			<fileset dir="${src.home}">
 				<include name="**/imagine/plugins/tables/TableActionProvider.java" />
+				<include name="**/imagine/plugins/tables/TableAreaStatistics.java" />
+				<include name="**/imagine/plugins/tables/TableDetectorProvider.java" />
 			</fileset>
 			<fileset dir="." includes="LICENSE.txt"/>
 		</jar>

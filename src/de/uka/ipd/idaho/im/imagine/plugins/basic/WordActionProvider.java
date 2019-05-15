@@ -334,7 +334,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider {
 						fontStyle = (fontStyle | Font.BOLD);
 					if (start.hasAttribute(ImWord.ITALICS_ATTRIBUTE))
 						fontStyle = (fontStyle | Font.ITALIC);
-					Font font = new Font("Serif", fontStyle, Integer.parseInt(((String) start.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "24"))));
+					Font font = new Font("Serif", fontStyle, start.getFontSize());
 					float splitWordWidthSum = 0;
 					int splitWordCharCodeStart = 0;
 					for (int s = 0; s < splitWordParts.length; s++) {
@@ -771,7 +771,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider {
 			if (words[w].hasAttribute(ImWord.ITALICS_ATTRIBUTE))
 				mItalicsCharCount += words[w].getString().length();
 			try {
-				int wFontSize = Integer.parseInt((String) words[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "-1"));
+				int wFontSize = words[w].getFontSize();
 				if (wFontSize != -1) {
 					mFontSizeCount++;
 					mFontSizeSum += wFontSize;
@@ -797,7 +797,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider {
 		if ((mItalicsCharCount * 2) > mString.length())
 			mWord.setAttribute(ImWord.ITALICS_ATTRIBUTE);
 		if (mFontSizeCount != 0)
-			mWord.setAttribute(ImWord.FONT_SIZE_ATTRIBUTE, ("" + (mFontSizeSum / mFontSizeCount)));
+			mWord.setFontSize(mFontSizeSum / mFontSizeCount);
 		if (words[0].hasAttribute(ImWord.FONT_NAME_ATTRIBUTE))
 			mWord.setAttribute(ImWord.FONT_NAME_ATTRIBUTE, words[0].getAttribute(ImWord.FONT_NAME_ATTRIBUTE));
 		mWord.setTextStreamType(words[0].getTextStreamType());
@@ -878,6 +878,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider {
 			//	remember start predecessor and end successor
 			ImWord startPrev = start.getPreviousWord();
 			ImWord endNext = end.getNextWord();
+			char endNextRelation = end.getNextRelation();
 			
 			//	remember any annotations starting or ending at any of the to-remove words
 			ArrayList startingAnnots = new ArrayList(3);
@@ -913,6 +914,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider {
 			page.addWord(mWord);
 			mWord.setPreviousWord(startPrev);
 			mWord.setNextWord(endNext);
+			mWord.setNextRelation(endNextRelation);
 			for (int a = 0; a < startingAnnots.size(); a++)
 				((ImAnnotation) startingAnnots.get(a)).setFirstWord(mWord);
 			for (int a = 0; a < endingAnnots.size(); a++)

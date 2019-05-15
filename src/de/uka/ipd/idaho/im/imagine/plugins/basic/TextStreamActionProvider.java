@@ -27,6 +27,7 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
+import java.awt.Color;
 import java.awt.Point;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
@@ -37,7 +38,9 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Set;
@@ -80,6 +83,11 @@ import de.uka.ipd.idaho.stringUtils.StringUtils;
  * @author sautter
  */
 public class TextStreamActionProvider extends AbstractSelectionActionProvider implements ImageMarkupToolProvider {
+	private static final String WORD_JOINER_IMT_NAME = "WordJoiner";
+	private static final String TEXT_FLOW_BREAK_CHECKER_IMT_NAME = "TextFlowBreakChecker";
+	
+	private ImageMarkupTool wordJoiner = new WordJoiner();
+	private ImageMarkupTool textFlowBreakChecker = new TextFlowBreakChecker();
 	
 	/** public zero-argument constructor for class loading */
 	public TextStreamActionProvider() {}
@@ -568,6 +576,9 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 								invoker.repaint();
 							}
 						});
+						Color textStreamTypeColor = idmp.getTextStreamTypeColor(textStreamTypes[t]);
+						if (textStreamTypeColor != null)
+							smi.setBackground(textStreamTypeColor);
 						pm.add(smi);
 						bg.add(smi);
 					}
@@ -589,7 +600,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(java.awt.Point, java.awt.Point, de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
-	public SelectionAction[] getActions(Point start, Point end, ImPage page, final ImDocumentMarkupPanel idmp) {
+	public SelectionAction[] getActions(Point start, Point end, final ImPage page, final ImDocumentMarkupPanel idmp) {
 		
 		//	we're not offering text stream editing if text streams are not visualized
 		if (!idmp.areTextStreamsPainted())
@@ -625,8 +636,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 				final ImRegion paragraph = contextParagraph;
 				actions.add(new SelectionAction("streamOrderPara", "Order Paragraph Words", "Order paragraphs words in a text stream left to right and top to bottom.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						ImUtils.orderStream(paragraph.getWords(), ImUtils.leftRightTopDownOrder);
-						return true;
+						return orderStream(paragraph.getWords(), page);
 					}
 				});
 			}
@@ -634,8 +644,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 				final ImRegion block = contextBlock;
 				actions.add(new SelectionAction("streamOrderBlock", "Order Block Words", "Order block words in a text stream left to right and top to bottom.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						ImUtils.orderStream(block.getWords(), ImUtils.leftRightTopDownOrder);
-						return true;
+						return orderStream(block.getWords(), page);
 					}
 				});
 			}
@@ -685,8 +694,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		//	order selected words into a text stream
 		actions.add(new SelectionAction("streamOrder", "Order Stream", "Order selected words in a text stream left to right and top to bottom.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				ImUtils.orderStream(selectedWords, ImUtils.leftRightTopDownOrder);
-				return true;
+				return orderStream(selectedWords, page);
 			}
 		});
 		
@@ -757,6 +765,83 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		return modified;
 	}
 	
+	/* TODO put this text orientation aware ordering in ImUtils, need to be used in:
+	 * - document structure detection
+	 * - paragraph merging and splitting
+	 * - block merging and splitting
+	 * - block paragraph revisiting
+	 * 
+	 * OR BETTER TODO add function for manually flipping box selections, most likely in region actions, to facilitate manual cleanup right after decoding
+	 */
+	
+	private static boolean orderStream(ImWord[] words, ImPage page) {
+		
+		//	anything to do at all?
+		if (words.length < 2)
+			return false;
+		
+		//	collect writing directions
+		HashSet textDirections = new HashSet();
+		for (int w = 0; w < words.length; w++)
+			textDirections.add(words[w].getAttribute(ImWord.TEXT_DIRECTION_ATTRIBUTE, ImWord.TEXT_DIRECTION_LEFT_RIGHT));
+		
+		//	check writing directions
+		if (textDirections.size() > 1)
+			return false; // TODO figure out how to handle mixed orientations
+		String textDirection = (textDirections.isEmpty() ? ImWord.TEXT_DIRECTION_LEFT_RIGHT : ((String) textDirections.iterator().next()));
+		
+		//	the default case
+		if (ImWord.TEXT_DIRECTION_LEFT_RIGHT.equals(textDirection)) {
+			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+			return true;
+		}
+		
+		//	use proxy words flipped to left-right for other writing directions
+		ImWord[] lrWords = new ImWord[words.length];
+		HashMap lrWordsToWords = new HashMap();
+		for (int w = 0; w < words.length; w++) {
+			lrWords[w] = getLeftRightWord(words[w], textDirection, page);
+			lrWordsToWords.put(lrWords[w], words[w]);
+		}
+		
+		//	order proxy word stream
+		ImUtils.sortLeftRightTopDown(lrWords);
+		
+		//	collect argument words in sorted proxy order
+		for (int w = 0; w < lrWords.length; w++)
+			words[w] = ((ImWord) lrWordsToWords.get(lrWords[w]));
+		
+		//	order stream with inert comparator (we have our desired order already)
+		ImUtils.orderStream(words, inertOrder);
+		return true;
+	}
+	
+	private static ImWord getLeftRightWord(ImWord word, String textDirection, ImPage page) {
+		if (ImWord.TEXT_DIRECTION_BOTTOM_UP.equals(textDirection)) {
+			return new ImWord(page.getDocument(), page.pageId, new BoundingBox(
+				(page.bounds.bottom - word.bounds.bottom),
+				(page.bounds.bottom - word.bounds.top),
+				word.bounds.left,
+				word.bounds.right
+			), word.getString());
+		}
+		else if (ImWord.TEXT_DIRECTION_TOP_DOWN.equals(textDirection)) {
+			return new ImWord(page.getDocument(), page.pageId, new BoundingBox(
+				word.bounds.top,
+				word.bounds.bottom,
+				(page.bounds.right - word.bounds.right),
+				(page.bounds.right - word.bounds.left)
+			), word.getString());
+		}
+		else return word; // never gonna happen, but Java don't know
+	}
+	
+	private static final Comparator inertOrder = new Comparator() {
+		public int compare(Object obj1, Object obj2) {
+			return 0;
+		}
+	};
+	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getEditMenuItemNames()
 	 */
@@ -768,7 +853,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getToolsMenuItemNames()
 	 */
 	public String[] getToolsMenuItemNames() {
-		String[] tmins = {WORD_JOINER_IMT_NAME};
+		String[] tmins = {WORD_JOINER_IMT_NAME, TEXT_FLOW_BREAK_CHECKER_IMT_NAME};
 		return tmins;
 	}
 	
@@ -777,18 +862,18 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 */
 	public ImageMarkupTool getImageMarkupTool(String name) {
 		if (WORD_JOINER_IMT_NAME.equals(name))
-			return new WordJoiner();
+			return this.wordJoiner;
+		else if (TEXT_FLOW_BREAK_CHECKER_IMT_NAME.equals(name))
+			return this.textFlowBreakChecker;
 		else return null;
 	}
-	
-	private static final String WORD_JOINER_IMT_NAME = "WordJoiner";
 	
 	private static class WordJoiner implements ImageMarkupTool {
 		public String getLabel() {
 			return "Join Shattered Words";
 		}
 		public String getTooltip() {
-			return "Analyze word gaps, and join words shattered into multiple pieces due to font decoding errors - USE WITH CARE";
+			return "Analyze line-internal word gaps, and join words shattered into multiple pieces due to font decoding errors - USE WITH CARE";
 		}
 		public String getHelpText() {
 			return null; // for now ...
@@ -818,6 +903,33 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			
 			//	process lines
 			joinWords(lines, tokenizer, pm);
+		}
+	}
+	
+	private static class TextFlowBreakChecker implements ImageMarkupTool {
+		public String getLabel() {
+			return "Check Text Flow Breaks";
+		}
+		public String getTooltip() {
+			return "Check word relations at text flow breaks (line, column, and page breaks) for hyphenations missed due to font decoding or page blocking errors";
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			
+			//	we only process documents as a whole
+			if (annot != null)
+				return;
+			
+			//	get text stream heads
+			ImWord[] textStreamHeads = doc.getTextStreamHeads();
+			
+			//	get tokenizer
+			Tokenizer tokenizer = ((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.NO_INNER_PUNCTUATION_TOKENIZER));
+			
+			//	process lines
+			checkTextFlowBreaks(textStreamHeads, tokenizer, pm);
 		}
 	}
 	
@@ -857,7 +969,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			int lFontSizeSum = 0;
 			int lFontSizeCount = 0;
 			for (int w = 1; w < lWords.length; w++) try {
-				int wfs = Integer.parseInt((String) lWords[w].getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+				int wfs = lWords[w].getFontSize();
 				minFontSize = Math.min(minFontSize, wfs);
 				maxFontSize = Math.max(maxFontSize, wfs);
 				lFontSizeSum += wfs;
@@ -870,7 +982,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 		
 		//	split lines up at gaps larger than twice line height TODO threshold low enough?
-		pm.setStep("Splitting table row lines");
+		pm.setStep("Splitting lines at large gaps");
 		pm.setBaseProgress(5);
 		pm.setMaxProgress(10);
 		ArrayList lineDataList = new ArrayList();
@@ -1621,23 +1733,266 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		//	found no reason for a space
 		return false;
 	}
-//	
-//	private static int getMaxFreqElement(CountingSet cs) {
-//		int maxFreqElement = -1;
-//		int maxElementFreq = 0;
-//		for (Iterator iit = cs.iterator(); iit.hasNext();) {
-//			Integer i = ((Integer) iit.next());
-//			if (cs.getCount(i) > maxElementFreq) {
-//				maxFreqElement = i.intValue();
-//				maxElementFreq = cs.getCount(i);
-//			}
-//		}
-//		return maxFreqElement;
-//	}
+	
+	private static void checkTextFlowBreaks(ImWord[] textStreamHeads, Tokenizer tokenizer, ProgressMonitor pm) {
+		
+		//	collect all document words to form lookup list, and count them out along the way
+		TreeSet docWords = new TreeSet(String.CASE_INSENSITIVE_ORDER);
+		int docWordCount = 0;
+		pm.setStep("Indexing document words");
+		pm.setBaseProgress(0);
+		pm.setProgress(0);
+		pm.setMaxProgress(10);
+		for (int h = 0; h < textStreamHeads.length; h++) {
+			
+			//	update progress indicator
+			pm.setProgress((h * 100) / textStreamHeads.length);
+			
+			//	do not count tables, labels, artifacts, and deleted text
+			if (ImWord.TEXT_STREAM_TYPE_TABLE.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			if (ImWord.TEXT_STREAM_TYPE_LABEL.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			if (ImWord.TEXT_STREAM_TYPE_DELETED.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			
+			//	process text stream
+			for (ImWord imw = textStreamHeads[h]; imw != null; imw = imw.getNextWord()) {
+				docWordCount++;
+				
+				//	check and index word
+				String imwStr = imw.getString();
+				if ((imwStr == null) || (imwStr.trim().length() == 0))
+					continue; // nothing to collect here
+				imwStr = StringUtils.normalizeString(imwStr).trim();
+				if (imwStr.endsWith("-")) {
+					imw = imw.getNextWord(); // jump over successor as well, not a full word, either
+					if (imw == null)
+						break;
+					else continue; // not a full word
+				}
+				if (Gamta.isWord(imwStr))
+					docWords.add(imwStr);
+			}
+		}
+		
+		//	scan through text streams one by one
+		int scanWordCount = 0;
+		pm.setStep("Scanning document text streams");
+		pm.setBaseProgress(10);
+		pm.setProgress(0);
+		pm.setMaxProgress(100);
+		for (int h = 0; h < textStreamHeads.length; h++) {
+			
+			//	leave alone tables, labels, artifacts, and deleted text
+			if (ImWord.TEXT_STREAM_TYPE_TABLE.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			if (ImWord.TEXT_STREAM_TYPE_LABEL.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			if (ImWord.TEXT_STREAM_TYPE_DELETED.equals(textStreamHeads[h].getTextStreamType()))
+				continue;
+			
+			//	scan text stream
+			for (ImWord imw = textStreamHeads[h]; imw != null; imw = imw.getNextWord()) {
+				
+				//	update stats and progress indicator
+				pm.setProgress((scanWordCount * 100) / docWordCount);
+				scanWordCount++;
+				
+				//	check relationship to successor (we're only after text flow breaks here, no use checking anything inside lines)
+				if (!hasTextFlowBreakAfter(imw))
+					continue; // nothing to check here
+				if (imw.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED)
+					continue; // already recognized as hyphenated TODO maybe also double-check these guys ???
+				if (imw.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE)
+					continue; // compound word (double last name) broken after hyphen
+				
+				//	check string (we need a dash at the end)
+				String imwStr = imw.getString();
+				if ((imwStr == null) || (imwStr.trim().length() == 0))
+					continue;
+				imwStr = StringUtils.normalizeString(imwStr).trim();
+				
+				//	check for potentially missed hyphenation
+				if (imwStr.endsWith("-"))
+					checkForHyphenation(imw, imwStr, tokenizer, docWords, pm);
+				
+				//	also catch plain sentence continuations (two adjacent lower case words)
+				else if (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+					checkForSentenceContinuation(imw, imwStr, tokenizer, pm);
+			}
+		}
+	}
+	
+	private static boolean hasTextFlowBreakAfter(ImWord imw) {
+		ImWord nImw = imw.getNextWord();
+		if (nImw == null)
+			return false;
+		if (imw.pageId != nImw.pageId)
+			return true; // page break
+		if (nImw.bounds.bottom < imw.bounds.top)
+			return true; // successor further up, column break
+		if (imw.bounds.bottom < nImw.bounds.top)
+			return true; // successor further down, line break
+		return false; // this one is in line
+	}
+	
+	private static String normalizeString(ImWord fromImw, ImWord toImw) {
+		StringBuffer sb = new StringBuffer();
+		for (ImWord imw = fromImw; imw != null; imw = imw.getNextWord()) {
+			sb.append(StringUtils.normalizeString(imw.getString()));
+			if (imw == toImw)
+				break;
+		}
+		return sb.toString();
+	}
+	
+	private static void checkForHyphenation(ImWord imw, String imwStr, Tokenizer tokenizer, TreeSet docWords, ProgressMonitor pm) {
+		
+		//	check next word for potential continuation
+		ImWord nextImw = imw.getNextWord();
+		if (nextImw == null)
+			return;
+		String nextImwStr = nextImw.getString();
+		if ((nextImwStr == null) || (nextImwStr.trim().length() == 0))
+			return;
+		nextImwStr = StringUtils.normalizeString(nextImwStr);
+		if (nextImwStr.charAt(0) == Character.toUpperCase(nextImwStr.charAt(0)))
+			return; // starting with capital letter, not a word continued
+		
+		//	attach any joined following words
+		ImWord endImw = findConnectedWordEnd(nextImw);
+		nextImwStr = normalizeString(nextImw, endImw);
+		
+		//	do we have a word to continue with?
+		if (!Gamta.isWord(nextImwStr))
+			return;
+		
+		//	check for enumeration prepositions (western European languages for now)
+		if ("and;or;und;oder;et;ou;y;e;o;u;ed".indexOf(nextImwStr.toLowerCase()) != -1)
+			return;
+		
+		//	add any connected preceding words
+		ImWord startImw = findConnectedWordStart(imw, tokenizer);
+		imwStr = normalizeString(startImw, imw);
+		
+		//	do we have a word?
+		if (!Gamta.isWord(imwStr))
+			return;
+		
+		//	check de-hyphenation result
+		String fullStr = (imwStr.substring(0, (imwStr.length() - "-".length())) + nextImwStr);
+		TokenSequence fullTokens = Gamta.newTokenSequence(fullStr, tokenizer);
+		if (fullTokens.size() != 1)
+			return;
+		
+		//	do we have a word occurring as a whole?
+		if (!docWords.contains(fullStr))
+			return;
+		
+		//	smooth out text stream
+		for (ImWord smoothImw = startImw; smoothImw != endImw; smoothImw = smoothImw.getNextWord())
+			smoothImw.setNextRelation((smoothImw == imw) ? ImWord.NEXT_RELATION_HYPHENATED : ImWord.NEXT_RELATION_CONTINUE);
+		pm.setInfo("De-hyphenated " + imwStr + " and " + nextImwStr + " to " + fullStr + " at " + startImw.getLocalID() + " through " + endImw.getLocalID());
+	}
+	
+	private static void checkForSentenceContinuation(ImWord imw, String imwStr, Tokenizer tokenizer, ProgressMonitor pm) {
+		
+		//	add any connected preceding words
+		ImWord startImw = findConnectedWordStart(imw, tokenizer);
+		imwStr = normalizeString(startImw, imw);
+		
+		//	do we have a word?
+		if (!Gamta.isWord(imwStr))
+			return;
+		if (!StringUtils.containsVowel(imwStr))
+			return;
+		
+		//	check next word for potential sentence continuation
+		ImWord nextImw = imw.getNextWord();
+		if (nextImw == null)
+			return;
+		String nextImwStr = nextImw.getString();
+		if ((nextImwStr == null) || (nextImwStr.trim().length() == 0))
+			return;
+		nextImwStr = StringUtils.normalizeString(nextImwStr);
+		if (nextImwStr.charAt(0) == Character.toUpperCase(nextImwStr.charAt(0)))
+			return; // starting with capital letter, not as safely a sentence continued
+		if (!StringUtils.containsVowel(nextImwStr))
+			return; // not a real word (be careful with abbreviations)
+		
+		//	attach any joined following words
+		ImWord endImw = findConnectedWordEnd(nextImw);
+		nextImwStr = normalizeString(nextImw, endImw);
+		
+		//	do we have a word to continue with?
+		if (!Gamta.isWord(nextImwStr))
+			return;
+		
+		//	connect logical paragraphs
+		imw.setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
+		pm.setInfo("Continued sentence between " + imwStr + " and " + nextImwStr + " at " + startImw.getLocalID() + " through " + endImw.getLocalID());
+	}
+	
+	private static ImWord findConnectedWordEnd(ImWord imw) {
+		ImWord endImw = imw;
+		while (endImw.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) {
+			if (endImw.getNextWord() == null)
+				break;
+			endImw = endImw.getNextWord();
+		}
+		return endImw;
+	}
+	
+	private static ImWord findConnectedWordStart(ImWord imw, Tokenizer tokenizer) {
+		
+		//	add any connected preceding words
+		ImWord startImw = imw;
+		for (ImWord prevImw = imw.getPreviousWord(); prevImw != null; prevImw = prevImw.getPreviousWord()) {
+			
+			//	check relationship to what we already have
+			if (prevImw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+				break; // let's not bridge into preceding paragraphs
+			if (prevImw.getNextWord().bounds.bottom < prevImw.bounds.top)
+				break; // let's not bridge upward
+			if (prevImw.bounds.bottom < prevImw.getNextWord().bounds.top)
+				break; // let's not bridge downward
+			if (prevImw.getString() == null)
+				break; // little use going beyond this one
+			if (prevImw.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) {}
+			else if (((startImw.bounds.left - prevImw.bounds.right) * 10 * 2) < (prevImw.bounds.getHeight() + startImw.bounds.getHeight())) {}
+			else break; // too far away, and not explicitly linked
+			
+			//	check string
+			String prevImwStr = StringUtils.normalizeString(prevImw.getString());
+			if (prevImw.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) {}
+			else if (Gamta.isWord(prevImwStr)) {}
+			else if ("-".equals(prevImwStr)) {}
+			else break; // not a word or stray hyphen, and not explicitly linked
+			
+			//	include current word
+			startImw = prevImw;
+		}
+		
+		//	remove preceding words until we have a single token (or are back down to the word we started out with)
+		if (startImw != imw) do {
+			String imwStr = normalizeString(startImw, imw);
+			TokenSequence imwTokens = Gamta.newTokenSequence(imwStr, tokenizer);
+			if (imwTokens.size() == 1)
+				break; // we have a single consistent token
+			startImw = startImw.getNextWord();
+		} while (startImw != imw);
+		
+		//	finally ...
+		return startImw;
+	}
 	
 	private static final String COMBINABLE_ACCENTS;
 	private static final HashMap COMBINABLE_ACCENT_MAPPINGS = new HashMap();
-	
 	static {
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u0300'), "grave");
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u0301'), "acute");

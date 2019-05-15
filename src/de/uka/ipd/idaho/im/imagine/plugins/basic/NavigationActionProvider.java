@@ -65,6 +65,7 @@ import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 
 import de.uka.ipd.idaho.gamta.Gamta;
+import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.im.ImDocument;
@@ -110,20 +111,25 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 	}
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
 	 */
-	public void documentOpened(ImDocument doc) { /* we're not interested in documents being opened, as we create our index on the fly */ }
-
+	public void documentOpened(ImDocument doc, Object source, ProgressMonitor pm) { /* we're not interested in documents being opened, as we create our index on the fly */ }
+	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSelected(de.uka.ipd.idaho.im.ImDocument)
 	 */
-	public void documentSaving(ImDocument doc) { /* we're not interested in documents being saved, as we're not persisting our index */ }
-
+	public void documentSelected(ImDocument doc) {}
+	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
 	 */
-	public void documentSaved(ImDocument doc) { /* we're not interested in documents having been saved */ }
-
+	public void documentSaving(ImDocument doc, Object dest, ProgressMonitor pm) { /* we're not interested in documents being saved, as we're not persisting our index */ }
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentSaved(ImDocument doc, Object dest, ProgressMonitor pm) { /* we're not interested in documents having been saved */ }
+	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentClosed(java.lang.String)
 	 */

@@ -27,23 +27,30 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.tables;
 
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.Shape;
 import java.awt.geom.CubicCurve2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.QuadCurve2D;
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.TreeMap;
+import java.util.Set;
 import java.util.TreeSet;
 
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.util.CountingSet;
+import de.uka.ipd.idaho.gamta.util.ParallelJobRunner;
+import de.uka.ipd.idaho.gamta.util.ParallelJobRunner.ParallelFor;
+import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
+import de.uka.ipd.idaho.gamta.util.ProgressMonitor.SynchronizedProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
+import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImLayoutObject;
 import de.uka.ipd.idaho.im.ImPage;
@@ -52,14 +59,22 @@ import de.uka.ipd.idaho.im.ImSupplement;
 import de.uka.ipd.idaho.im.ImSupplement.Graphics;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractGoldenGateImaginePlugin;
-import de.uka.ipd.idaho.im.util.ImDocumentIO;
+import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.ColumnOccupationLow;
+import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.GraphicsSlice;
+import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
+import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImUtils;
 
 /**
  * @author sautter
  *
  */
-public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin {
+public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin implements ImageMarkupToolProvider {
+	private static final String TABLE_DETECTOR_IMT_NAME = "TableDetector";
+	private ImageMarkupTool tableDetector = new TableDetector();
+	
+	private TableActionProvider tableActionProvider;
 	
 	/** public zero-argument constructor for class loading */
 	public TableDetectorProvider() {}
@@ -69,6 +84,852 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin {
 	 */
 	public String getPluginName() {
 		return "IM Table Detector";
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#init()
+	 */
+	public void init() {
+		
+		//	get table action provider
+		if (this.parent == null)
+			this.tableActionProvider = new TableActionProvider();
+		else this.tableActionProvider = ((TableActionProvider) this.parent.getPlugin(TableActionProvider.class.getName()));
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getEditMenuItemNames()
+	 */
+	public String[] getEditMenuItemNames() {
+		return null;
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getToolsMenuItemNames()
+	 */
+	public String[] getToolsMenuItemNames() {
+		String[] tmins = {TABLE_DETECTOR_IMT_NAME};
+		return tmins;
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getImageMarkupTool(java.lang.String)
+	 */
+	public ImageMarkupTool getImageMarkupTool(String name) {
+		if (TABLE_DETECTOR_IMT_NAME.equals(name))
+			return this.tableDetector;
+		else return null;
+	}
+	
+	private class TableDetector implements ImageMarkupTool {
+		public String getLabel() {
+			return "Detect Tables";
+		}
+		public String getTooltip() {
+			return "Detect tables with graphics grids";
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			
+			//	we're only handling documents as a whole
+			if (annot != null)
+				return;
+			
+			//	get document table style
+			DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
+			DocumentStyle docLayout = docStyle.getSubset("layout");
+			DocumentStyle tableLayout = docLayout.getSubset("table");
+			
+			//	run detection for individual classes of tables
+			detectTables(doc, tableLayout, idmp, pm);
+		}
+	}
+	
+	private static final boolean DEBUG = true;
+	
+	/**
+	 * Detect the tables in a document, page by page.
+	 * @param doc the document to process
+	 * @param tableStyle the table layout subset of a document style template
+	 * @param idmp the markup panel the document is displaying in (if any)
+	 * @param pm a progress monitor to inform on table detection progress
+	 */
+	public void detectTables(final ImDocument doc, final DocumentStyle tableStyle, final ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+		if (pm == null)
+			pm = ProgressMonitor.dummy;
+		
+		//	build progress monitor with synchronized methods instead of synchronizing in-code
+		final ProgressMonitor spm = ((pm instanceof SynchronizedProgressMonitor) ? ((SynchronizedProgressMonitor) pm) : new SynchronizedProgressMonitor(pm));
+		
+		//	get pages
+		final ImPage[] pages = doc.getPages();
+		
+		//	collect repeating graphics
+		final HashSet ignoreGraphics = this.getPageDesignGraphics(doc, pages, spm);
+		
+		//	compute average density of document blocks
+		System.out.println("Computing document word density");
+		int stripeWidthSum = 0;
+		int stripeArea = 0;
+		int wordWidthSum = 0;
+		int wordHeightSum = 0;
+		int wordCount = 0;
+		int wordArea = 0;
+		int wordDistanceSum = 0;
+		float nWordDistanceSum = 0;
+		int wordDistanceCount = 0;
+		for (int pg = 0; pg < pages.length; pg++) {
+			
+			//	assess page blocks
+			ImRegion[] pgBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+			Arrays.sort(pgBlocks, ImUtils.topDownOrder);
+			for (int b = 0; b < pgBlocks.length; b++) {
+				System.out.println(" - assessing block " + pages[pg].pageId + "." + pgBlocks[b].bounds);
+				
+				//	TODO get rid of row stripes here
+				RowStripe[] bStripes = getRowStripes(pages[pg], pgBlocks[b].bounds);
+				if (bStripes.length == 0) {
+//					System.out.println("   --> empty block");
+					continue; // empty block, image or graphics with no labels
+				}
+//				System.out.println("   - got " + bStripes.length + " block stripes");
+//				float bWordDensity = getWordDensity(bStripes);
+//				System.out.println("   --> block word density is " + bWordDensity);
+				
+				for (int s = 0; s < bStripes.length; s++) {
+					stripeWidthSum += bStripes[s].bounds.getWidth();
+					stripeArea += bStripes[s].area;
+					wordWidthSum += bStripes[s].wordWidthSum;
+					wordHeightSum += bStripes[s].wordHeightSum;
+					wordCount += bStripes[s].words.length;
+					wordArea += bStripes[s].wordArea;
+					wordDistanceSum += bStripes[s].wordDistanceSum;
+					nWordDistanceSum += bStripes[s].nWordDistanceSum;
+					wordDistanceCount += bStripes[s].wordDistanceCount;
+				}
+			}
+		}
+		final float docWordDensity1d = ((stripeWidthSum < 1) ? 0 : (((float) wordWidthSum) / stripeWidthSum));
+		final float docWordDensity2d = ((stripeArea < 1) ? 0 : (((float) wordArea) / stripeArea));
+		System.out.println("Average document word density is " + docWordDensity1d + " horizonatally, " + docWordDensity2d + " by area");
+		final float docWordSpacing = ((wordDistanceCount < 1) ? 0 : (((float) wordDistanceSum) / wordDistanceCount));
+		System.out.println("Average document word spacing " + docWordSpacing);
+		final float docNormSpaceWidth = ((wordDistanceCount < 1) ? 0 : (((float) nWordDistanceSum) / wordDistanceCount));
+		System.out.println("Average normalized document word spacing " + docNormSpaceWidth);
+		final float docWordHeight = ((wordCount < 1) ? 0 : (((float) wordHeightSum) / wordCount));
+		System.out.println("Average document word height " + docWordHeight);
+		
+		//	mark tables (now we can run in parallel)
+		ParallelJobRunner.runParallelFor(new ParallelFor() {
+			public void doFor(int p) throws Exception {
+				spm.setProgress((p * 100) / pages.length);
+				try {
+					detectTables(pages[p], doc, tableStyle, ignoreGraphics, docWordHeight, docWordDensity1d, docWordDensity2d, docWordSpacing, docNormSpaceWidth, idmp, spm);
+				}
+				catch (Exception e) {
+					e.printStackTrace(System.out);
+				}
+				//	TODO figure out what layout hints might be useful for tables
+				
+				/* TODO restrict table detection:
+				 * - maxColumnWidth: maximum width of individual column, prevents putting multi-column text in tables
+				 * 
+				 * - maxRowHeight: maximum height for individual rows, prevents main text cross splits
+				 * - maxAvgRowHeight: maximum average row height, prevents main text multi-cross splits
+				 * 
+				 * - minColumnCount: minimum number of columns, excludes, e.g., two-column tables
+				 * - minRowCount: minimum number of rows: excludes main text cross splits
+				 * - minCellCount: minimum number of cells (columns x rows): might be above product of minimums for both dimensions
+				 * 
+				 * - grid.horizontal: boolean indicating if there are horizontal grid lines, prevents left and right merging beyond widest block
+				 * - grid.vertical: boolean indicating if there are vertical grid lines, prevents up and down merging beyond highest block
+				 * - grid.frame: boolean indicating outside frame, prevents any merging
+				 * ==> not sure whether or not to use these booleans, as we do want to keep grid lines (and anything but words in general) out of block detection
+				 */
+				
+				/* TODO consider using word density in block for table detection
+				 * - far fewer words per area in table than in main text
+				 *   ==> try and measure this to get an idea
+				 * - also measure regularity of spaces in lines / rows
+				 *   - should be far less regular in table than in main text
+				 *   - average it out for each block ...
+				 *   - ... and find regularity distribution in document
+				 *     ==> top outliers are potential tables (pending all the other checks, like column headers and row labels)
+				 *   ==> try and measure this to get an idea
+				 * - also make use of column anchor points (already outlined below)
+				 *   - left and right aligned anchor points have to match closely ...
+				 *   - ... center anchor points overlap maybe with central third or quarter
+				 * ==> anchor points (and in particular their violation) might well help to chop captions off the top of tables
+				 */
+			}
+		}, pages.length, (DEBUG ? 1 : -1));
+	}
+	
+	/**
+	 * Detect the tables in a single document page. This method facilitates
+	 * parallel processing of the pages in a document. The version of this
+	 * method that only takes the document proper as an argument is linear.
+	 * To use this method in parallel, page decoration graphics need to be
+	 * obtained up front.
+	 * @param page the page to mark the table in
+	 * @param doc the document the page belongs to
+	 * @param tableStyle the table layout subset of a document style template
+	 * @param ignoreGraphics graphics objects to ignore as page style elements
+	 * @param docWordHeight the word height average across the document
+	 * @param docNormSpaceWidth the space width average across the document,
+	 *            normalized by height of adjacent words
+	 * @param idmp the markup panel the document is displaying in (if any)
+	 * @param pm a progress monitor to inform on table detection progress
+	 */
+	public void detectTables(ImPage page, ImDocument doc, DocumentStyle tableStyle, Set ignoreGraphics, float docWordHeight, float docWordDensity1d, float docWordDensity2d, float docWordSpacing, float docNormSpaceWidth, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+		if (pm == null)
+			pm = ProgressMonitor.dummy;
+		
+		//	get and filter page graphics
+		ImSupplement[] pageSupplements = page.getSupplements();
+		ArrayList pageGraphicsList = new ArrayList();
+		for (int ps = 0; ps < pageSupplements.length; ps++)
+			if (pageSupplements[ps] instanceof Graphics) {
+				Graphics gr = ((Graphics) pageSupplements[ps]);
+				if (ignoreGraphics.contains(pageSupplements[ps]))
+					continue; // skip page decoration
+				
+				//	sort out graphics too narrow and low for a table (less than 1 inch wide, less than half inch tall)
+				BoundingBox grBounds = gr.getBounds();
+				if ((grBounds.getWidth() < page.getImageDPI()) && ((grBounds.getHeight() * 2) < page.getImageDPI()))
+					continue;
+				
+				//	remove graphics that include mainly curves, as table grids (mainly) consist of straight lines
+				Graphics.Path[] grPaths = gr.getPaths();
+				int grLineCount = 0;
+				int grCurveCount = 0;
+				for (int p = 0; p < grPaths.length; p++) {
+					Graphics.SubPath[] subPaths = grPaths[p].getSubPaths();
+					for (int s = 0; s < subPaths.length; s++) {
+						Shape[] subPathShapes = subPaths[s].getShapes();
+						for (int h = 0; h < subPathShapes.length; h++) {
+							if (subPathShapes[h] instanceof Line2D)
+								grLineCount++;
+							else if (subPathShapes[h] instanceof CubicCurve2D)
+								grCurveCount++;
+							else if (subPathShapes[h] instanceof QuadCurve2D)
+								grCurveCount++;
+						}
+					}
+				}
+				if (grCurveCount > grLineCount)
+					continue; // too many curves, too few lines
+				
+				//	hold on to this one
+				pageGraphicsList.add(pageSupplements[ps]);
+			}
+		Graphics[] pageGraphics = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+		
+		//	anything to work with?
+		if (pageGraphics.length == 0)
+			return;
+		
+		/* detect tables:
+		 * - categories activated by default or by document style template
+		 * - starting out with multi-piece grids to prevent having them partially marked under single-piece categories
+		 */
+		
+		/* This covers the following types of table grids (most Zootaxa, and many others):
+		- column header separating horizontal line grids (one internal horizontal line, separating column headers from data, plus maybe some lines inside column header part)
+		- partial horizontal line grids (header separating, plus orientation line every two or three rows)
+		- full horizontal line grids (horizontal lines or stripe flanks in all row gaps)
+		- full horizontal stripe grids
+		==> will detect as currently implemented in test code
+		 */
+		boolean seekHorizontalMultiPieceGridTables = tableStyle.getBooleanProperty("horizontalMultiPieceGrid", true);
+		if (seekHorizontalMultiPieceGridTables)
+			this.detectHorizontalMultiPieceGridTables(page, pageGraphics, docWordHeight, docWordDensity1d, docWordDensity2d, docWordSpacing, docNormSpaceWidth, pm);
+		
+		/* This covers the following types of table grids (unseen thus far):
+		- row label separating vertical line grids (one internal vertical line or stripe flank, separating row labels from data)
+		- full vertical line grids (vertical lines or stripe flanks in all column gaps)
+		- partial vertical  line grids unseen as of now
+		- full vertical stripe grids
+		==> will require combining same-length vertical lines at same vertical position to detect
+		==> flip current test code to vertical for detection, combining vertical graphics into grids
+		  - require enclosed area to span whole (with some 5% of slack) block, column, or page content width
+		 */
+		boolean seekVerticalMultiPieceGridTables = tableStyle.getBooleanProperty("verticalMultiPieceGrid", false);
+		if (seekVerticalMultiPieceGridTables)
+			this.detectVerticalMultiPieceGridTables(page, pageGraphics, docWordHeight, docNormSpaceWidth, pm);
+		
+		/* This covers the following types of table grids:
+		- full frame grids (outside lines boxing whole table)
+		  - row label separating (one internal vertical line or stripe flank, separating row labels from data) or full (vertical lines or stripe flanks in all column gaps) column grid (partial unseen as of now)
+		  - column header separating (one internal horizontal line or stripe flank, separating column headers from data, plus maybe some lines inside column header part), partial (header separating, plus orientation line every two or three rows), or full row grid (horizontal lines or stripe flanks in all row gaps)
+		- comb grids
+		  - single horizontal line below column headers, crossing vertical lines in all column gaps
+		  - single vertical line after row labels, crossing horizontal lines partially or fully separating rows
+		- inverse L stripe grids (L-ing stripes highlighting column headers and row labels, no lines or stripes in data part)
+		- cross grids (single horizontal line separating column headers from data, crossing single vertical line separating row labels from data)
+		==>  will require separate detector method testing for respective graphics
+		 */
+		boolean seekSpanningOnePieceGridTables = tableStyle.getBooleanProperty("spanningOnePieceGrid", true);
+		if (seekSpanningOnePieceGridTables)
+			this.detectSpanningOnePieceGridTables(page, pageGraphics, docWordHeight, docWordDensity1d, docWordDensity2d, docWordSpacing, docNormSpaceWidth, pm);
+		
+		/* This covers the following types of table grids (unseen as of now):
+		- T grids
+		  - single horizontal line, separating column headers from data, T-ing single vertical line separating row labels from data, but not protruding into column header row
+		  - single vertical line, separating row labels from data, T-ing single horizontal line separating column headers from data, but not protruding into row label column
+		- inverse L grids (single horizontal line, separating column headers from data, but not protruding into row label column, L-ing single vertical line separating row labels from data, but not protruding into column header row)
+		==> will require row stripe extension above column header separating horizontal line to detect full table
+		==> will require extension to block width or even left neighboring block to detect full table
+		 */
+		boolean seekDataSpanningOnePieceGridTables = tableStyle.getBooleanProperty("dataSpanningOnePieceGrid", false);
+		if (seekDataSpanningOnePieceGridTables)
+			this.detectDataSpanningOnePieceGridTables(page, pageGraphics, docWordHeight, docNormSpaceWidth, pm);
+		
+		/* This covers the following types of table grids (many IJSEM in-text-flow tables, and many others):
+		- single horizontal line across whole block (or column) width (with some 5% slack) separating column headers from data
+		==> will require row stripe extension above and below column header separating horizontal line to detect table
+		  - require low row stripe density (> 20% below document average)
+		  - require pronounced column gaps (> 66% of average word height)
+		  - require large fraction of occupied cells
+		  - work in column, and across blocks (row gaps might be above vertical block margin)
+		 */
+		boolean seekHorizontalSingleLineGridTables = tableStyle.getBooleanProperty("horizontalSingleLineGrid", true);
+		if (seekHorizontalSingleLineGridTables)
+			this.detectHorizontalSingleLineGridTables(page, pageGraphics, docWordHeight, docNormSpaceWidth, pm);
+		
+		/* This covers the following types of table grids (unseen thus far):
+		- single vertical line separating row labels from data
+		==> will require some row stripe analysis to detect
+		  - require low row stripe density (> 20% below document average)
+		  - require pronounced column gaps (> 66% of average word height)
+		  - require large fraction of occupied cells
+		 */
+		boolean seekVerticalSingleLineGridTables = tableStyle.getBooleanProperty("verticalSingleLineGrid", false);
+		if (seekVerticalSingleLineGridTables)
+			this.detectVerticalSingleLineGridTables(page, pageGraphics, docWordHeight, docNormSpaceWidth, pm);
+	}
+	
+	/**
+	 * Produce a set of graphics supplements that repeat on but all pages and
+	 * can thus be considered page design elements rather than pieces of a
+	 * table grid.
+	 * @param doc the document whose graphics to filter
+	 * @param pages the pages of the document
+	 * @param pm a progress monitor to inform on table detection progress
+	 * @return a set containing the page design graphics
+	 */
+	public HashSet getPageDesignGraphics(ImDocument doc, ImPage[] pages, ProgressMonitor pm) {
+		HashSet pageDesignGraphics = new HashSet();
+		if (pm == null)
+			pm = ProgressMonitor.dummy;
+		
+		//	get vector graphics supplements for each page, and count frequencies
+		Graphics[][] pageGraphics = new Graphics[pages.length][];
+		CountingSet graphicsPageCounts = new CountingSet();
+		CountingSet graphicsEvenPageCounts = new CountingSet();
+		CountingSet graphicsOddPageCounts = new CountingSet();
+		for (int pg = 0; pg < pages.length; pg++) {
+			pm.setInfo("Collecting graphics in page " + pages[pg].pageId);
+			ImSupplement[] pageSupplements = pages[pg].getSupplements();
+			ArrayList pageGraphicsList = new ArrayList();
+			for (int s = 0; s < pageSupplements.length; s++) {
+				if (pageSupplements[s] instanceof Graphics)
+					pageGraphicsList.add(pageSupplements[s]);
+			}
+			pageGraphics[pg] = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+			pm.setInfo(" - found " + pageGraphics[pg].length + " individual graphics:");
+			for (int g = 0; g < pageGraphics[pg].length; g++) {
+				BoundingBox graphBounds = pageGraphics[pg][g].getBounds();
+				pm.setInfo("   - " + graphBounds);
+				graphicsPageCounts.add(graphBounds);
+				if ((pg % 2) == 0)
+					graphicsEvenPageCounts.add(graphBounds);
+				else graphicsOddPageCounts.add(graphBounds);
+			}
+		}
+		
+		//	collect graphics that repeat on but all (or but all even, or but all odd) pages
+		for (int pg = 0; pg < pages.length; pg++) {
+			pm.setInfo("Assessing graphics in page " + pages[pg].pageId);
+			for (int g = 0; g < pageGraphics[pg].length; g++) {
+				BoundingBox graphBounds = pageGraphics[pg][g].getBounds();
+				pm.setInfo(" - " + graphBounds + ":");
+				
+				//	graphics existing in majority (maybe 2/3) of pages, likely page decoration
+				int graphPageCount = graphicsPageCounts.getCount(graphBounds);
+				int graphEvenPageCount = graphicsEvenPageCounts.getCount(graphBounds);
+				int graphOddPageCount = graphicsOddPageCounts.getCount(graphBounds);
+				pm.setInfo("   - present in " + graphPageCount + " of " + pages.length + " pages (" + graphEvenPageCount + " even, " + graphOddPageCount + " odd)");
+				if ((graphPageCount * 3) > (pages.length * 2)) {
+					pageDesignGraphics.add(pageGraphics[pg][g]);
+					pm.setInfo("     ==> got page decoration");
+				}
+				else if ((graphOddPageCount == 0) && ((graphEvenPageCount * 3) > pages.length)) {
+					pageDesignGraphics.add(pageGraphics[pg][g]);
+					pm.setInfo("     ==> got even page decoration");
+				}
+				else if ((graphEvenPageCount == 0) && ((graphOddPageCount * 3) > pages.length)) {
+					pageDesignGraphics.add(pageGraphics[pg][g]);
+					pm.setInfo("     ==> got odd page decoration");
+				}
+			}
+		}
+		
+		//	finally ...
+		return pageDesignGraphics;
+	}
+	
+	private void detectSpanningOnePieceGridTables(ImPage page, Graphics[] pageGraphics, float docWordHeight, float docWordDensity1d, float docWordDensity2d, float docWordSpacing, float docNormSpaceWidth, ProgressMonitor pm) {
+		
+		//	filter out lines
+		ArrayList pageGraphicsList = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			
+			//	sort out graphics too narrow or low for a table (less than 1 inch wide, or less than half inch tall)
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			if ((grBounds.getWidth() < page.getImageDPI()) || ((grBounds.getHeight() * 2) < page.getImageDPI()))
+				continue;
+			
+			//	sort out graphics that cannot accommodate 3 rows
+			if (grBounds.getHeight() < (3 * docWordHeight))
+				continue; 
+			
+			//	retain this one for further investigation
+			pageGraphicsList.add(pageGraphics[g]);
+		}
+		if (pageGraphicsList.size() < pageGraphics.length)
+			pageGraphics = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+		
+		//	anything left to work with?
+		if (pageGraphics.length == 0)
+			return;
+		
+		//	sort graphics top-down
+		pm.setInfo("Assessing potential full table grids in page " + page.pageId);
+		Arrays.sort(pageGraphics, topDownGraphicsOrder);
+		pm.setInfo(" - " + pageGraphics.length + " graphics sorted");
+		
+		//	assess potential table areas (all the graphics passing above filters are candidates for full grid tables)
+		pm.setInfo(" - assessing " + pageGraphics.length + " potential table grids");
+		ArrayList pageTableAreaCandidates = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			BoundingBox tableArea = pageGraphics[g].getBounds();
+			pm.setInfo("   - assessing " + tableArea);
+			TableAreaCandidate tac = getTableAreaCandidate(page, tableArea, docWordDensity1d, docWordDensity2d, docWordSpacing, docNormSpaceWidth, pm);
+			if (tac != null)
+				pageTableAreaCandidates.add(tac);
+		}
+		
+		//	anything to work with?
+		if (pageTableAreaCandidates.size() == 0)
+			return;
+		
+		//	mark what we have
+		pm.setInfo(" - retained " + pageTableAreaCandidates.size() + " candidate table grids:");
+		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
+			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
+			pm.setInfo("   - " + tac.bounds + ":");
+			this.tableActionProvider.markTable(page, tac.bounds, tac.stats, null);
+		}
+	}
+	
+	private void detectDataSpanningOnePieceGridTables(ImPage page, Graphics[] pageGraphics, float docWordHeight, float docNormSpaceWidth, ProgressMonitor pm) {
+		
+		//	filter out lines
+		ArrayList pageGraphicsList = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			
+			//	sort out graphics too narrow or low for a table (less than 1 inch wide, or less than half inch tall)
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			if ((grBounds.getWidth() < page.getImageDPI()) || ((grBounds.getHeight() * 2) < page.getImageDPI()))
+				continue;
+			
+			//	sort out graphics that cannot accommodate 2 data rows
+			if (grBounds.getHeight() < (2 * docWordHeight))
+				continue; 
+			
+			//	retain this one for further investigation
+			pageGraphicsList.add(pageGraphics[g]);
+		}
+		if (pageGraphicsList.size() < pageGraphics.length)
+			pageGraphics = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+		
+		//	anything left to work with?
+		if (pageGraphics.length == 0)
+			return;
+		
+		//	TODO implement this (once we have an example)
+		
+		//	TODO find topmost horizontal line
+		
+		//	TODO expand upward if no words above topmost line (using row stripes in enclosing block)
+		
+		//	TODO do this for at most four row stripes (there should not be more rows in a table header), yielding one candidate each
+		
+		//	TODO find leftmost vertical line
+		
+		//	TODO expand to left block edge if no words on left of it
+		//	TODO ... and then, always expand to block edge
+		
+		//	TODO assess resulting table candidate area(s)
+	}
+	
+	private void detectHorizontalMultiPieceGridTables(ImPage page, Graphics[] pageGraphics, float docWordHeight, float docWordDensity1d, float docWordDensity2d, float docWordSpacing, float docNormSpaceWidth, ProgressMonitor pm) {
+		
+		//	anything to work with?
+		if (pageGraphics.length < 2)
+			return;
+		
+		//	filter out vertical lines
+		ArrayList pageGraphicsList = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			
+			//	sort out graphics too narrow for a table (less than 1 inch wide)
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			if (grBounds.getWidth() < page.getImageDPI())
+				continue;
+			
+			//	retain this one for further investigation
+			pageGraphicsList.add(pageGraphics[g]);
+		}
+		if (pageGraphicsList.size() < pageGraphics.length)
+			pageGraphics = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+		
+		//	anything left to work with?
+		if (pageGraphics.length < 2)
+			return;
+		
+		//	sort graphics top-down
+		pm.setInfo("Assessing potential multi-piece table grids in page " + page.pageId);
+		Arrays.sort(pageGraphics, topDownGraphicsOrder);
+		pm.setInfo(" - " + pageGraphics.length + " graphics sorted");
+		
+		/* mark region as non-table area if
+		 * (a) only two lines contained
+		 * (b) lines more than half average word height apart (to account for double lines)
+		 * (c) no words contained at all */
+		ArrayList pageNonTableAreas = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			pm.setInfo(" - seeking non-table areas starting with " + grBounds);
+			
+			//	combine with other graphics in same column
+			for (int cg = (g+1); cg < pageGraphics.length; cg++) {
+				BoundingBox cGrBounds = pageGraphics[cg].getBounds();
+//				System.out.println("     - checking against " + cGraphBounds + " ...");
+				
+				//	check column overlap (require 97% to accommodate sloppy layout)
+				int uWidth = (Math.max(grBounds.right, cGrBounds.right) - Math.min(grBounds.left, cGrBounds.left));
+				int iWidth = (Math.min(grBounds.right, cGrBounds.right) - Math.max(grBounds.left, cGrBounds.left));
+				if ((iWidth * 100) < (uWidth * 97)) {
+//					System.out.println("       ==> alignment mismatch");
+					continue;
+				}
+				
+				//	check combined height
+				int uHeight = (Math.max(grBounds.bottom, cGrBounds.bottom) - Math.min(grBounds.top, cGrBounds.top));
+				if ((uHeight * 2) < docWordHeight) {
+//					System.out.println("       ==> lower than half a word, potential double line");
+					continue;
+				}
+				
+				//	mark potential non-table area
+				BoundingBox uGrBounds = new BoundingBox(
+						Math.min(grBounds.left, cGrBounds.left),
+						Math.max(grBounds.right, cGrBounds.right),
+						Math.min(grBounds.top, cGrBounds.top),
+						Math.max(grBounds.bottom, cGrBounds.bottom)
+					);
+				
+				//	check for any contained graphics
+				for (int og = (g+1); og < pageGraphics.length; og++) {
+					if (og == cg)
+						break; // no need to seek any further thanks to top-down sorting
+					BoundingBox oGrBounds = pageGraphics[og].getBounds();
+					
+					//	check width (require 97% to accommodate sloppy layout)
+					if ((oGrBounds.getWidth() * 100) < (uGrBounds.getWidth() * 97))
+						continue;
+					
+					//	check overlap (having checked width before, fuzzy inclusion should do)
+					if (!uGrBounds.includes(oGrBounds, true))
+						continue;
+					
+					//	we can exclude this one
+					uGrBounds = null;
+//					System.out.println("       ==> contains " + oGraphBounds);
+					break;
+				}
+				if (uGrBounds == null)
+					continue;
+				
+				//	check for contained words
+				ImWord[] uGraphWords = page.getWordsInside(uGrBounds);
+				
+				//	mark empty non-table area
+				if (uGraphWords.length == 0) {
+					pageNonTableAreas.add(uGrBounds);
+					pm.setInfo("   - got void non-table area together with " + cGrBounds + ": " + uGrBounds);
+					continue;
+				}
+				
+				//	check for table caption
+				ImUtils.sortLeftRightTopDown(uGraphWords);
+				String uGraphStartWordString = uGraphWords[0].getString().toLowerCase();
+				if (uGraphStartWordString.equals("t") || uGraphStartWordString.startsWith("tab")) {// need to catch word boundary due to font size change emulating small caps in some layouts
+					String uGraphStartString = ImUtils.getString(uGraphWords[0], uGraphWords[Math.min(uGraphWords.length, 5) - 1], true);
+					if (uGraphStartString.matches("(Tab|TAB)[^\\s]*\\.?\\s*[1-9][0-9]*.*")) {
+						pageNonTableAreas.add(uGrBounds);
+						pm.setInfo("   - got caption non-table area together with " + cGrBounds + ": " + uGrBounds);
+						continue;
+					}
+				}
+				
+				//	TODO anything else to check?
+			}
+		}
+		
+		//	group graphics into potential table grids
+		ArrayList pageTableAreas = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			pm.setInfo(" - seeking table grids starting with " + grBounds);
+			
+			//	combine with other graphics in same column
+			for (int cg = (g+1); cg < pageGraphics.length; cg++) {
+				BoundingBox cGrBounds = pageGraphics[cg].getBounds();
+				
+				//	check column overlap (require 97% to accommodate sloppy layout)
+				int uWidth = (Math.max(grBounds.right, cGrBounds.right) - Math.min(grBounds.left, cGrBounds.left));
+				int iWidth = (Math.min(grBounds.right, cGrBounds.right) - Math.max(grBounds.left, cGrBounds.left));
+				if ((iWidth * 100) < (uWidth * 97))
+					continue;
+				
+				//	check combined height TODO figure out sensible minimum
+				int uHeight = (Math.max(grBounds.bottom, cGrBounds.bottom) - Math.min(grBounds.top, cGrBounds.top));
+				if ((uHeight * 2) < page.getImageDPI())
+					continue;
+				
+				//	sort out graphics combinations that cannot accommodate 3 rows
+				if (uHeight < (3 * docWordHeight))
+					continue; 
+				
+				//	mark potential table bounds
+				BoundingBox uGrBounds = new BoundingBox(
+						Math.min(grBounds.left, cGrBounds.left),
+						Math.max(grBounds.right, cGrBounds.right),
+						Math.min(grBounds.top, cGrBounds.top),
+						Math.max(grBounds.bottom, cGrBounds.bottom)
+					);
+				
+				//	check if area includes any non-table areas
+				for (int nta = 0; nta < pageNonTableAreas.size(); nta++) {
+					BoundingBox ntaBounds = ((BoundingBox) pageNonTableAreas.get(nta));
+					if (uGrBounds.includes(ntaBounds, true)) {
+						uGrBounds = null;
+						break;
+					}
+				}
+				if (uGrBounds == null)
+					continue;
+				
+				//	store potential table area
+				pageTableAreas.add(uGrBounds);
+				pm.setInfo("   - got potential (partial) table grid together with " + cGrBounds + ": " + uGrBounds);
+			}
+		}
+		
+		//	anything left to work with?
+		if (pageTableAreas.size() == 0)
+			return;
+		
+		//	order potential table areas by descending size (makes sure to find whole tables before partial ones)
+		Collections.sort(pageTableAreas, descendingBoxSizeOrder);
+		
+		//	assess potential table areas
+		pm.setInfo(" - assessing " + pageTableAreas.size() + " potential table grids");
+		ArrayList pageTableAreaCandidates = new ArrayList();
+		for (int t = 0; t < pageTableAreas.size(); t++) {
+			BoundingBox tableArea = ((BoundingBox) pageTableAreas.get(t));
+			pm.setInfo("   - assessing " + tableArea);
+			TableAreaCandidate tac = getTableAreaCandidate(page, tableArea, docWordDensity1d, docWordDensity2d, docWordSpacing, docNormSpaceWidth, pm);
+			if (tac != null)
+				pageTableAreaCandidates.add(tac);
+		}
+		
+		//	anything to work with?
+		if (pageTableAreaCandidates.size() == 0)
+			return;
+		
+		//	filter table candidates contained in others and having no more columns than containing one
+		pm.setInfo(" - filtering " + pageTableAreaCandidates.size() + " candidate table grids");
+		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
+			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
+			for (int ct = (t+1); ct < pageTableAreaCandidates.size(); ct++) {
+				TableAreaCandidate cTac = ((TableAreaCandidate) pageTableAreaCandidates.get(ct));
+				if ((cTac.cols.length <= tac.cols.length) && cTac.bounds.liesIn(tac.bounds, false)) {
+					pageTableAreaCandidates.remove(ct--);
+					pm.setInfo("   - removed " + cTac.bounds + " as contained (1) in " + tac.bounds);
+				}
+			}
+		}
+		
+		//	filter table candidates containing two or more others with more columns than they have themselves (helps sort out stacked tables with partially compatible column gaps marked as one)
+		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
+			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
+			ArrayList subTableAreaCandidates = new ArrayList();
+			for (int ct = (t+1); ct < pageTableAreaCandidates.size(); ct++) {
+				TableAreaCandidate cTac = ((TableAreaCandidate) pageTableAreaCandidates.get(ct));
+				if ((cTac.cols.length > tac.cols.length) && cTac.bounds.liesIn(tac.bounds, false))
+					subTableAreaCandidates.add(cTac);
+			}
+			if (subTableAreaCandidates.size() > 1) {
+				pageTableAreaCandidates.remove(t--);
+				pm.setInfo("   - removed " + tac.bounds + " as likely conflation of " + subTableAreaCandidates.size() + " better candidates:");
+				for (int s = 0; s < subTableAreaCandidates.size(); s++) {
+					TableAreaCandidate sTac = ((TableAreaCandidate) subTableAreaCandidates.get(s));
+					pm.setInfo("     - " + sTac.bounds);
+				}
+			}
+		}
+//		
+//		//	filter table candidates overlapping two or more others with at least as many columns as they have themselves, and lower column gap oddity (helps sort out stacked tables with partially compatible column gaps marked as one)
+//		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
+//			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
+//			ArrayList subTableCands = new ArrayList();
+//			for (int ct = (t+1); ct < pageTableAreaCandidates.size(); ct++) {
+//				TableAreaCandidate cTac = ((TableAreaCandidate) pageTableAreaCandidates.get(ct));
+//				if ((cTac.cols.length >= tac.cols.length) && (cTac.getColumnGapOddity() < tac.getColumnGapOddity()) && cTac.bounds.overlaps(tac.bounds))
+//					subTableCands.add(cTac);
+//			}
+//			if (subTableCands.size() > 1) {
+//				pageTableAreaCandidates.remove(t--);
+//				System.out.println("   - removed " + tac.bounds + " as overlapping with " + subTableCands.size() + " better candidates:");
+//				for (int s = 0; s < subTableCands.size(); s++) {
+//					TableAreaCandidate subTableCand = ((TableAreaCandidate) subTableCands.get(s));
+//					System.out.println("     - " + subTableCand.bounds);
+//				}
+//			}
+//		}
+		
+		//	filter table candidates contained in others, regardless of number of columns (must not nest tables)
+		pm.setInfo(" - filtering " + pageTableAreaCandidates.size() + " candidate table grids");
+		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
+			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
+			for (int ct = (t+1); ct < pageTableAreaCandidates.size(); ct++) {
+				TableAreaCandidate cTac = ((TableAreaCandidate) pageTableAreaCandidates.get(ct));
+				if (cTac.bounds.liesIn(tac.bounds, false)) {
+					pageTableAreaCandidates.remove(ct--);
+					pm.setInfo("   - removed " + cTac.bounds + " as contained (2) in " + tac.bounds);
+				}
+			}
+		}
+		
+		//	mark what we have
+		pm.setInfo(" - retained " + pageTableAreaCandidates.size() + " candidate table grids:");
+		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
+			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
+			pm.setInfo("   - " + tac.bounds + ":");
+			this.tableActionProvider.markTable(page, tac.bounds, tac.stats, null);
+		}
+	}
+	
+	private void detectVerticalMultiPieceGridTables(ImPage page, Graphics[] pageGraphics, float docWordHeight, float docNormSpaceWidth, ProgressMonitor pm) {
+		
+		//	anything to work with?
+		if (pageGraphics.length < 2)
+			return;
+		
+		//	filter out horizontal lines
+		ArrayList pageGraphicsList = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			
+			//	sort out graphics too low for a table (less than half inch tall)
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			if ((grBounds.getHeight() * 2) < page.getImageDPI())
+				continue;
+			
+			//	retain this one for further investigation
+			pageGraphicsList.add(pageGraphics[g]);
+		}
+		if (pageGraphicsList.size() < pageGraphics.length)
+			pageGraphics = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+		
+		//	anything left to work with?
+		if (pageGraphics.length < 2)
+			return;
+		
+		//	TODO implement this (once we have an example)
+		
+		//	TODO find horizontally aligned vertical lines
+		
+		//	TODO try and span tables between them
+	}
+	
+	private void detectHorizontalSingleLineGridTables(ImPage page, Graphics[] pageGraphics, float docWordHeight, float docNormSpaceWidth, ProgressMonitor pm) {
+		
+		//	filter out vertical lines
+		ArrayList pageGraphicsList = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			
+			//	sort out graphics too narrow for a table (less than 1 inch wide)
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			if (grBounds.getWidth() < page.getImageDPI())
+				continue;
+			
+			//	retain this one for further investigation
+			pageGraphicsList.add(pageGraphics[g]);
+		}
+		if (pageGraphicsList.size() < pageGraphics.length)
+			pageGraphics = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+		
+		//	anything left to work with?
+		if (pageGraphics.length == 0)
+			return;
+		
+		//	TODO implement this
+		
+		//	TODO get blocks enclosing lines
+		
+		//	TODO make sure not to act upon table previously marked by other methods
+		
+		//	TODO get block row stripes
+		
+		/* TODO expand outward from lines:
+		 * - at least one row stripe above line
+		 * - at least two row stripes below line
+		 * - expand as long as density remains low
+		 */
+	}
+	
+	private void detectVerticalSingleLineGridTables(ImPage page, Graphics[] pageGraphics, float docWordHeight, float docNormSpaceWidth, ProgressMonitor pm) {
+		
+		//	filter out horizontal lines
+		ArrayList pageGraphicsList = new ArrayList();
+		for (int g = 0; g < pageGraphics.length; g++) {
+			
+			//	sort out graphics too low for a table (less than half inch tall)
+			BoundingBox grBounds = pageGraphics[g].getBounds();
+			if ((grBounds.getHeight() * 2) < page.getImageDPI())
+				continue;
+			
+			//	retain this one for further investigation
+			pageGraphicsList.add(pageGraphics[g]);
+		}
+		if (pageGraphicsList.size() < pageGraphics.length)
+			pageGraphics = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
+		
+		//	anything left to work with?
+		if (pageGraphics.length == 0)
+			return;
+		
+		//	TODO implement this (once we have an example)
+		
+		//	TODO find blocks enclosing lines
+		
+		//	TODO try and mark tables to height of line and horizontal extent of block
 	}
 	
 	private static RowStripe[] getRowStripes(ImPage page, BoundingBox regionBounds) {
@@ -116,6 +977,7 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin {
 	private static class RowStripe {
 		final ImWord[] words;
 		final int wordWidthSum;
+		final int wordHeightSum;
 		final int wordArea;
 		final int wordDistanceCount;
 		final int minWordDistance;
@@ -130,26 +992,20 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin {
 		final int area;
 		final boolean[] colHasWord;
 		final char[] colType;
-		ColumnAnchor[] colAnchors;
-		ColumnAnchor[] compatibleColAnchors;
 		int colCount = 0;
 //		float aSharedWordCols = 0;
 //		float aSharedNonWordCols = 0;
 //		float bSharedWordCols = 0;
 //		float bSharedNonWordCols = 0;
-		ColumnCompatibility aColCompatibility;
-		ColumnCompatibility bColCompatibility;
 		float sharedWordCols = 0;
 		float sharedNonWordCols = 0;
 //		float aFwSharedWordCols = 0;
 //		float aFwSharedNonWordCols = 0;
-		ColumnCompatibility aFwColCompatibility;
 		int aFwMaxSeqSharedNonWordCols = 0;
 		float aFwAvgSeqSharedNonWordCols = 0;
 		float aFwMatchTypeCols = 0;
 //		float bFwSharedWordCols = 0;
 //		float bFwSharedNonWordCols = 0;
-		ColumnCompatibility bFwColCompatibility;
 		int bFwMaxSeqSharedNonWordCols = 0;
 		float bFwAvgSeqSharedNonWordCols = 0;
 		float bFwMatchTypeCols = 0;
@@ -185,6 +1041,7 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin {
 			
 			//	compute overall word stats
 			this.wordWidthSum = wordWidthSum;
+			this.wordHeightSum = wordHeightSum;
 			this.wordArea = wordArea;
 			this.wordDistanceCount = wordDistanceCount;
 			this.minWordDistance = ((minWordDistance < Integer.MAX_VALUE) ? minWordDistance : -1);
@@ -272,966 +1129,6 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin {
 		return ((bounds.right - bounds.left) * (bounds.bottom - bounds.top));
 	}
 	
-	private static float getWordDensity(RowStripe[] rowStripes) {
-		if (rowStripes.length == 0)
-			return 0;
-		else if (rowStripes.length == 1)
-			return rowStripes[0].getWordDensity();
-//		int stripeArea = 0;
-//		int wordArea = 0;
-		int stripeWidthTotal = 0;
-		int wordWidthTotal = 0;
-		for (int rs = 0; rs < rowStripes.length; rs++) {
-//			stripeArea += rowStripes[rs].area;
-//			wordArea += rowStripes[rs].wordArea;
-			stripeWidthTotal += rowStripes[rs].bounds.getWidth();
-			wordWidthTotal += rowStripes[rs].wordWidthSum;
-		}
-//		return ((stripeArea < 1) ? 0 : (((float) wordArea) / stripeArea));
-		return ((stripeWidthTotal < 1) ? 0 : (((float) wordWidthTotal) / stripeWidthTotal));
-	}
-	
-	private static class ColumnAnchor implements Comparable {
-		final char orientation;
-		final int col;
-		final int score;
-		ColumnAnchor(char orientation, int col, int score) {
-			this.orientation = orientation;
-			this.col = col;
-			this.score = score;
-		}
-		public int compareTo(Object obj) {
-			if (obj instanceof ColumnAnchor) {
-				ColumnAnchor ca = ((ColumnAnchor) obj);
-				if (this.col == ca.col)
-					return (this.orientation - ca.orientation);
-				else return (this.col - ca.col);
-			}
-			else return -1;
-		}
-		public String toString() {
-			return (this.orientation + "-" + this.col + " (" + this.score + ")");
-		}
-		public boolean equals(Object obj) {
-			return (this.compareTo(obj) == 0);
-		}
-	}
-	
-	private static ColumnAnchor[] getColumnAnchors(RowStripe stripe) {
-		
-		//	get DPI to cap score and avoid runaway in spare tables
-		int dpi = stripe.words[0].getPage().getImageDPI();
-		
-		//	find and score column anchor points
-		ArrayList colAnchorList = new ArrayList();
-		for (int c = 0; c < stripe.colHasWord.length; c++) {
-			if (!stripe.colHasWord[c])
-				continue;
-			
-			//	check for left anchor
-			if (c == 0)
-				colAnchorList.add(new ColumnAnchor('L', (c + stripe.bounds.left), (dpi / 2))); // assume half an inch of whitespace, which makes for a good average outer margin
-			else if (stripe.colHasWord[c-1]) {}
-			else for (int s = 1; s <= c; s++) {
-				if (s == c)
-					colAnchorList.add(new ColumnAnchor('L', (c + stripe.bounds.left), Math.min(s, dpi))); // cap score to one inch of whitespace to avoid runaway in sparse tables
-				else if (stripe.colHasWord[c - s]) {
-					colAnchorList.add(new ColumnAnchor('L', (c + stripe.bounds.left), Math.min((s-1), dpi))); // cap score to one inch of whitespace to avoid runaway in sparse tables
-					break;
-				}
-			}
-			
-			//	check for right anchor
-			if ((c+1) == stripe.colHasWord.length)
-				colAnchorList.add(new ColumnAnchor('R', (c + stripe.bounds.left), (dpi / 2))); // assume half an inch of whitespace, which makes for a good average outer margin
-			else if (stripe.colHasWord[c+1]) {}
-			else for (int s = 1; (s + c) <= stripe.colHasWord.length; s++) {
-				if ((s + c) == stripe.colHasWord.length)
-					colAnchorList.add(new ColumnAnchor('R', (c + stripe.bounds.left), Math.min(s, dpi))); // cap score to one inch of whitespace to avoid runaway in sparse tables
-				else if (stripe.colHasWord[c + s]) {
-					colAnchorList.add(new ColumnAnchor('R', (c + stripe.bounds.left), Math.min((s-1), dpi))); // cap score to one inch of whitespace to avoid runaway in sparse tables
-					break;
-				}
-			}
-		}
-		
-		//	build middle anchors from left and right ones
-		for (int a = 0; a < colAnchorList.size(); a++) {
-			ColumnAnchor lColAnchor = ((ColumnAnchor) colAnchorList.get(a));
-			if (lColAnchor.orientation == 'M')
-				break; // we've reached the added anchors
-			if (lColAnchor.orientation == 'R')
-				continue; // left end of middle anchor has to be a left anchor
-			int spannedColAnchorScores = 0;
-			for (int ca = (a+1); ca < colAnchorList.size(); ca++) {
-				ColumnAnchor cColAnchor = ((ColumnAnchor) colAnchorList.get(ca));
-				if (cColAnchor.orientation == 'M')
-					break; // we've reached the added anchors
-				if (cColAnchor.orientation == 'L') {
-					spannedColAnchorScores += cColAnchor.score; // punish large gaps in columns (more likely to be column margins themselves)
-					continue; // right end of middle anchor has to be a right anchor
-				}
-				int mColAnchorScore = (((lColAnchor.score + cColAnchor.score) / 2) - spannedColAnchorScores);
-				if (mColAnchorScore <= 0)
-					continue; // spanning all too much whitespace for too small outer margins
-				colAnchorList.add(new ColumnAnchor('M', ((lColAnchor.col + cColAnchor.col) / 2), mColAnchorScore));
-			}
-		}
-		
-		//	sort anchors
-		Collections.sort(colAnchorList);
-		
-		//	remove duplicates (can happen for middle anchors)
-		for (int a = 1; a < colAnchorList.size(); a++) {
-			ColumnAnchor lColAnchor = ((ColumnAnchor) colAnchorList.get(a-1));
-			if (lColAnchor.orientation != 'M')
-				continue;
-			ColumnAnchor rColAnchor = ((ColumnAnchor) colAnchorList.get(a));
-			if (rColAnchor.orientation != 'M')
-				continue;
-			if (lColAnchor.col != rColAnchor.col)
-				continue;
-			if (lColAnchor.score < rColAnchor.score)
-				colAnchorList.set((a-1), rColAnchor);
-			colAnchorList.remove(a--);
-		}
-		
-		//	finally ...
-		return ((ColumnAnchor[]) colAnchorList.toArray(new ColumnAnchor[colAnchorList.size()]));
-	}
-	
-	private static class ColStripe extends CountingSet {
-		final int centerCol;
-		final int radius;
-		int minCol = Integer.MAX_VALUE;
-		int maxCol = 0;
-		TreeSet cols = new TreeSet();
-		int rawScore = 0;
-		TreeSet orientations = new TreeSet();
-		ArrayList content = new ArrayList();
-		double score = -1;
-		ColStripe(int centerCol, int radius) {
-			super(new TreeMap());
-			this.centerCol = centerCol;
-			this.radius = radius;
-		}
-		public boolean add(Object obj) {
-			if (obj instanceof ColumnAnchor) {
-				ColumnAnchor ca = ((ColumnAnchor) obj);
-				if (ca.col < (this.centerCol - this.radius))
-					return false; // outside our stripe
-				else if (ca.col >= (this.centerCol + this.radius))
-					return false; // outside our stripe
-				else if (ca.score < this.radius)
-					return false; // less than 1mm of space
-				else {
-					this.minCol = Math.min(this.minCol, ca.col);
-					this.maxCol = Math.max(this.maxCol, ca.col);
-					this.cols.add(new Integer(ca.col));
-					this.rawScore += ca.score;
-					this.orientations.add(new Character(ca.orientation));
-					this.content.add(ca);
-					return super.add(ca);
-				}
-			}
-			else return false;
-		}
-		int getWidth() {
-			return ((this.maxCol < this.minCol) ? 0 : (this.maxCol - this.minCol));
-		}
-		public String toString() {
-			StringBuffer ts = new StringBuffer("[");
-			for (Iterator it = this.iterator(); it.hasNext();) {
-				Object obj = it.next();
-				ts.append(obj + ": " + this.getCount(obj));
-				if (it.hasNext())
-					ts.append(", ");
-			}
-			ts.append("]");
-			return ts.toString();
-		}
-	}
-	
-	private static double scoreColStripe(ColStripe colStripe, RowStripe[] rowStripes) {
-		
-		//	nothing to score here
-		if (colStripe.isEmpty())
-			return 0;
-		
-		//	start with raw score
-		double score = colStripe.rawScore;
-		
-		//	penalize scatter
-		score /= Math.sqrt(colStripe.cols.size());
-		
-		//	penalize spread
-		score /= Math.sqrt(colStripe.getWidth() + 1);
-		
-		//	normalize by row stripes intersected
-		BoundingBox colStripeBounds = new BoundingBox((colStripe.centerCol - colStripe.radius), (colStripe.centerCol + colStripe.radius), rowStripes[0].bounds.top, rowStripes[rowStripes.length-1].bounds.bottom);
-		int rowStripesIntersected = 0;
-		for (int rs = 0; rs < rowStripes.length; rs++) {
-			if (colStripeBounds.overlaps(rowStripes[rs].bounds))
-				rowStripesIntersected++;
-		}
-		score /= rowStripesIntersected;
-		
-		//	reward row stripe coverage (avoid over-rewarding duplicates, though, which can result from middle anchors created slightly off each other from multiple left-right anchor pairings)
-//		score *= colStripe.size();
-		score *= Math.min(colStripe.size(), rowStripes.length);
-		score /= rowStripesIntersected;
-		
-		//	TODO anything else?
-		
-		//	finally ...
-		return score;
-	}
-	
-	private static class RowStripeGroup {
-		final BoundingBox bounds;
-		
-		final RowStripe[] rowStripes;
-		final RowStripe[] fullWidthRowStripes;
-		final RowStripe topFullWidthRowStripe;
-		final RowStripe bottomFullWidthRowStripe;
-		final int fullWidthRowStripeCount;
-		
-		final boolean[] colHasWord;
-		final float wordColDensity;
-		
-		final byte[] colWordCounts;
-		final float avgColWordCount;
-		final int minColWordCount;
-		final int maxColWordCount;
-		
-		final byte[] sColWordCounts;
-		final float sAvgColWordCount;
-		final int sMinColWordCount;
-		final int sMaxColWordCount;
-//		float aSharedWordCols = 0;
-//		float aSharedNonWordCols = 0;
-//		float bSharedWordCols = 0;
-//		float bSharedNonWordCols = 0;
-		ColumnCompatibility aColCompatibility;
-		ColumnCompatibility bColCompatibility;
-		
-		final boolean isCaptionOrNote;
-		
-		boolean isTable = false;
-		boolean isTablePart = false;
-		
-		RowStripeGroup(RowStripe[] rowStripes, RowStripe[] fullWidthRowStripes) {
-			this.rowStripes = rowStripes;
-			this.fullWidthRowStripes = fullWidthRowStripes;
-			this.topFullWidthRowStripe = this.fullWidthRowStripes[0];
-			this.bottomFullWidthRowStripe = this.fullWidthRowStripes[this.fullWidthRowStripes.length-1];
-			
-			int fullWidthRowStripeCount = 1;
-			for (int rs = 1; rs < this.fullWidthRowStripes.length; rs++) {
-				if (this.fullWidthRowStripes[rs-1] != this.fullWidthRowStripes[rs])
-					fullWidthRowStripeCount++;
-			}
-			this.fullWidthRowStripeCount = fullWidthRowStripeCount;
-			
-			int left = Integer.MAX_VALUE;
-			int right = 0;
-			int top = Integer.MAX_VALUE;
-			int bottom = 0;
-			for (int rs = 0; rs < this.rowStripes.length; rs++) {
-				left = Math.min(left, this.rowStripes[rs].bounds.left);
-				right = Math.max(right, this.rowStripes[rs].bounds.right);
-				top = Math.min(top, this.rowStripes[rs].bounds.top);
-				bottom = Math.max(bottom, this.rowStripes[rs].bounds.bottom);
-			}
-			this.bounds = new BoundingBox(left, right, top, bottom);
-			
-			this.colHasWord = new boolean[right - left];
-			Arrays.fill(this.colHasWord, false);
-			this.colWordCounts = new byte[right - left];
-			Arrays.fill(this.colWordCounts, ((byte) 0));
-			for (int rs = 0; rs < this.rowStripes.length; rs++) {
-				for (int c = 0; c < this.rowStripes[rs].colHasWord.length; c++)
-					if (this.rowStripes[rs].colHasWord[c]) {
-						this.colHasWord[c + this.rowStripes[rs].bounds.left - this.bounds.left] = true;
-						this.colWordCounts[c + this.rowStripes[rs].bounds.left - this.bounds.left]++;
-					}
-			}
-			
-			int wordColCount = 0;
-			for (int c = 0; c < this.colHasWord.length; c++) {
-				if (this.colHasWord[c])
-					wordColCount++;
-			}
-			this.wordColDensity = (((float) wordColCount) / this.colHasWord.length);
-			
-			int minColWordCount = Integer.MAX_VALUE;
-			int maxColWordCount = 0;
-			int colWordCountSum = 0;
-			for (int c = 0; c < this.colWordCounts.length; c++) {
-				minColWordCount = Math.min(minColWordCount, this.colWordCounts[c]);
-				maxColWordCount = Math.max(maxColWordCount, this.colWordCounts[c]);
-				colWordCountSum += this.colWordCounts[c];
-			}
-			this.minColWordCount = minColWordCount;
-			this.maxColWordCount = maxColWordCount;
-			this.avgColWordCount = (((float) colWordCountSum) / this.colWordCounts.length);
-			
-			//	TODO produce smoothed version of histogram:
-			//	TODO - ignore word gaps whose width is below 1/3 of word height (row stripe height should do as well)
-			//	TODO - average out columns in a range of DPI/25 
-			byte[] sColWordCounts = new byte[right - left];
-			Arrays.fill(sColWordCounts, ((byte) 0));
-			for (int rs = 0; rs < this.rowStripes.length; rs++) {
-				boolean[] sColHasWord = new boolean[this.rowStripes[rs].colHasWord.length];
-				System.arraycopy(this.rowStripes[rs].colHasWord, 0, sColHasWord, 0, this.rowStripes[rs].colHasWord.length);
-				for (int c = 1; c < sColHasWord.length; c++) {
-					if (sColHasWord[c])
-						continue;
-					if (!sColHasWord[c-1])
-						continue;
-					int wordGapWidth = 0;
-					for (int l = c; l < sColHasWord.length; l++) {
-						if (sColHasWord[l])
-							break;
-						else wordGapWidth++;
-					}
-					if ((wordGapWidth * 3) < (this.rowStripes[rs].bounds.bottom - this.rowStripes[rs].bounds.top))
-						for (int l = c; l < sColHasWord.length; l++) {
-							if (sColHasWord[l])
-								break;
-							else sColHasWord[l] = true;
-						}
-					c += (wordGapWidth - 1);
-				}
-				for (int c = 0; c < sColHasWord.length; c++) {
-					if (sColHasWord[c])
-						sColWordCounts[c + this.rowStripes[rs].bounds.left - this.bounds.left]++;
-				}
-			}
-			
-			int sRadius = ((this.rowStripes[0].words[0].getPage().getImageDPI() + 25) / 50);
-			this.sColWordCounts = new byte[right - left];
-			Arrays.fill(this.sColWordCounts, ((byte) 0));
-			for (int c = 0; c < this.sColWordCounts.length; c++) {
-				int sLeft = Math.max((c - sRadius), 0);
-				int sRight = Math.min((c + sRadius), (this.sColWordCounts.length - 1));
-				int sColWordCountSum = 0;
-				for (int sc = sLeft; sc <= sRight; sc++)
-					sColWordCountSum += sColWordCounts[sc];
-				this.sColWordCounts[c] = ((byte) ((sColWordCountSum + ((sRight - sLeft) / 2)) / (sRight - sLeft)));
-			}
-			
-			int sMinColWordCount = Integer.MAX_VALUE;
-			int sMaxColWordCount = 0;
-			int sColWordCountSum = 0;
-			for (int c = 0; c < this.colWordCounts.length; c++) {
-				sMinColWordCount = Math.min(sMinColWordCount, this.sColWordCounts[c]);
-				sMaxColWordCount = Math.max(sMaxColWordCount, this.sColWordCounts[c]);
-				sColWordCountSum += this.sColWordCounts[c];
-			}
-			this.sMinColWordCount = sMinColWordCount;
-			this.sMaxColWordCount = sMaxColWordCount;
-			this.sAvgColWordCount = (((float) sColWordCountSum) / this.sColWordCounts.length);
-			
-			boolean isCaptionOrNote = false;
-			for (int rs = 0; rs < this.rowStripes.length; rs++)
-				if (this.rowStripes[rs].isCaptionOrNote) {
-					isCaptionOrNote = true;
-					break;
-				}
-			this.isCaptionOrNote = isCaptionOrNote;
-		}
-		float getDensity() {
-			return getWordDensity(this.rowStripes);
-		}
-		float getColWordContrast(int width) {
-			return computeColWordContrast(this.colWordCounts, width);
-		}
-		float getSmoothColWordContrast(int width) {
-			return computeColWordContrast(this.sColWordCounts, width);
-		}
-	}
-	
-	private static float computeColWordContrast(byte[] colWordCounts, int width) {
-		if (width == 0)
-			return 0;
-		int cwcDiffSquareSum = 0;
-		for (int c = 0; c < (colWordCounts.length - width); c++) {
-			int cwcDiff = Math.abs(colWordCounts[c] - colWordCounts[c + width]);
-			cwcDiffSquareSum += (cwcDiff * cwcDiff);
-		}
-		return (((float) cwcDiffSquareSum) / colWordCounts.length);
-	}
-	
-	private static float computeColWordContrast(int left1, byte[] colWordCounts1, int left2, byte[] colWordCounts2, int width) {
-		if (width == 0)
-			return 0;
-		int left = Math.min(left1, left2);
-		int right = Math.max((left1 + colWordCounts1.length), (left2 + colWordCounts2.length));
-		byte[] colWordCounts = new byte[right - left];
-		Arrays.fill(colWordCounts, ((byte) 0));
-		for (int c = 0; c < colWordCounts1.length; c++)
-			colWordCounts[c + (left1 - left)] += colWordCounts1[c];
-		for (int c = 0; c < colWordCounts2.length; c++)
-			colWordCounts[c + (left2 - left)] += colWordCounts2[c];
-		return computeColWordContrast(colWordCounts, width);
-	}
-	
-	private static RowStripeGroup[] getRowStripeGroups(ImPage page, BoundingBox blockBounds, RowStripe[] blockStripes) {
-		System.out.println("Assessing block " + page.pageId + "." + blockBounds);
-//		RowStripe[] blockStripes = getRowStripes(page, blockBounds);
-		if (blockStripes == null)
-			blockStripes = getRowStripes(page, blockBounds);
-		System.out.println(" - got " + blockStripes.length + " stripes");
-//		CountingSet colAnchors = new CountingSet(new TreeMap());
-//		CountingSet colAnchorScores = new CountingSet(new TreeMap());
-		
-		//	get column anchors and sort them into vertical stripes
-		int colStripeRadius = (page.getImageDPI() / 25); // little over 1mm, resulting in 2mm stripes
-		ColStripe[] colStripes = new ColStripe[(blockBounds.right - blockBounds.left + colStripeRadius - 1) / colStripeRadius];
-		for (int cs = 0; cs < colStripes.length; cs++)
-			colStripes[cs] = new ColStripe((blockBounds.left + (cs * colStripeRadius)), colStripeRadius);
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			blockStripes[rs].colAnchors = getColumnAnchors(blockStripes[rs]);
-			for (int cs = 0; cs < colStripes.length; cs++)
-				colStripes[cs].addAll(Arrays.asList(blockStripes[rs].colAnchors));
-//			for (int a = 0; a < sColAnchors.length; a++) {
-//				String colAnchorStr = (sColAnchors[a].orientation + "-" + sColAnchors[a].col);
-//				colAnchors.add(colAnchorStr);
-//				colAnchorScores.add(colAnchorStr, sColAnchors[a].score);
-//			}
-		}
-//		System.out.println(" - got " + colAnchors.size() + " column anchors, " + colAnchors.elementCount() + " distinct ones:");
-//		for (Iterator casit = colAnchors.iterator(); casit.hasNext();) {
-//			String colAnchorStr = ((String) casit.next());
-//			int colAnchorTimes = colAnchors.getCount(colAnchorStr);
-//			int colAnchorScore = colAnchorScores.getCount(colAnchorStr);
-//			System.out.println("   - " + colAnchorStr + " (" + colAnchorTimes + " times): " + colAnchorScore + " --> " + (((float) colAnchorScore) / colAnchorTimes));
-//		}
-		System.out.println(" - got " + colStripes.length + " column anchor stripes of radius " + colStripeRadius +":");
-		ArrayList colStripeList = new ArrayList();
-		for (int cs = 0; cs < colStripes.length; cs++) {
-			
-			//	use single-orientation stripe directly
-			if (colStripes[cs].orientations.size() < 2) {
-//				System.out.println("   - " + colStripes[cs].centerCol + " (" + colStripes[cs].getWidth() + "): " + colStripes[cs].size() + " anchors with total score of " + colStripes[cs].rawScore + " " + colStripes[cs]);
-				colStripes[cs].score = scoreColStripe(colStripes[cs], blockStripes);
-//				System.out.println("     --> " + colStripes[cs].score);
-				colStripeList.add(colStripes[cs]);
-			}
-			
-			//	break up mixed-orientation stripes
-			else for (Iterator oit = colStripes[cs].orientations.iterator(); oit.hasNext();) {
-				Character orientation = ((Character) oit.next());
-				ColStripe oColStripe = new ColStripe(colStripes[cs].centerCol, colStripes[cs].radius);
-				for (int a = 0; a < colStripes[cs].content.size(); a++) {
-					ColumnAnchor colAnchor = ((ColumnAnchor) colStripes[cs].content.get(a));
-					if (colAnchor.orientation == orientation.charValue())
-						oColStripe.add(colAnchor);
-				}
-//				System.out.println("   - " + oColStripe.centerCol + " (" + oColStripe.getWidth() + "): " + oColStripe.size() + " anchors with total score of " + oColStripe.rawScore + " " + oColStripe);
-				oColStripe.score = scoreColStripe(oColStripe, blockStripes);
-//				System.out.println("     --> " + oColStripe.score);
-				colStripeList.add(oColStripe);
-			}
-		}
-		
-		//	eliminate duplicates (anchor stripes that contain the very same column anchors, which can happen due to overlap)
-		for (int s = 1; s < colStripeList.size(); s++) {
-			ColStripe lColStripe = ((ColStripe) colStripeList.get(s-1));
-			ColStripe rColStripe = ((ColStripe) colStripeList.get(s));
-			if (lColStripe.cols.equals(rColStripe.cols))
-				colStripeList.remove(s--);
-		}
-		
-		//	TODO maybe check what an anchor stripe's score would be if broken down to individual anchors or narrower stripes
-		
-		/* find top score (excluding leftmost left anchor and rightmost right
-		 * anchor, which always exist in plain text as well, and get get an
-		 * artificial score), averaging out top 3 or top 5 anchors instead of
-		 * using single maximum to avoid runaway in situations of one extremely
-		 * high scoring anchor caused by largely blank preceding or following
-		 * column */
-		double maxColStripeScore = 0;
-		ArrayList maxColStripeScores = new ArrayList(colStripeList.size());
-		for (int s = 0; s < colStripeList.size(); s++) {
-			ColStripe colStripe = ((ColStripe) colStripeList.get(s));
-			if (colStripe.orientations.contains(new Character('L')) && (colStripe.centerCol <= (blockBounds.left + (page.getImageDPI() / 4))))
-				continue;
-			if (colStripe.orientations.contains(new Character('R')) && (colStripe.centerCol >= (blockBounds.right - (page.getImageDPI() / 4))))
-				continue;
-			maxColStripeScore = Math.max(maxColStripeScore, colStripe.score);
-			maxColStripeScores.add(new Double(colStripe.score));
-		}
-		Collections.sort(maxColStripeScores, Collections.reverseOrder());
-		while (maxColStripeScores.size() > 5) // TODO edit threshold here, and only here
-			maxColStripeScores.remove(maxColStripeScores.size()-1);
-		double maxColStripeScoreSum = 0;
-		for (int s = 0; s < maxColStripeScores.size(); s++)
-			maxColStripeScoreSum += ((Double) maxColStripeScores.get(s)).doubleValue();
-		maxColStripeScore = (maxColStripeScoreSum / maxColStripeScores.size());
-		
-		//	extract top scoring column anchor stripes, and compute their average number of rows
-		System.out.println(" - top column anchor stripe score is " + maxColStripeScore + ", good anchor stripes are:");
-		ArrayList topColStripeList = new ArrayList();
-		int topColStripeRowCountSum = 0;
-		for (int s = 0; s < colStripeList.size(); s++) {
-			ColStripe colStripe = ((ColStripe) colStripeList.get(s));
-			if (colStripe.size() < 2)
-				continue; // let's only consider column anchors that exist at least twice
-			if ((colStripe.score * 5) > maxColStripeScore) { // TODO assess 20% threshold
-				topColStripeList.add(colStripe);
-				topColStripeRowCountSum += colStripe.size();
-				System.out.println("   - " + colStripe.centerCol + " (" + colStripe.getWidth() + "): " + colStripe.size() + " anchors with total score of " + colStripe.score + " (" + colStripe.rawScore + ") " + colStripe);
-			}
-		}
-		int topColStripeRowCount = (topColStripeRowCountSum / topColStripeList.size());
-		
-		//	sort out column anchor stripes whose multiplicity is less than one third of average (those anchors just exist in too few rows)
-		System.out.println(" - top column anchor stripe row count is " + topColStripeRowCount + ", good anchor stripes left are:");
-		for (int s = 0; s < topColStripeList.size(); s++) {
-			ColStripe colStripe = ((ColStripe) topColStripeList.get(s));
-			if ((colStripe.size() * 3) < topColStripeRowCount) // TODO assess 33% threshold
-				topColStripeList.remove(s--);
-			else System.out.println("   - " + colStripe.centerCol + " (" + colStripe.getWidth() + "): " + colStripe.size() + " anchors with total score of " + colStripe.score + " (" + colStripe.rawScore + ") " + colStripe);
-		}
-		
-		//	eliminate duplicates again (anchor stripes that contain the very same column anchors, which can happen due to overlap)
-		for (int s = 1; s < topColStripeList.size(); s++) {
-			ColStripe lColStripe = ((ColStripe) topColStripeList.get(s-1));
-			ColStripe rColStripe = ((ColStripe) topColStripeList.get(s));
-			if (lColStripe.cols.equals(rColStripe.cols))
-				topColStripeList.remove(s--);
-		}
-		
-		/* re-compute average score (still excluding leftmost left anchor and
-		 * rightmost right anchor, which always exist in plain text as well, and
-		 * get get an artificial score), averaging out top 3 or top 5 anchors
-		 * instead of using single maximum to avoid runaway in situations of one
-		 * extremely high scoring anchor caused by largely blank preceding or
-		 * following column */
-		maxColStripeScore = 0;
-		maxColStripeScores.clear();
-		for (int s = 0; s < topColStripeList.size(); s++) {
-			ColStripe colStripe = ((ColStripe) topColStripeList.get(s));
-			if (colStripe.orientations.contains(new Character('L')) && (colStripe.centerCol <= (blockBounds.left + (page.getImageDPI() / 4))))
-				continue;
-			if (colStripe.orientations.contains(new Character('R')) && (colStripe.centerCol >= (blockBounds.right - (page.getImageDPI() / 4))))
-				continue;
-			maxColStripeScore = Math.max(maxColStripeScore, colStripe.score);
-			maxColStripeScores.add(new Double(colStripe.score));
-		}
-		Collections.sort(maxColStripeScores, Collections.reverseOrder());
-		while (maxColStripeScores.size() > 5) // TODO edit threshold here, and only here
-			maxColStripeScores.remove(maxColStripeScores.size()-1);
-		maxColStripeScoreSum = 0;
-		for (int s = 0; s < maxColStripeScores.size(); s++)
-			maxColStripeScoreSum += ((Double) maxColStripeScores.get(s)).doubleValue();
-		maxColStripeScore = (maxColStripeScoreSum / maxColStripeScores.size());
-		
-		//	sort out column anchor stripes based on new average, and re-compute average row count
-		System.out.println(" - top column anchor stripe score re-computed as " + maxColStripeScore + ", good anchor stripes left are:");
-		topColStripeRowCountSum = 0;
-		for (int s = 0; s < topColStripeList.size(); s++) {
-			ColStripe colStripe = ((ColStripe) topColStripeList.get(s));
-			if ((colStripe.score * 3) < maxColStripeScore) // TODO assess 33% threshold
-				topColStripeList.remove(s--);
-			else {
-				topColStripeRowCountSum += colStripe.size();
-				System.out.println("   - " + colStripe.centerCol + " (" + colStripe.getWidth() + "): " + colStripe.size() + " anchors with total score of " + colStripe.score + " (" + colStripe.rawScore + ") " + colStripe);
-			}
-		}
-		topColStripeRowCount = (topColStripeRowCountSum / topColStripeList.size());
-		
-		//	eliminate duplicates again (anchor stripes that contain the very same column anchors, which can happen due to overlap)
-		for (int s = 1; s < topColStripeList.size(); s++) {
-			ColStripe lColStripe = ((ColStripe) topColStripeList.get(s-1));
-			ColStripe rColStripe = ((ColStripe) topColStripeList.get(s));
-			if (lColStripe.cols.equals(rColStripe.cols))
-				topColStripeList.remove(s--);
-		}
-		
-		//	sort out column anchor stripes whose multiplicity is less than one third of new average (those anchors just exist in too few rows)
-		System.out.println(" - top column anchor stripe row count re-computed as " + topColStripeRowCount + ", good anchor stripes left are:");
-		TreeSet topColAnchors = new TreeSet();
-		for (int s = 0; s < topColStripeList.size(); s++) {
-			ColStripe colStripe = ((ColStripe) topColStripeList.get(s));
-			if ((colStripe.size() * 2) < topColStripeRowCount) // TODO assess 50% threshold
-				topColStripeList.remove(s--);
-			else {
-				topColAnchors.addAll(colStripe.content);
-				System.out.println("   - " + colStripe.centerCol + " (" + colStripe.getWidth() + "): " + colStripe.size() + " anchors with total score of " + colStripe.score + " (" + colStripe.rawScore + ") " + colStripe);
-			}
-		}
-		
-		//	for each row stripe, assess fraction of whitespace and non-whitespace shared with neighbors (between full extent of either stripe, implying respective whitespace padding to account for leading and tailing empty cells)
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			RowStripe aRowStripe = ((rs == 0) ? null : blockStripes[rs-1]);
-			RowStripe rowStripe = blockStripes[rs];
-			RowStripe bRowStripe = (((rs+1) == blockStripes.length) ? null : blockStripes[rs+1]);
-			if (aRowStripe != null)
-				rowStripe.aColCompatibility = getColumnCompatibility(aRowStripe.bounds.left, aRowStripe.colHasWord, rowStripe.bounds.left, rowStripe.colHasWord, true);
-			if (bRowStripe != null)
-				rowStripe.bColCompatibility = getColumnCompatibility(rowStripe.bounds.left, rowStripe.colHasWord, bRowStripe.bounds.left, bRowStripe.colHasWord, true);
-		}
-		
-		//	compute pixel column occupation for whole block
-		int bMinCol = Integer.MAX_VALUE;
-		int bMaxCol = 0;
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			bMinCol = Math.min(bMinCol, blockStripes[rs].bounds.left);
-			bMaxCol = Math.max(bMaxCol, blockStripes[rs].bounds.right);
-		}
-		int[] colWordCount = new int[bMaxCol - bMinCol];
-		Arrays.fill(colWordCount, 0);
-		for (int rs = 0; rs < blockStripes.length; rs++)
-			for (int c = 0; c < blockStripes[rs].colHasWord.length; c++) {
-				if (blockStripes[rs].colHasWord[c])
-					colWordCount[c + blockStripes[rs].bounds.left - bMinCol]++;
-			}
-		
-		//	compare each row stripe to overall pixel column occupation
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			int wordColScore = 0;
-			int nonWordColScore = 0;
-			for (int c = 0; c < blockStripes[rs].colHasWord.length; c++) {
-				if (blockStripes[rs].colHasWord[c])
-					wordColScore += colWordCount[c + blockStripes[rs].bounds.left - bMinCol];
-				else nonWordColScore += (blockStripes.length - colWordCount[c + blockStripes[rs].bounds.left - bMinCol]);
-			}
-			blockStripes[rs].sharedWordCols = (((float) wordColScore) / (blockStripes[rs].colHasWord.length * blockStripes.length));
-			blockStripes[rs].sharedNonWordCols = (((float) nonWordColScore) / (blockStripes[rs].colHasWord.length * blockStripes.length));
-		}
-		
-		//	for each row stripe, compute space above and below, and also compute average TODO consider normalizing to DPI
-		int blockStripeSpaceSum = 0;
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			RowStripe aRowStripe = ((rs == 0) ? null : blockStripes[rs-1]);
-			RowStripe rowStripe = blockStripes[rs];
-			RowStripe bRowStripe = (((rs+1) == blockStripes.length) ? null : blockStripes[rs+1]);
-			if (aRowStripe != null) {
-				rowStripe.aSpace = (rowStripe.bounds.top - aRowStripe.bounds.bottom);
-				blockStripeSpaceSum += (rowStripe.bounds.top - aRowStripe.bounds.bottom);
-			}
-			if (bRowStripe != null)
-				rowStripe.bSpace = (bRowStripe.bounds.top - rowStripe.bounds.bottom);
-		}
-		
-		//	generously round up average, as we'll mainly use it on property inheritance to short rows below
-		int avgBlockStripeSpace = ((blockStripes.length == 1) ? 0 : ((blockStripeSpaceSum + (blockStripes.length - 2)) / (blockStripes.length - 1)));
-		System.out.println(" - average row stripe spacing computed as " + avgBlockStripeSpace);
-		
-		/* For dealing with short lines of attached captions and table notes in
-		 * detection of table areas (as opposed to row stripes only filled in a
-		 * single table cell):
-		 * - inherit properties (as well as probabilities, and ultimately
-		 *   features) from preceding row stripes if row stripe at hand is
-		 *   shorter than 1/3 or 1/2 of block width ...
-		 * - ... or better from row stripe below or above,depending on which
-		 *   distance is (significantly) smaller (by some 10% or 25%, maybe,
-		 *   use average otherwise) */
-		
-		//	identify actual full-width row stripes first TODO maybe use 1/2 of block width for a threshold rather than 1/3
-		System.out.println(" - assigning full-width row stripes for area feature inheritance:");
-		RowStripe[] fullWidthBlockStripes = new RowStripe[blockStripes.length];
-		Arrays.fill(fullWidthBlockStripes, null);
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			RowStripe rowStripe = blockStripes[rs];
-			if (((rowStripe.bounds.right - rowStripe.bounds.left) * 2) > (blockBounds.right - blockBounds.left)) {
-				fullWidthBlockStripes[rs] = rowStripe;
-				System.out.println("   - " + rowStripe.words[0].getString() + " " + rowStripe.bounds + " assigned to itself");
-			}
-		}
-		
-		//	outwards assign full-width row stripes first (based on significantly lower distance) to prevent just-made assignments from rippling downwards
-		for (boolean newFullWidthBlockStripesAssigned = true; newFullWidthBlockStripesAssigned;) {
-			newFullWidthBlockStripesAssigned = false;
-			for (int rs = 0; rs < blockStripes.length; rs++) {
-				if (fullWidthBlockStripes[rs] != null)
-					continue;
-				RowStripe rowStripe = blockStripes[rs];
-				
-				//	need to restrict downward assignments to cases where space above current row is at most block average to prevent assigning to short, single-line above-table notes or captions
-				if (rowStripe.aSpace <= avgBlockStripeSpace) {
-					
-					//	compute maximum space before next full-width row
-					int maxBelowFullWidthRowSpace = -1;
-					for (int crs = (rs+1); crs < blockStripes.length; crs++) {
-						maxBelowFullWidthRowSpace = Math.max(maxBelowFullWidthRowSpace, blockStripes[crs].aSpace);
-						if (fullWidthBlockStripes[crs] != null) {
-							System.out.println("   - found next full-width row stripe below " + rowStripe.words[0].getString() + " " + rowStripe.bounds + ": " + fullWidthBlockStripes[crs].words[0] + " " + fullWidthBlockStripes[crs].bounds + " at maximum downward distance " + maxBelowFullWidthRowSpace);
-							break;
-						}
-						else if ((crs + 1) == blockStripes.length) {
-							maxBelowFullWidthRowSpace = -1;
-							System.out.println("   - next full-width row stripe below " + rowStripe.words[0].getString() + " " + rowStripe.bounds + " not found");
-							break;
-						}
-					}
-					
-					//	need to restrict downward assignments to cases where space above current row is less than space before next full-width row to prevent rippling
-					if ((maxBelowFullWidthRowSpace == -1) || (rowStripe.aSpace < maxBelowFullWidthRowSpace)) {
-						fullWidthBlockStripes[rs] = ((rs == 0) ? null : fullWidthBlockStripes[rs-1]);
-						if (fullWidthBlockStripes[rs] != null) {
-							newFullWidthBlockStripesAssigned = true;
-							System.out.println("     ==> " + rowStripe.words[0].getString() + " " + rowStripe.bounds + " backward assigned to " + fullWidthBlockStripes[rs].words[0] + " " + fullWidthBlockStripes[rs].bounds);
-						}
-					}
-					else System.out.println("     ==> " + rowStripe.words[0].getString() + " " + rowStripe.bounds + " too close to full-width bottom peer at maximum downward distance " + maxBelowFullWidthRowSpace + " and upward distance " + rowStripe.aSpace);
-				}
-				
-				//	need to restrict upward assignments to cases where space below current row is at most block average to prevent assigning to short, single-line below-table notes
-				else if (rowStripe.bSpace <= avgBlockStripeSpace) {
-					fullWidthBlockStripes[rs] = (((rs+1) == fullWidthBlockStripes.length) ? null : fullWidthBlockStripes[rs+1]);
-					if (fullWidthBlockStripes[rs] != null) {
-						newFullWidthBlockStripesAssigned = true;
-						System.out.println("   - " + rowStripe.words[0].getString() + " " + rowStripe.bounds + " forward assigned to " + fullWidthBlockStripes[rs].words[0] + " " + fullWidthBlockStripes[rs].bounds);
-					}
-				}
-				
-				//	this one is out in the boondocks ...
-				else System.out.println("   - " + rowStripe.words[0].getString() + " " + rowStripe.bounds + " too far away from peers");
-			}
-		}
-		
-		//	self-assign remaining full-width row stripes (should be only those further than block average away from any actual full-width row stripe)
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			if (fullWidthBlockStripes[rs] == null) {
-				fullWidthBlockStripes[rs] = blockStripes[rs];
-				System.out.println("   - " + blockStripes[rs].words[0].getString() + " " + blockStripes[rs].bounds + " reserve assigned to itself");
-			}
-		}
-		
-		//	try and compute column occupation similarity for full-width row stripes alone (this time only counting the overlap of both)
-		for (int rs = 0; rs < fullWidthBlockStripes.length; rs++) {
-			RowStripe aRowStripe = ((rs == 0) ? null : fullWidthBlockStripes[rs-1]);
-			RowStripe rowStripe = fullWidthBlockStripes[rs];
-			RowStripe bRowStripe = (((rs+1) == fullWidthBlockStripes.length) ? null : fullWidthBlockStripes[rs+1]);
-			if ((aRowStripe != null) && (aRowStripe != rowStripe)) {
-				rowStripe.aFwColCompatibility = getColumnCompatibility(aRowStripe.bounds.left, aRowStripe.colHasWord, rowStripe.bounds.left, rowStripe.colHasWord, true);
-//				int minCol = Math.min(aRowStripe.bounds.left, rowStripe.bounds.left);
-//				int maxCol = Math.max(aRowStripe.bounds.right, rowStripe.bounds.right);
-				int minCol = Math.max(aRowStripe.bounds.left, rowStripe.bounds.left);
-				int maxCol = Math.min(aRowStripe.bounds.right, rowStripe.bounds.right);
-				int sWordCols = 0;
-				int sNonWordCols = 0;
-				int sNonWordColBlockCount = 0;
-				int sNonWordColBlockLength = 0;
-				int sNonWordColBlockMaxLength = 0;
-				int mTypeCols = 0;
-				for (int c = minCol; c < maxCol; c++) {
-					boolean aWordCol = (((c < aRowStripe.bounds.left) || (c >= aRowStripe.bounds.right)) ? false : aRowStripe.colHasWord[c - aRowStripe.bounds.left]);
-					boolean wordCol = (((c < rowStripe.bounds.left) || (c >= rowStripe.bounds.right)) ? false : rowStripe.colHasWord[c - rowStripe.bounds.left]);
-					if (aWordCol && wordCol) {
-						sWordCols++;
-						sNonWordColBlockLength = 0;
-					}
-					else if (!aWordCol && !wordCol) {
-						sNonWordCols++;
-						if (sNonWordColBlockLength == 0)
-							sNonWordColBlockCount++;
-						sNonWordColBlockLength++;
-						sNonWordColBlockMaxLength = Math.max(sNonWordColBlockMaxLength, sNonWordColBlockLength);
-						continue; // no use checking type on two spaces
-					}
-					else {
-						sNonWordColBlockLength = 0;
-						continue; // no use checking if either row has space
-					}
-					char aColType = (((c < aRowStripe.bounds.left) || (c >= aRowStripe.bounds.right)) ? ' ' : aRowStripe.colType[c - aRowStripe.bounds.left]);
-					char colType = (((c < rowStripe.bounds.left) || (c >= rowStripe.bounds.right)) ? ' ' : rowStripe.colType[c - rowStripe.bounds.left]);
-					if (aColType == colType)
-						mTypeCols++;
-					else if ("WB".indexOf(aColType) != -1)
-						mTypeCols++; // wildcard or blank always matches
-					else if ("WB".indexOf(colType) != -1)
-						mTypeCols++; // wildcard or blank always matches
-				}
-				if (minCol < maxCol) {
-					rowStripe.aFwMaxSeqSharedNonWordCols = sNonWordColBlockMaxLength;
-					if (sNonWordColBlockCount != 0)
-						rowStripe.aFwAvgSeqSharedNonWordCols = (((float) sNonWordCols) / sNonWordColBlockCount);
-					rowStripe.aFwMatchTypeCols = (((float) mTypeCols) / (maxCol - minCol));
-				}
-			}
-			if ((bRowStripe != null) && (bRowStripe != rowStripe)) {
-				rowStripe.bFwColCompatibility = getColumnCompatibility(rowStripe.bounds.left, rowStripe.colHasWord, bRowStripe.bounds.left, bRowStripe.colHasWord, true);
-//				int minCol = Math.min(rowStripe.bounds.left, bRowStripe.bounds.left);
-//				int maxCol = Math.max(rowStripe.bounds.right, bRowStripe.bounds.right);
-				int minCol = Math.max(rowStripe.bounds.left, bRowStripe.bounds.left);
-				int maxCol = Math.min(rowStripe.bounds.right, bRowStripe.bounds.right);
-				int sWordCols = 0;
-				int sNonWordCols = 0;
-				int sNonWordColBlockCount = 0;
-				int sNonWordColBlockLength = 0;
-				int sNonWordColBlockMaxLength = 0;
-				int mTypeCols = 0;
-				for (int c = minCol; c < maxCol; c++) {
-					boolean wordCol = (((c < rowStripe.bounds.left) || (c >= rowStripe.bounds.right)) ? false : rowStripe.colHasWord[c - rowStripe.bounds.left]);
-					boolean bWordCol = (((c < bRowStripe.bounds.left) || (c >= bRowStripe.bounds.right)) ? false : bRowStripe.colHasWord[c - bRowStripe.bounds.left]);
-					if (wordCol && bWordCol) {
-						sWordCols++;
-						sNonWordColBlockLength = 0;
-					}
-					else if (!wordCol && !bWordCol) {
-						sNonWordCols++;
-						if (sNonWordColBlockLength == 0)
-							sNonWordColBlockCount++;
-						sNonWordColBlockLength++;
-						sNonWordColBlockMaxLength = Math.max(sNonWordColBlockMaxLength, sNonWordColBlockLength);
-						continue; // no use checking type on two spaces
-					}
-					else {
-						sNonWordColBlockLength = 0;
-						continue; // no use checking if either row has space
-					}
-					char colType = (((c < rowStripe.bounds.left) || (c >= rowStripe.bounds.right)) ? ' ' : rowStripe.colType[c - rowStripe.bounds.left]);
-					char bColType = (((c < bRowStripe.bounds.left) || (c >= bRowStripe.bounds.right)) ? ' ' : bRowStripe.colType[c - bRowStripe.bounds.left]);
-					if (bColType == colType)
-						mTypeCols++;
-					else if ("WB".indexOf(colType) != -1)
-						mTypeCols++; // wildcard or blank always matches
-					else if ("WB".indexOf(bColType) != -1)
-						mTypeCols++; // wildcard or blank always matches
-				}
-				if (minCol < maxCol) {
-					rowStripe.bFwMaxSeqSharedNonWordCols = sNonWordColBlockMaxLength;
-					if (sNonWordColBlockCount != 0)
-						rowStripe.bFwAvgSeqSharedNonWordCols = (((float) sNonWordCols) / sNonWordColBlockCount);
-					rowStripe.bFwMatchTypeCols = (((float) mTypeCols) / (maxCol - minCol));
-				}
-			}
-		}
-		
-		//	clean up row stripes' column anchors
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			if (blockStripes[rs].colAnchors == null)
-				continue;
-			
-			//	clean up
-			ArrayList rowStripeColAnchors = new ArrayList();
-			for (int a = 0; a < blockStripes[rs].colAnchors.length; a++) {
-				if (topColAnchors.contains(blockStripes[rs].colAnchors[a]))
-					rowStripeColAnchors.add(blockStripes[rs].colAnchors[a]);
-			}
-			blockStripes[rs].colAnchors = ((ColumnAnchor[]) rowStripeColAnchors.toArray(new ColumnAnchor[rowStripeColAnchors.size()]));
-			
-			//	get compatible top column anchors
-			ArrayList compRowStripeColAnchors = new ArrayList();
-			for (Iterator tcait = topColAnchors.iterator(); tcait.hasNext();) {
-				ColumnAnchor topColAnchor = ((ColumnAnchor) tcait.next());
-				if (topColAnchor.col < blockStripes[rs].bounds.left)
-					compRowStripeColAnchors.add(topColAnchor);
-				else if (topColAnchor.col > blockStripes[rs].bounds.right)
-					compRowStripeColAnchors.add(topColAnchor);
-				else if (rowStripeColAnchors.contains(topColAnchor))
-					compRowStripeColAnchors.add(topColAnchor);
-			}
-			blockStripes[rs].compatibleColAnchors = ((ColumnAnchor[]) compRowStripeColAnchors.toArray(new ColumnAnchor[compRowStripeColAnchors.size()]));
-			
-			//	try and establish table column count from sequences of L, M, and R column anchors
-			int colCount = 0;
-			int lastColAnchorOrientation = 'R';
-			int lastMiddleColAnchorPos = -page.getImageDPI();
-			for (int a = 0; a < blockStripes[rs].colAnchors.length; a++) {
-				ColumnAnchor colAnchor = blockStripes[rs].colAnchors[a];
-				if ((colAnchor.orientation == 'M') && (colAnchor.col < (lastMiddleColAnchorPos + (page.getImageDPI() / 6))))
-					continue; // assuming minimum column+gap width of 1/6 inch, let's not count middle anchors if within that range (similar middle anchors can emerge from multiple pairings of left and right anchors, especially in tables with many and evenly distributed columns)
-				if (colAnchor.orientation <= lastColAnchorOrientation) // conveniently, L, M, and R also have this order in the alphabet
-					colCount++;
-				lastColAnchorOrientation = colAnchor.orientation;
-				if (colAnchor.orientation == 'M')
-					lastMiddleColAnchorPos = colAnchor.col;
-			}
-			blockStripes[rs].colCount = colCount;
-		}
-		
-		//	TODO try and establish table row count from maximum row count in each column anchor group
-		
-		//	what do we have?
-		System.out.println(" - got " + blockStripes.length + " row stripes:");
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			System.out.println("   - " + blockStripes[rs].bounds + ": " + blockStripes[rs].words[0].getString());
-			System.out.println("     - vertical spacing: " + blockStripes[rs].aSpace + " above, " + blockStripes[rs].bSpace + " below");
-			System.out.println("     - density: " + blockStripes[rs].getWordDensity() + ", " + fullWidthBlockStripes[rs].getWordDensity() + " inherited");
-			System.out.println("     - space width: " + blockStripes[rs].getWordSpacing() + " (min " + blockStripes[rs].minWordDistance + ", max " + blockStripes[rs].maxWordDistance + ")");
-			System.out.println("     - normalized space width: " + blockStripes[rs].getNormWordSpacing() + " (min " + blockStripes[rs].nMinWordDistance + ", max " + blockStripes[rs].nMaxWordDistance + ")");
-			System.out.println("     - square space width: " + blockStripes[rs].getSquareWordSpacing() + " absolute, " + blockStripes[rs].getNormSquareWordSpacing() + " normalized");
-			System.out.println("     - space width quotient: " + blockStripes[rs].getWordSpacingQuotient());
-			System.out.println("     - column occupation similarity overall: " + (blockStripes[rs].sharedWordCols + blockStripes[rs].sharedNonWordCols) + " (" + blockStripes[rs].sharedWordCols + " words, " + blockStripes[rs].sharedNonWordCols + " space)");
-			System.out.println("     - column occupation similarity above: " + blockStripes[rs].aColCompatibility);
-			System.out.println("     - column occupation similarity below: " + blockStripes[rs].bColCompatibility);
-			System.out.println("     - assigned full-width sibling: " + ((fullWidthBlockStripes[rs] == blockStripes[rs]) ? "self" : fullWidthBlockStripes[rs].bounds.toString()));
-			System.out.println("     - column occupation similarity above for full width: " + fullWidthBlockStripes[rs].aFwColCompatibility + " (matching word type " + fullWidthBlockStripes[rs].aFwMatchTypeCols + "), (max space length " + fullWidthBlockStripes[rs].aFwMaxSeqSharedNonWordCols + ", avg " + fullWidthBlockStripes[rs].aFwAvgSeqSharedNonWordCols + "))");
-			System.out.println("     - column occupation similarity below for full width: " + fullWidthBlockStripes[rs].bFwColCompatibility + " (matching word type " + fullWidthBlockStripes[rs].bFwMatchTypeCols + "), (max space length " + fullWidthBlockStripes[rs].bFwMaxSeqSharedNonWordCols + ", avg " + fullWidthBlockStripes[rs].bFwAvgSeqSharedNonWordCols + "))");
-			if (blockStripes[rs].colAnchors != null) {
-				System.out.println("     - column anchors: " + Arrays.toString(blockStripes[rs].colAnchors));
-				System.out.println("     - column count: " + blockStripes[rs].colCount);
-				System.out.println("     - column anchors per word: " + (((float) blockStripes[rs].colAnchors.length) / blockStripes[rs].words.length));
-				System.out.println("     - column anchors per inch: " + (((float) (blockStripes[rs].colAnchors.length * page.getImageDPI())) / (blockStripes[rs].bounds.right - blockStripes[rs].bounds.left)));
-			}
-			if (blockStripes[rs].compatibleColAnchors != null)
-				System.out.println("     - compatible column anchors: " + Arrays.toString(blockStripes[rs].compatibleColAnchors));
-		}
-		
-		//	sort row stripes into groups, separating at row gaps of above-average height
-		ArrayList blockStripeGroups = new ArrayList();
-		ArrayList groupRowStripes = new ArrayList();
-		ArrayList groupFullWidthRowStripes = new ArrayList();
-		for (int rs = 0; rs < blockStripes.length; rs++) {
-			groupRowStripes.add(blockStripes[rs]);
-			groupFullWidthRowStripes.add(fullWidthBlockStripes[rs]);
-			
-			//	test if stripe group ends
-			boolean stripeGroupEnds = false;
-			
-			//	cut at above average distance
-			if (blockStripes[rs].bSpace > avgBlockStripeSpace) {
-				stripeGroupEnds = true;
-				
-				//	make sure to mark left-aligned single-line table caption (multi-line captions will have a distinctive word column density)
-				if ((rs == 0) && ((blockStripes[rs].bounds.left - blockBounds.left) < (page.getImageDPI() / 8)) && (blockStripes[rs].findWordMatching("T[Aa][Bb].*") == 0))
-					blockStripes[rs].isCaptionOrNote = true;
-				
-				//	make sure to mark table bottom notes
-				else if (((rs + 2) == blockStripes.length) && ((blockBounds.right - blockStripes[rs+1].bounds.right) < (page.getImageDPI() / 8)) && (blockStripes[rs+1].findWordMatching("[Cc]ontinu.*") != -1))
-					blockStripes[rs+1].isCaptionOrNote = true;
-			}
-			
-			//	cut after short left-aligned single-line table caption (longer or multi-line captions will have a distinctive space below them)
-			if ((rs == 0) && (fullWidthBlockStripes[rs] != blockStripes[rs]) && ((blockStripes[rs].bounds.left - blockBounds.left) < (page.getImageDPI() / 8)) && (blockStripes[rs].findWordMatching("T[Aa][Bb].*") == 0)) {
-				groupFullWidthRowStripes.set((groupFullWidthRowStripes.size() - 1), blockStripes[rs]);
-				blockStripes[rs].isCaptionOrNote = true;
-				stripeGroupEnds = true;
-			}
-			
-			//	cut before short right-aligned single-line table bottom note (longer or multi-line notes will have a distinctive space above them)
-			if (((rs + 2) == blockStripes.length) && (fullWidthBlockStripes[rs+1] != blockStripes[rs+1]) && ((blockBounds.right - blockStripes[rs+1].bounds.right) < (page.getImageDPI() / 8)) && (blockStripes[rs+1].findWordMatching("[Cc]ontinu.*") != -1))
-				stripeGroupEnds = true;
-			
-			//	make sure table bottom notes are self-assigned full width row stripes
-			else if (((rs + 1) == blockStripes.length) && (fullWidthBlockStripes[rs] != blockStripes[rs]) && ((blockBounds.right - blockStripes[rs].bounds.right) < (page.getImageDPI() / 8)) && (blockStripes[rs].findWordMatching("[Cc]ontinu.*") != -1)) {
-				groupFullWidthRowStripes.set((groupFullWidthRowStripes.size() - 1), blockStripes[rs]);
-				blockStripes[rs].isCaptionOrNote = true;
-			}
-			
-			//	TODO consider cutting at large column word density jumps between full-width row stripes
-			
-			//	store stripe group and clear collector lists
-			if (stripeGroupEnds) {
-				blockStripeGroups.add(new RowStripeGroup(
-						((RowStripe[]) groupRowStripes.toArray(new RowStripe[groupRowStripes.size()])),
-						((RowStripe[]) groupFullWidthRowStripes.toArray(new RowStripe[groupFullWidthRowStripes.size()]))
-					));
-				groupRowStripes.clear();
-				groupFullWidthRowStripes.clear();
-			}
-		}
-		
-		//	just for now ...
-		return ((RowStripeGroup[]) blockStripeGroups.toArray(new RowStripeGroup[blockStripeGroups.size()]));
-	}
-	
 	/*
 When marking a table, keep using current approach of optimizing column count and column gaps ...
 ... but add second step:
@@ -1244,1466 +1141,716 @@ When marking a table, keep using current approach of optimizing column count and
 ==> use the latter for splitting up columns, also in the presence of multi-column cells
 	 */
 	
-	private static class BlockData {
-		final ImRegion block;
-		final float density;
-		final RowStripe[] rowStripes;
-		RowStripeGroup[] rowStripeGroups;
-		BlockData(ImRegion block, float density, RowStripe[] rowStripes) {
-			this.block = block;
-			this.density = density;
-			this.rowStripes = rowStripes;
-		}
-	}
-	
-	private static void assessBlockData(ImPage page, BlockData blockData, float docWordDensity) {
-		System.out.println("Assessing block " + blockData.block.pageId + "." + blockData.block.bounds + " with density " + blockData.density + " below document average of " + docWordDensity);
-		blockData.rowStripeGroups = getRowStripeGroups(page, blockData.block.bounds, blockData.rowStripes);
-		
-		System.out.println("Got " + blockData.rowStripeGroups.length + " horizontal stripe groups in block " + blockData.block.pageId + "." + blockData.block.bounds + " (density " + blockData.density + " below document average of " + docWordDensity + "):");
-		for (int sg = 0; sg < blockData.rowStripeGroups.length; sg++) {
-			System.out.println(" - " + blockData.rowStripeGroups[sg].bounds + " with density " + blockData.rowStripeGroups[sg].getDensity() + ", word column density " + blockData.rowStripeGroups[sg].wordColDensity);
-			System.out.print("   - rows: ");
-			for (int rs = 0; rs < blockData.rowStripeGroups[sg].rowStripes.length; rs++)
-				System.out.print(((rs == 0) ? "" : ", ") + blockData.rowStripeGroups[sg].rowStripes[rs].words[0].getString());
-			System.out.println();
-			
-			//	assess column occupation histogram
-			System.out.println("   - column word details: " + Arrays.toString(blockData.rowStripeGroups[sg].colWordCounts));
-			System.out.println("   - average words per column and row: " + (blockData.rowStripeGroups[sg].avgColWordCount / blockData.rowStripeGroups[sg].rowStripes.length) + " (avg " + blockData.rowStripeGroups[sg].avgColWordCount + ", min " + blockData.rowStripeGroups[sg].minColWordCount + ", max " + blockData.rowStripeGroups[sg].maxColWordCount + ")");
-			for (int w = (page.getImageDPI() / 4); w > 0; w /= 2) {
-				float cwcContrast = blockData.rowStripeGroups[sg].getColWordContrast(w);
-//				System.out.println("     - column occupation contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].rowStripes.length * blockData.rowStripeGroups[sg].rowStripes.length)) + " (" + cwcContrast + ")");
-				System.out.println("     - contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].maxColWordCount * blockData.rowStripeGroups[sg].maxColWordCount)) + " (" + cwcContrast + ")");
-			}
-			System.out.println("   - average smooth words per column and row: " + (blockData.rowStripeGroups[sg].sAvgColWordCount / blockData.rowStripeGroups[sg].rowStripes.length) + " (avg " + blockData.rowStripeGroups[sg].sAvgColWordCount + ", min " + blockData.rowStripeGroups[sg].sMinColWordCount + ", max " + blockData.rowStripeGroups[sg].sMaxColWordCount + ")");
-			for (int w = (page.getImageDPI() / 4); w > 0; w /= 2) {
-				float cwcContrast = blockData.rowStripeGroups[sg].getSmoothColWordContrast(w);
-//				System.out.println("     - column occupation contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].rowStripes.length * blockData.rowStripeGroups[sg].rowStripes.length)) + " (" + cwcContrast + ")");
-				System.out.println("     - contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].sMaxColWordCount * blockData.rowStripeGroups[sg].sMaxColWordCount)) + " (" + cwcContrast + ")");
-			}
-			
-			//	assess upward any downward compatibility, especially regarding whitespace
-			RowStripeGroup aStripeGroup = ((sg == 0) ? null : blockData.rowStripeGroups[sg-1]);
-			RowStripeGroup stripeGroup = blockData.rowStripeGroups[sg];
-			RowStripeGroup bStripeGroup = (((sg+1) == blockData.rowStripeGroups.length) ? null : blockData.rowStripeGroups[sg+1]);
-			if (aStripeGroup != null) {
-				stripeGroup.aColCompatibility = getColumnCompatibility(aStripeGroup.bounds.left, aStripeGroup.colHasWord, stripeGroup.bounds.left, stripeGroup.colHasWord, false);
-				System.out.println("   - column occupation similarity above: " + blockData.rowStripeGroups[sg].aColCompatibility);
-				int cMaxColWordCount = (aStripeGroup.maxColWordCount + stripeGroup.maxColWordCount);
-				for (int w = (page.getImageDPI() / 4); w > 0; w /= 2) {
-					float cwcContrast = computeColWordContrast(aStripeGroup.bounds.left, aStripeGroup.colWordCounts, stripeGroup.bounds.left, stripeGroup.colWordCounts, w);
-//					System.out.println("     - column occupation contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].rowStripes.length * blockData.rowStripeGroups[sg].rowStripes.length)) + " (" + cwcContrast + ")");
-					System.out.println("     - contrast W" + w + " with above: " + (cwcContrast / (cMaxColWordCount * cMaxColWordCount)) + " (" + cwcContrast + ")");
-				}
-				int cMaxSmoothColWordCount = (aStripeGroup.sMaxColWordCount + stripeGroup.sMaxColWordCount);
-				for (int w = (page.getImageDPI() / 4); w > 0; w /= 2) {
-					float sCwcContrast = computeColWordContrast(aStripeGroup.bounds.left, aStripeGroup.sColWordCounts, stripeGroup.bounds.left, stripeGroup.sColWordCounts, w);
-//					System.out.println("     - column occupation contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].rowStripes.length * blockData.rowStripeGroups[sg].rowStripes.length)) + " (" + cwcContrast + ")");
-					System.out.println("     - smooth contrast W" + w + " with above: " + (sCwcContrast / (cMaxSmoothColWordCount * cMaxSmoothColWordCount)) + " (" + sCwcContrast + ")");
-				}
-			}
-			if (bStripeGroup != null) {
-				stripeGroup.bColCompatibility = getColumnCompatibility(stripeGroup.bounds.left, stripeGroup.colHasWord, bStripeGroup.bounds.left, bStripeGroup.colHasWord, false);
-				System.out.println("   - column occupation similarity below: " + blockData.rowStripeGroups[sg].bColCompatibility);
-				int cMaxColWordCount = (stripeGroup.maxColWordCount + bStripeGroup.maxColWordCount);
-				for (int w = (page.getImageDPI() / 4); w > 0; w /= 2) {
-					float cwcContrast = computeColWordContrast(stripeGroup.bounds.left, stripeGroup.colWordCounts, bStripeGroup.bounds.left, bStripeGroup.colWordCounts, w);
-//					System.out.println("     - column occupation contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].rowStripes.length * blockData.rowStripeGroups[sg].rowStripes.length)) + " (" + cwcContrast + ")");
-					System.out.println("     - contrast W" + w + " with below: " + (cwcContrast / (cMaxColWordCount * cMaxColWordCount)) + " (" + cwcContrast + ")");
-				}
-				int cMaxSmoothColWordCount = (stripeGroup.sMaxColWordCount + bStripeGroup.sMaxColWordCount);
-				for (int w = (page.getImageDPI() / 4); w > 0; w /= 2) {
-					float sCwcContrast = computeColWordContrast(stripeGroup.bounds.left, stripeGroup.sColWordCounts, bStripeGroup.bounds.left, bStripeGroup.sColWordCounts, w);
-//					System.out.println("     - column occupation contrast W" + w + ": " + (cwcContrast / (blockData.rowStripeGroups[sg].rowStripes.length * blockData.rowStripeGroups[sg].rowStripes.length)) + " (" + cwcContrast + ")");
-					System.out.println("     - smooth contrast W" + w + " with below: " + (sCwcContrast / (cMaxSmoothColWordCount * cMaxSmoothColWordCount)) + " (" + sCwcContrast + ")");
-				}
-			}
-			
-			//	discard short captions and table bottom notes marked as such if they are sufficiently dense
-			if ((blockData.rowStripeGroups[sg].wordColDensity > docWordDensity) && blockData.rowStripeGroups[sg].isCaptionOrNote) {
-				System.out.println("   ==> marked as caption or note at edge of table");
-				blockData.rowStripeGroups[sg].isTable = false;
-				blockData.rowStripeGroups[sg].isTablePart = false;
-				continue;
-			}
-			
-			//	discard row stripe groups whose word column density is closer to 100% than to document average
-			if ((1 - blockData.rowStripeGroups[sg].wordColDensity) < (blockData.rowStripeGroups[sg].wordColDensity - docWordDensity)) {
-				System.out.println("   ==> columns too dense for table");
-				blockData.rowStripeGroups[sg].isTable = false;
-				blockData.rowStripeGroups[sg].isTablePart = false;
-				continue;
-			}
-			
-			//	require at least 3 full width rows for a full table
-			if (blockData.rowStripeGroups[sg].fullWidthRowStripeCount < 3) {
-				System.out.println("   ==> too few full width rows for full table, needs merger");
-				blockData.rowStripeGroups[sg].isTable = false;
-				blockData.rowStripeGroups[sg].isTablePart = true;
-				continue;
-			}
-			
-			//	TODO need any further checks?
-			//	TODO add more checks as need arises
-			
-			//	this one looks good
-			System.out.println("   ==> likely table");
-			blockData.rowStripeGroups[sg].isTable = true;
-			blockData.rowStripeGroups[sg].isTablePart = true;
-		}
-	}
-	
-	private static class TableCandidate implements Comparable {
+	private static class TableAreaCandidate {
 		final BoundingBox bounds;
-		final RowStripeGroup[] rowStripeGroups;
-		final boolean[] colHasWord;
-		final float wordColDensity;
-		final int fullWidthRowStripeCount;
-		TableCandidate(BoundingBox bounds, RowStripeGroup[] rowStripeGroups, boolean[] colHasWord, float wordColDensity, int fullWidthRowStripeCount) {
-			this.bounds = bounds;
-			this.rowStripeGroups = rowStripeGroups;
-			this.colHasWord = colHasWord;
-			this.wordColDensity = wordColDensity;
-			this.fullWidthRowStripeCount = fullWidthRowStripeCount;
-		}
-		public int compareTo(Object obj) {
-			if (obj instanceof TableCandidate)
-				return (getArea(((TableCandidate) obj).bounds) - getArea(this.bounds));
-			else return 0;
+		final ImWord[] words;
+		final TableAreaStripe[] rows;
+		final ImRegion[] cols;
+		final float colGapFract;
+		final TableAreaStatistics stats;
+		TableAreaCandidate(TableAreaStripe[] rows, ImRegion[] cols, TableAreaStatistics stats) {
+			this.rows = rows;
+			this.cols = cols;
+			this.stats = stats;
+			this.bounds = this.stats.wordBounds;
+			this.words = this.stats.words;
+			this.colGapFract = this.stats.getBrgColOccupationLowFractReduced();
 		}
 	}
 	
-	//	TODO return some TableCandidate object or the like, with probabilities, etc.
-	private static TableCandidate checkForTable(ArrayList rowStripeGroups, float docWordDensity) {
+	private static TableAreaCandidate getTableAreaCandidate(ImPage page, BoundingBox tableArea, float docWordDensity1d, float docWordDensity2d, float docWordSpacing, float docNormSpaceWidth, ProgressMonitor pm) {
 		
-		//	compute overall extent
-		int left = Integer.MAX_VALUE;
-		int right = 0;
-		int top = Integer.MAX_VALUE;
-		int bottom = 0;
-		for (int rs = 0; rs < rowStripeGroups.size(); rs++) {
-			RowStripeGroup stripeGroup = ((RowStripeGroup) rowStripeGroups.get(rs));
-			left = Math.min(left, stripeGroup.bounds.left);
-			right = Math.max(right, stripeGroup.bounds.right);
-			top = Math.min(top, stripeGroup.bounds.top);
-			bottom = Math.max(bottom, stripeGroup.bounds.bottom);
-		}
-		BoundingBox aggregateBox = new BoundingBox(left, right, top, bottom);
-		System.out.println("Checking " + rowStripeGroups.size() + " row stripe groups in " + aggregateBox + " for table ...");
-		
-		//	compute overall column occupation and full width row count
-		int fullWidthRowStripeCount = 0;
-		float maxPartWordColDensity = 0;
-		boolean[] colHasWord = new boolean[right - left];
-		Arrays.fill(colHasWord, false);
-		for (int rs = 0; rs < rowStripeGroups.size(); rs++) {
-			RowStripeGroup stripeGroup = ((RowStripeGroup) rowStripeGroups.get(rs));
-			fullWidthRowStripeCount += stripeGroup.fullWidthRowStripeCount;
-			maxPartWordColDensity = Math.max(maxPartWordColDensity, stripeGroup.wordColDensity);
-			for (int c = 0; c < stripeGroup.colHasWord.length; c++) {
-				if (stripeGroup.colHasWord[c])
-					colHasWord[c + (stripeGroup.bounds.left - left)] = true;
+		//	make sure to (a) wrap table area tightly around contained words, but (b) not to cut off any words
+		ImWord[] areaWords;
+		BoundingBox wTableArea;
+		while (true) {
+			areaWords = page.getWordsInside(tableArea);
+			wTableArea = ImLayoutObject.getAggregateBox(areaWords);
+			if (wTableArea == null) {
+				pm.setInfo("   ==> cannot build table without words");
+				return null;
+			}
+			else if (tableArea.equals(wTableArea))
+				break;
+			else {
+				tableArea = wTableArea;
+				pm.setInfo("   - reduced to " + tableArea);
 			}
 		}
-		System.out.println(" - got " + fullWidthRowStripeCount + " full with row stripes");
-		System.out.println(" - maximum row stripe group density is " + maxPartWordColDensity);
 		
-		//	compute column occupation
-		int wordCols = 0;
-		for (int c = 0; c < colHasWord.length; c++) {
-			if (colHasWord[c])
-				wordCols++;
-		}
-		float wordColDensity = (((float) wordCols) / (right - left));
-		System.out.println(" - aggregate density is " + wordColDensity);
+		//	check for any table words to prevent marking tables twice (from more than one detector method)
+		for (int w = 0; w < areaWords.length; w++)
+			if (ImWord.TEXT_STREAM_TYPE_TABLE.equals(areaWords[w].getTextStreamType())) {
+				pm.setInfo("   ==> cannot build table inside table");
+				return null;
+			}
 		
-		//	overall word column density closer to 100% than to maximum of argument row stripe groups, reject table
-		if ((1 - wordColDensity) < (wordColDensity - maxPartWordColDensity)) {
-			System.out.println(" ==> aggregate columns too dense for table");
+		//	compute average word height
+		int tableAreaWordHeightSum = 0;
+		for (int w = 0; w < areaWords.length; w++)
+			tableAreaWordHeightSum += areaWords[w].bounds.getHeight();
+		int tableAreaWordHeight = ((areaWords.length == 0) ? 0 : ((tableAreaWordHeightSum + (areaWords.length / 2)) / areaWords.length));
+		pm.setInfo("   - average word height is " + tableAreaWordHeight);
+		
+		//	TODO test horizontal stripe grid table (with white-background headers) in Pages 4, 5, 6 of journal.pone.0149556.PDF.pdf
+		//	TODO prevent inclusion of table notes residing right below tables
+		//	==> TODO reject table candidates whose last row has only bridged gaps
+		//	==> TODO also consider drop in word height or font size (table notes do tend to be smaller, actual rows barely ever do so)
+		//	==> TODO consider introducing table font size style parameter
+		
+		
+		//	TODO prevent marking overlapping tables !!!
+		//	TODO example: EJT 404 / IMF FFD9CE63FF9BF752FF85FF922711FFB9 (EJT-testbed/197)
+		
+		//	compute table area statistics
+//		TableAreaStatistics areaStats = new TableAreaStatistics(areaWords, normSpaceWidth);
+		TableAreaStatistics areaStats = TableAreaStatistics.getTableAreaStatistics(page, areaWords, docNormSpaceWidth);
+		
+		//	get horizontal stripes and density
+		TableAreaStripe[] areaStripes = getTableAreaStripes(page, areaStats);
+		pm.setInfo("   - got " + areaStripes.length + " stripes:");
+		for (int r = 0; r < areaStripes.length; r++)
+			pm.setInfo("     - " + areaStripes[r].bounds + ": " + areaStripes[r].words[0].getString());
+		if (areaStripes.length < 3) {
+			pm.setInfo("   ==> cannot build table with fewer than three rows");
 			return null;
 		}
 		
-		//	finally ...
-		System.out.println(" ==> looks good for table or part thereof");
-		return new TableCandidate(aggregateBox, ((RowStripeGroup[]) rowStripeGroups.toArray(new RowStripeGroup[rowStripeGroups.size()])), colHasWord, wordColDensity, fullWidthRowStripeCount);
-	}
-	
-	/* TODO also assess Graphics supplements (paths that form long horizontal or
-	 * vertical lines, in particular), which occur with the very most tables. */
-	
-	public static void main(String[] args) throws Exception {
-		final ImDocument doc;
-//		
-//		//	example with multi-line cells (in-cell line margin about 5 pixels, row margin about 15 pixels): zt00904.pdf, page 6
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/zt00904.pdf.clean.imf"));
-//		
-//		//	test for second step in column detection (see above, in 'zt00904.pdf.clean.imf', page ID 6, table at [267, 1313, 908, 1870])
-//		if (true) {
-//			TableActionProvider tap = new TableActionProvider();
-//			tap.setDataProvider(new PluginDataProviderFileBased(new File("E:/GoldenGATEv3/Plugins/TableActionProviderData")));
-//			tap.init();
-//			ImPage page = doc.getPage(6);
-//			BoundingBox tbb = new BoundingBox(267, 1313, 908, 1870);
-//			tap.markTable(page, tbb, null);
-//			ImRegion[] tCols = page.getRegions(ImRegion.TABLE_COL_TYPE);
-//			Arrays.sort(tCols, ImUtils.leftRightOrder);
-//			for (int c = 0; c < tCols.length; c++)
-//				System.out.println("Table column: " + tCols[c].bounds);
-//			return;
-//		}
-//		
-//		//	example without multi-line cells, very tight row margin (2 pixels): Milleretal2014Anthracotheres.pdf, page 4
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/Milleretal2014Anthracotheres.pdf.clean.imf"));
-//		
-//		//	example without multi-line cells, normal row margin: zt00619.o.pdf, page 3
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/zt00619.pdf.clean.imf"));
-//		
-//		//	example with very widely spaced table rows and narrow column gaps: zt00872.pdf, page 8
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/zt00872.pdf.clean.imf"));
-//		
-//		//	example with sparse 2-page table on page 1, and large 5-page table on page 30, without multi-line cells: zt03652p155.pdf.clean.imf
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/zt03652p155.pdf.clean.imf"));
-//		
-//		//	simple, clean example with twice two smallish tables
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/zt01826p058.pdf.clean.imf"));
-		
-		//	example with multi-page tables from pages 4 and 8 (protruding column header on page 9), and very sparse tables on pages 9 and 11
-		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/zt03881p227.pdf.clean.imf"));
-//		
-//		//	example with multiple tables, and key mistaken for table candidate on page 8 (gets sorted out on too few columns, though)
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/zt03980p278.pdf.clean.imf"));
-//		
-//		//	artificial example with multi-column cells
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/Artificial1.pdf.imf"));
-//		
-//		//	artificial example with full-grid table and multi-column cells
-//		doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/TableTest/Artificial2.pdf.imf"));
-		
-		//	TODO check table in page 5 of American_Journal_of_Primatology.10.1002_ajp.22631.pdf.imd
-		
-		//	get document pages
-		ImPage[] pages = doc.getPages();
-		
-		/* TODO
-	- investigate vector graphics objects in the area:
-	  - horizontal lines split table rows
-	    ==> helps with full-grid tables
-	  - render graphics in area, and use row occupation histogram to find horizontal lines
-	- in general, use presence of text line separating (horizontal, first and foremost) lines as indicator of table
-	- try and find table border lines, encircling table block
-	- keep on using word distance as a measure of table cell coherence (==> helps ignore in-cell word gaps)
-	- use peaks in column whitespace (or lows in column occupation) as indicators of column gaps
-	- detect multi-column cells as local obstruction of column gaps
-	etc. ...
-		 */
-		
-		//	compute average density of document blocks
+		//	compute area density
 		int stripeWidthSum = 0;
-		int wordWidthSum = 0;
 		int stripeArea = 0;
+		int wordWidthSum = 0;
+		int wordHeightSum = 0;
+		int wordCount = 0;
 		int wordArea = 0;
 		int wordDistanceSum = 0;
 		float nWordDistanceSum = 0;
 		int wordDistanceCount = 0;
-		for (int pg = 0; pg < pages.length; pg++) {
-			
-			//	assess page blocks
-			ImRegion[] pgBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
-			Arrays.sort(pgBlocks, ImUtils.topDownOrder);
-			for (int b = 0; b < pgBlocks.length; b++) {
-				System.out.println(" - assessing block " + pgBlocks[b].bounds);
-				
-				RowStripe[] bStripes = getRowStripes(pages[pg], pgBlocks[b].bounds);
-				if (bStripes.length == 0) {
-//					System.out.println("   --> empty block");
-					continue;
-				}
-//				System.out.println("   - got " + bStripes.length + " block stripes");
-//				float bWordDensity = getWordDensity(bStripes);
-//				System.out.println("   --> block word density is " + bWordDensity);
-				
-				for (int s = 0; s < bStripes.length; s++) {
-					stripeWidthSum += bStripes[s].bounds.getWidth();
-					wordWidthSum += bStripes[s].wordWidthSum;
-					stripeArea += bStripes[s].area;
-					wordArea += bStripes[s].wordArea;
-					wordDistanceSum += bStripes[s].wordDistanceSum;
-					nWordDistanceSum += bStripes[s].nWordDistanceSum;
-					wordDistanceCount += bStripes[s].wordDistanceCount;
-				}
-			}
+		for (int s = 0; s < areaStripes.length; s++) {
+			stripeWidthSum += areaStripes[s].bounds.getWidth();
+			stripeArea += areaStripes[s].area;
+			wordWidthSum += areaStripes[s].wordWidthSum;
+			wordHeightSum += areaStripes[s].wordHeightSum;
+			wordCount += areaStripes[s].words.length;
+			wordArea += areaStripes[s].wordArea;
+			wordDistanceSum += areaStripes[s].wordDistanceSum;
+			nWordDistanceSum += areaStripes[s].nWordDistanceSum;
+			wordDistanceCount += areaStripes[s].wordDistanceCount;
 		}
-		float docWordDensity1d = ((stripeWidthSum < 1) ? 0 : (((float) wordWidthSum) / stripeWidthSum));
-		float docWordDensity2d = ((stripeArea < 1) ? 0 : (((float) wordArea) / stripeArea));
-		System.out.println("Average document word density is " + docWordDensity1d + " horizonatally, " + docWordDensity2d + " by area");
-		float docWordSpacing = ((wordDistanceCount < 1) ? 0 : (((float) wordDistanceSum) / wordDistanceCount));
-		System.out.println("Average document word spacing " + docWordSpacing);
-		float docNormWordSpacing = ((wordDistanceCount < 1) ? 0 : (((float) nWordDistanceSum) / wordDistanceCount));
-		System.out.println("Average normalized document word spacing " + docNormWordSpacing);
-//		System.out.println("Block density distripution:");
-//		for (int d = 20; d >= 0; d--)
-//			System.out.println(" - " + (d * 5) + ": " + docBlockDensities.getCount(new Integer(d)));
-//		System.out.println("Stripe density distripution:");
-//		for (int d = 20; d >= 0; d--)
-//			System.out.println(" - " + (d * 5) + ": " + docStripeDensities.getCount(new Integer(d)));
-		//	as it seems (at least from 3 test documents of rather different layout), document average block density makes for a good threshold above which a block is surely NOT a table
+		float areaWordDensity1d = ((stripeWidthSum < 1) ? 0 : (((float) wordWidthSum) / stripeWidthSum));
+		float areaWordDensity2d = ((stripeArea < 1) ? 0 : (((float) wordArea) / stripeArea));
+		System.out.println(" - average word density is " + areaWordDensity1d + " horizonatally"  + " (document: " + docWordDensity1d + ")" + ", " + areaWordDensity2d + " by area (document: " + docWordDensity2d + ")");
+		float areaWordSpacing = ((wordDistanceCount < 1) ? 0 : (((float) wordDistanceSum) / wordDistanceCount));
+		System.out.println(" - average word spacing " + areaWordSpacing  + " (document: " + docWordSpacing + ")");
+		final float areaNormSpaceWidth = ((wordDistanceCount < 1) ? 0 : (((float) nWordDistanceSum) / wordDistanceCount));
+		System.out.println(" - average normalized word spacing " + areaNormSpaceWidth + " (document: " + docNormSpaceWidth + ")");
+		final float areaWordHeight = ((wordCount < 1) ? 0 : (((float) wordHeightSum) / wordCount));
+		System.out.println(" - average word height " + areaWordHeight);
 		
-		//	get vector graphics supplements for each page, and count frequencies
-		Graphics[][] pageGraphics = new Graphics[pages.length][];
-		CountingSet graphicsPageCounts = new CountingSet();
-		for (int pg = 0; pg < pages.length; pg++) {
-			System.out.println("Collecting graphics in page " + pages[pg].pageId);
-			ImSupplement[] pageSupplements = pages[pg].getSupplements();
-			ArrayList pageGraphicsList = new ArrayList();
-			for (int s = 0; s < pageSupplements.length; s++) {
-				if (pageSupplements[s] instanceof Graphics)
-					pageGraphicsList.add(pageSupplements[s]);
-			}
-			pageGraphics[pg] = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
-			System.out.println(" - found " + pageGraphics[pg].length + " individual graphics:");
-			for (int g = 0; g < pageGraphics[pg].length; g++) {
-				BoundingBox graphBounds = pageGraphics[pg][g].getBounds();
-				System.out.println("   - " + graphBounds);
-				graphicsPageCounts.add(graphBounds);
-			}
+		//	also get area stats with area normalized space width
+		/* Rationale: if increasing normalized space width increases column
+		 * gaps, we do have actual column gaps, if with a few obstructions that
+		 * end up bridged with the wider normalized space. On the other hand,
+		 * if we already have relatively wide column gaps, local normalized
+		 * space width is so large that applying it will decrease column gap
+		 * fraction. Lastly, if the wider spaces driving up local normalized
+		 * space width do not align (i.e., we don't have a table), applying the
+		 * increased normalized space width will not find any column gaps, so
+		 * we don't really take the risk of incurring false positives. */
+		TableAreaStatistics localAreaStats = TableAreaStatistics.getTableAreaStatistics(page, areaWords, areaNormSpaceWidth);
+		
+		//	we need a good few core lows wider than average word spacing (i.e., filtered) to have any chance of a good column split
+		System.out.println("   - filtered bridged lows are " + areaStats.getBrgColOccupationLowsFiltered());
+		System.out.println("   - local filtered bridged lows are " + localAreaStats.getBrgColOccupationLowsFiltered());
+		float bColPixelLowFractFiltered = areaStats.getBrgColOccupationLowFractFiltered();
+		float bLocalColPixelLowFractFiltered = localAreaStats.getBrgColOccupationLowFractFiltered();
+		System.out.println("   - column gap fractions are " + bColPixelLowFractFiltered + " and local " + bLocalColPixelLowFractFiltered);
+		if (0.05 <= bColPixelLowFractFiltered) {}
+		else if (((docNormSpaceWidth * 2) <= areaNormSpaceWidth) && (0.05 <= bLocalColPixelLowFractFiltered)) {}
+		else {
+			pm.setInfo("   ==> cannot build table with less than 5% column gaps");
+			return null;
 		}
 		
-		//	assess graphics
-		for (int pg = 0; pg < pages.length; pg++) {
-			System.out.println("Assessing graphics in page " + pages[pg].pageId);
-			ArrayList pageGraphicsList = new ArrayList();
-			for (int g = 0; g < pageGraphics[pg].length; g++) {
-				BoundingBox graphBounds = pageGraphics[pg][g].getBounds();
-				System.out.println(" - " + graphBounds + ":");
-				
-				//	graphics existing in majority (maybe 2/3) of pages, likely page decoration
-				int graphPageCount = graphicsPageCounts.getCount(graphBounds);
-				System.out.println("   - present in " + graphPageCount + " of " + pages.length + " pages");
-				if ((graphPageCount * 3) > (pages.length * 2)) {
-					System.out.println("     ==> removed as page decoration");
-					continue;
-				}
-				
-				//	sort out graphics too narrow for a table (less than 1 inch)
-				int graphWidth = graphBounds.getWidth();
-				System.out.println("   - width is " + graphWidth);
-				if (graphWidth < pages[pg].getImageDPI()) {
-					System.out.println("     ==> removed as too narrow for table grid line");
-					continue;
-				}
-				
-				//	remove graphics that include curves, as we're out for straight lines only
-				Graphics.Path[] graphPaths = pageGraphics[pg][g].getPaths();
-				int graphSubPathCount = 0;
-				int graphShapeCount = 0;
-				int graphLineCount = 0;
-				int graphCurveCount = 0;
-				for (int p = 0; p < graphPaths.length; p++) {
-					Graphics.SubPath[] subPaths = graphPaths[p].getSubPaths();
-					graphSubPathCount += subPaths.length;
-					for (int s = 0; s < subPaths.length; s++) {
-						Shape[] subPathShapes = subPaths[s].getShapes();
-						graphShapeCount += subPathShapes.length;
-						for (int h = 0; h < subPathShapes.length; h++) {
-							if (subPathShapes[h] instanceof Line2D)
-								graphLineCount++;
-							else if (subPathShapes[h] instanceof CubicCurve2D)
-								graphCurveCount++;
-							else if (subPathShapes[h] instanceof QuadCurve2D)
-								graphCurveCount++;
-						}
-					}
-				}
-				System.out.println("   - got " + graphShapeCount + " shapes in " + graphPaths.length + " paths and " + graphSubPathCount + " sub paths: " + graphLineCount + " lines and " + graphCurveCount + " curves");
-				if (graphCurveCount > graphLineCount) {
-					System.out.println("     ==> removed as comprising too many curves and too few lines for table grid line");
-					continue;
-				}
-				
-				//	this one looks like it might be part of a table grid
-				pageGraphicsList.add(pageGraphics[pg][g]);
-				System.out.println("     ==> retained for further inspection");
-			}
-			
-			//	update main array
-			if (pageGraphicsList.size() < pageGraphics[pg].length)
-				pageGraphics[pg] = ((Graphics[]) pageGraphicsList.toArray(new Graphics[pageGraphicsList.size()]));
-			
-			System.out.println(" ==> retained " + pageGraphics[pg].length + " graphics for further inspection");
+		//	we still need a good few core lows wider than average word spacing (i.e., filtered) to have any chance of a good column split
+		System.out.println("   - reduced bridged lows are " + areaStats.getBrgColOccupationLowsReduced());
+		System.out.println("   - local reduced bridged lows are " + localAreaStats.getBrgColOccupationLowsReduced());
+		float bColPixelLowFractReduced = areaStats.getBrgColOccupationLowFractReduced();
+		float bLocalColPixelLowFractReduced = localAreaStats.getBrgColOccupationLowFractReduced();
+		System.out.println("   - reduced column gap fractions are " + bColPixelLowFractReduced + " and local " + bLocalColPixelLowFractReduced);
+		if (0.05 <= bColPixelLowFractReduced) {}
+		else if (((docNormSpaceWidth * 2) <= areaNormSpaceWidth) && (0.05 <= bLocalColPixelLowFractReduced)) {}
+		else {
+			pm.setInfo("   ==> cannot build table with less than 5% core column gaps");
+			return null;
 		}
 		
-		//	assess potential table grid graphics in each page
-		for (int pg = 0; pg < pages.length; pg++) {
-			if (pageGraphics[pg].length == 0)
-				continue; // nothing to work with
-			System.out.println("Assessing potential table grids in page " + pages[pg].pageId);
+		//	get column gaps, and count out graphics supported ones
+		TreeSet colOccupationLows = new TreeSet(areaStats.getBrgColOccupationLowsReduced());
+		int blockedColMarginCount = 0;
+		int peakBlockedColMarginCount = 0;
+		int flankBlockedColMarginCount = 0;
+		for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+			ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+			if (col.isBlockedByPeak())
+				peakBlockedColMarginCount++;
+			if (col.isBlockedByFlank())
+				flankBlockedColMarginCount++;
+			if (col.isBlockedByGraphics())
+				blockedColMarginCount++;
+		}
+		
+		/* If we have flanks, exclude all non-zero, non-flank column gaps that
+		 * lie inside some vertical stripe (i.e., are non-white over more than
+		 * 80% table height).
+		 * Rationale:
+		 * - In a vertical stripe grid (i.e., flank column gaps), we should have
+		 *   flanks in _all_ actual column gaps.
+		 * - With highlighting stripes only under column headers and row labels,
+		 *   column gaps won't be filled to over 80%.
+		 * - In a horizontal stripe grid, even if we happen to have some flank,
+		 *   column gaps still won't be filled to over 80%. */
+		if (flankBlockedColMarginCount != 0)
+			for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+				ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+				if (col.isBlockedByGraphics())
+					continue;
+				if (col.max == 0)
+					continue;
+				GraphicsSlice colGs = areaStats.getColGraphicsStats(col.left, col.right);
+				if ((tableArea.getHeight() * 4) < (colGs.minOccupiedPixels * 5))
+					colit.remove();
+			}
+		
+		//	if we only have a single column gap (i.e., two columns):
+		if (colOccupationLows.size() == 1) {
+			ColumnOccupationLow col = ((ColumnOccupationLow) colOccupationLows.iterator().next());
 			
-			//	sort graphics top-down
-			Arrays.sort(pageGraphics[pg], topDownGraphicsOrder);
-			System.out.println(" - " + pageGraphics[pg].length + " graphics sorted");
-			
-			//	group graphics into potential table grids with nested loop
-			ArrayList pageTableAreas = new ArrayList();
-			for (int g = 0; g < pageGraphics[pg].length; g++) {
-				BoundingBox graphBounds = pageGraphics[pg][g].getBounds();
-				System.out.println(" - seeking table grids starting with " + graphBounds);
-				
-				//	graphics is tall enough to be table grid in its own right (full-grid tables !!!)
-				if (graphBounds.getHeight() > pages[pg].getImageDPI()) {
-					pageTableAreas.add(graphBounds);
-					System.out.println("   - tall enough for one-piece full table grid");
-				}
-				
-				//	combine with other graphics in same column
-				for (int cg = (g+1); cg < pageGraphics[pg].length; cg++) {
-					BoundingBox cGraphBounds = pageGraphics[pg][cg].getBounds();
-					
-					//	check column overlap (require 97% to accommodate sloppy layout)
-					int uWidth = (Math.max(graphBounds.right, cGraphBounds.right) - Math.min(graphBounds.left, cGraphBounds.left));
-					int iWidth = (Math.min(graphBounds.right, cGraphBounds.right) - Math.max(graphBounds.left, cGraphBounds.left));
-					if ((iWidth * 100) < (uWidth * 97))
-						continue;
-					
-					//	check combined height
-					int uHeight = (Math.max(graphBounds.bottom, cGraphBounds.bottom) - Math.min(graphBounds.top, cGraphBounds.top));
-					if (uHeight < pages[pg].getImageDPI())
-						continue;
-					
-					//	store potential table area
-					BoundingBox uGraphBounds = new BoundingBox(
-							Math.min(graphBounds.left, cGraphBounds.left),
-							Math.max(graphBounds.right, cGraphBounds.right),
-							Math.min(graphBounds.top, cGraphBounds.top),
-							Math.max(graphBounds.bottom, cGraphBounds.bottom)
-						);
-					pageTableAreas.add(uGraphBounds);
-					System.out.println("   - got potential partial table grid together with " + cGraphBounds + ": " + uGraphBounds);
-				}
+			//	require large gap (say, at least twice average word height)
+			if (col.getWidth() < (areaStats.avgWordHeight * 2)) {
+				pm.setInfo("   ==> cannot build two-column table with all too narrow column gap");
+				return null;
 			}
 			
-			//	anything left to work with?
-			if (pageTableAreas.size() == 0)
-				continue;
-			
-			//	order potential table areas by descending size (makes sure to find whole tables before partial ones)
-			Collections.sort(pageTableAreas, descendingBoxSizeOrder);
-			
-			//	assess potential table areas
-			System.out.println(" - assessing " + pageTableAreas.size() + " potential table grids");
-			ArrayList pageTableCandidates = new ArrayList();
-			for (int t = 0; t < pageTableAreas.size(); t++) {
-				BoundingBox tableArea = ((BoundingBox) pageTableAreas.get(t));
-				System.out.println("   - assessing " + tableArea);
-				ImWord[] tableAreaWords;
-				BoundingBox wTableArea;
-				while (true) {
-					tableAreaWords = pages[pg].getWordsInside(tableArea);
-					wTableArea = ImLayoutObject.getAggregateBox(tableAreaWords);
-					if (tableArea.equals(wTableArea))
-						break;
-					else {
-						tableArea = wTableArea;
-						System.out.println("   - reduced to " + tableArea);
-					}
-				}
-				int tableAreaWordHeightSum = 0;
-				for (int w = 0; w < tableAreaWords.length; w++)
-					tableAreaWordHeightSum += tableAreaWords[w].bounds.getHeight();
-				int tableAreaWordHeight = ((tableAreaWords.length == 0) ? 0 : ((tableAreaWordHeightSum + (tableAreaWords.length / 2)) / tableAreaWords.length));
-				System.out.println("   - average word height is " + tableAreaWordHeight);
-				
-				//	get row stripes and density
-				RowStripe[] tableAreaStripes = getRowStripes(pages[pg], tableArea);
-				float tableAreaWordDensity = getWordDensity(tableAreaStripes);
-				System.out.println("     - word density is " + tableAreaWordDensity);
-				System.out.println("     - got " + tableAreaStripes.length + " row stripes:");
-				for (int r = 0; r < tableAreaStripes.length; r++)
-					System.out.println("       - " + tableAreaStripes[r].bounds + ": " + tableAreaStripes[r].words[0].getString());
-				
-				//	check if we have a row stripe that looks like a caption
-				for (int r = 0; r < tableAreaStripes.length; r++) {
-					String startWordString = tableAreaStripes[r].words[0].getString().toLowerCase();
-					if (!startWordString.equals("t") && !startWordString.startsWith("tab")) // need to catch word boundary due to font size change emulating small caps in some layouts
-						continue;
-					String rowStartString = ImUtils.getString(tableAreaStripes[r].words[0], tableAreaStripes[r].words[Math.min(tableAreaStripes[r].words.length, 5) - 1], true);
-					if (rowStartString.matches("[Tab|TAB][^\\s]*\\.?\\s*[1-9][0-9]*.*")) {
-						System.out.println("     - found caption row at " + tableAreaStripes[r].bounds + ": " + rowStartString + " ...");
-						tableAreaStripes = null;
-						break;
-					}
-				}
-				if (tableAreaStripes == null) {
-					System.out.println("     ==> cannot span table across table caption");
+			//	require said gap to include middle of table area
+			int tableAreaCenterX = ((tableArea.left + tableArea.right) / 2);
+			if ((tableAreaCenterX <= col.left) || (col.right <= tableAreaCenterX)) {
+				pm.setInfo("   ==> cannot build two-column table with off-center column gap");
+				return null;
+			}
+		}
+		
+		/* TODO also call mis-match if maximum gap is more than, say, five times average gap
+		 * ==> super large gap most likely due to short headers over long-valued column 
+		 * ==> likely got largish heading section only, no good for table by itself */
+		
+		//	check individual stripes for table caption (non-table area detection only catches captions boxed in by themselves)
+		String captionStartString = null;
+		for (int r = 0; r < areaStripes.length; r++) {
+			String stripeStartWordString = areaStripes[r].words[0].getString().toLowerCase();
+			if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(areaStripes[r].words[0].getTextStreamType())) {}
+			else if (stripeStartWordString.equals("t")) {} // need to catch word boundary due to font size change emulating small caps in some layouts
+			else if (stripeStartWordString.startsWith("tab")) {}
+			else if (stripeStartWordString.equals("a")) {} // need to catch word boundary due to font size change emulating small caps in some layouts
+			else if (stripeStartWordString.startsWith("appendi")) {}
+			else continue;
+			String stripeStartString = ImUtils.getString(areaStripes[r].words[0], areaStripes[r].words[Math.min(areaStripes[r].words.length, 5) - 1], true);
+			if (stripeStartString.matches("(Tab|TAB)[^\\s]*\\.?\\s*[1-9][0-9]*.*")) {
+				tableArea = null;
+				captionStartString = stripeStartString;
+				break;
+			}
+			else if (stripeStartString.matches("(Appendi|APPENDI)[^\\s]*\\.?\\s*[1-9][0-9]*.*")) {
+				tableArea = null;
+				captionStartString = stripeStartString;
+				break;
+			}
+			else if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(areaStripes[r].words[0].getTextStreamType())) {
+				tableArea = null;
+				captionStartString = stripeStartString;
+				break;
+			}
+		}
+		if (tableArea == null) {
+			pm.setInfo("   ==> cannot span table across caption '" + captionStartString + "'");
+			return null;
+		}
+		
+		//	collect words overlapping with lows to ignore them on column splitting
+		HashSet multiColumnCellWords = new HashSet();
+		for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+			ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+			for (int w = 0; w < areaWords.length; w++) {
+				if (areaWords[w].bounds.right <= col.left)
 					continue;
-				}
-				
-				/* TODO evaluate individual row stripe's compatibility with block column structure:
-				 * - first, compute occupation of each pixel column in table area
-				 * - then, score each row stripe, adding occupied rows if row stripe has a word in a column, and unoccupied rows if row stripe has a space
-				 * - compute this score for full width, and normalize it
-				 * - also compute this score for row stripe width, and normalize it
-				 * 
-				 * - maybe also compute this regarding spaces of width below document average as occupied
-				 * 
-				 * ==> should help identify row stripes to ignore in column re-computation
-				 * 
-				 * ==> looks pretty good as additional feature (significantly higher in actual tables, and distinctively low there for column spanning rows)
-				 * ==> not sure if bridging below-document-average spaces is helpful or harmful, or makes a difference at all
-				 * 
-				 * ==> when omitting row stripes in column computation, start with those whose full-width score is lowest ...
-				 * ==> ... and omit more row stripes one by one until
-				 *   - columns look good (success)
-				 *   - next to-omit row stripe has score above average (failure)
-				 *   - more than one third of row stripes omitted (failure)
-				 * ==> DO NOT strictly skip by score, but factor in column gap obstruction as well (row stripe segmentation might help here ...)
-				 */
-				RowStripeScore tableAreaScore = new RowStripeScore(tableArea, tableAreaStripes, null, docNormWordSpacing, true);
-				
-				/* TODOne evaluate how many segments row stripes have at different gap widths:
-				 * - compute sort of a "segment coloring" at different gap width thresholds
-				 * - assess how many other row stripes have distinct segments (different colors) where given row stripe has different segments
-				 * 
-				 * ==> should help identify row stripes to ignore in column re-computation
-				 * ==> should also help with column assessment below
-				 * ==> simply use pixel column index as color, propagating it rightward across non-splitting spaces and words
-				 */
-//				int[][] stripeSegmentColors50 = new int[tableAreaStripes.length][tableArea.getWidth()];
-//				int[][] stripeSegmentColors25 = new int[tableAreaStripes.length][tableArea.getWidth()];
-//				int[][] stripeSegmentColors13 = new int[tableAreaStripes.length][tableArea.getWidth()];
-//				int[][] stripeSegmentColors7 = new int[tableAreaStripes.length][tableArea.getWidth()];
-//				int[][] stripeSegmentColorsDNS = new int[tableAreaStripes.length][tableArea.getWidth()];
-//				System.out.println("     - segmenting " + tableAreaStripes.length + " row stripes:");
-//				for (int r = 0; r < tableAreaStripes.length; r++) {
-//					stripeSegmentColors50[r] = getRowStripeSegmentColors(tableArea, tableAreaStripes[r], (pages[pg].getImageDPI() / 50));
-//					stripeSegmentColors25[r] = getRowStripeSegmentColors(tableArea, tableAreaStripes[r], (pages[pg].getImageDPI() / 25));
-//					stripeSegmentColors13[r] = getRowStripeSegmentColors(tableArea, tableAreaStripes[r], (pages[pg].getImageDPI() / 13));
-//					stripeSegmentColors7[r] = getRowStripeSegmentColors(tableArea, tableAreaStripes[r], (pages[pg].getImageDPI() / 7));
-//					stripeSegmentColorsDNS[r] = getRowStripeSegmentColors(tableArea, tableAreaStripes[r], ((int) (tableAreaStripes[r].bounds.getHeight() * docNormWordSpacing)));
-//					System.out.println("       - " + tableAreaStripes[r].bounds + ": " + tableAreaStripes[r].words[0].getString());
-//					System.out.println("         " + countSegments(stripeSegmentColors50[r]) + " at gap " + (pages[pg].getImageDPI() / 50) + ", " + countSegments(stripeSegmentColors25[r]) + " at gap " + (pages[pg].getImageDPI() / 25) + ", " + countSegments(stripeSegmentColors13[r]) + " at gap " + (pages[pg].getImageDPI() / 13) + ", " + countSegments(stripeSegmentColors7[r]) + " at gap " + (pages[pg].getImageDPI() / 7) + ", " + countSegments(stripeSegmentColorsDNS[r]) + " at gap " + ((int) (tableAreaStripes[r].bounds.getHeight() * docNormWordSpacing)));
-//				}
-				
-				/* TODO evaluate segment compatibility or interference of row stripes:
-				 * - segment row stripes at minimum column margin (DPI/25 or 4/3 of normalized space, whichever is larger)
-				 * - count out which segment of each row overlaps with how many segments in how many other rows ...
-				 * - ... and use maximum of (overlapping segments / overlapping rows) to determine skip row stripes
-				 */
-				int[][] stripeSegmentColors = new int[tableAreaStripes.length][tableArea.getWidth()];
-				int minSegmentGap = Math.max(Math.round(docNormWordSpacing * tableAreaWordHeight), (pages[pg].getImageDPI() / 25));
-				for (int r = 0; r < tableAreaStripes.length; r++)
-					stripeSegmentColors[r] = getRowStripeSegmentColors(tableArea, tableAreaStripes[r], minSegmentGap);
-				
-				RowStripeSegmentation[] stripeSegments = new RowStripeSegmentation[tableAreaStripes.length];
-				System.out.println("     - segmenting " + tableAreaStripes.length + " row stripes:");
-				for (int r = 0; r < tableAreaStripes.length; r++) {
-					System.out.println("       - " + tableAreaStripes[r].bounds + ": " + tableAreaStripes[r].words[0].getString());
-					stripeSegments[r] = getRowStripeSegmentation(stripeSegmentColors[r], r, stripeSegmentColors, null);
-					System.out.println("         got " + stripeSegments[r].segments.length + " segments at threshold gap " + minSegmentGap + " (" + stripeSegments[r].minGap + " min, " + stripeSegments[r].maxGap + " max, " + stripeSegments[r].avgGap + " avg)");
-					for (int s = 0; s < stripeSegments[r].segments.length; s++) {
-						if (s != 0)
-							System.out.println("             gap also existing in " + stripeSegments[r].gaps[s-1].overlappingRowCount + " rows");
-						System.out.println("           - " + stripeSegments[r].segments[s].color + " overlapping with " + stripeSegments[r].segments[s].overlappingSegmentCount + " segments in " + stripeSegments[r].segments[s].overlappingRowCount + " rows");
-					}
-					System.out.println("           ==> row obstructs " + stripeSegments[r].getObstructedColumnGaps() + " column gaps");
-				}
-				
-				//	collect gaps existing in less than half of row stripes, and compute min, max, and average width of others
-				int minGap = Integer.MAX_VALUE;
-				int maxGap = 0;
-				int gapSum = 0;
-				int gapCount = 0;
-				HashSet lowSupportSegments = new HashSet();
-				HashSet lowSupportGaps = new HashSet();
-				for (int r = 0; r < tableAreaStripes.length; r++) {
-					for (int s = 0; s < stripeSegments[r].segments.length; s++) {
-						if (stripeSegments[r].segments[s].overlappingRowCount < (tableAreaStripes.length / 2))
-							lowSupportSegments.add(stripeSegments[r].segments[s]);
-					}
-					for (int g = 0; g < stripeSegments[r].gaps.length; g++) {
-						if (stripeSegments[r].gaps[g].overlappingRowCount < (tableAreaStripes.length / 2))
-							lowSupportGaps.add(stripeSegments[r].gaps[g]);
-						else {
-							int gap = (stripeSegments[r].gaps[g].end - stripeSegments[r].gaps[g].start);
-							minGap = Math.min(minGap, gap);
-							maxGap = Math.max(maxGap, gap);
-							gapSum += gap;
-							gapCount++;
-						}
-					}
-				}
-				int avgGap = ((gapCount == 0) ? 0 : ((gapSum + (gapCount / 2)) / gapCount));
-				System.out.println("     - found "  + lowSupportSegments.size() + " rare segments and " + lowSupportGaps.size() + " rare gaps, others are " + avgGap + " on average (" + minGap + " min, " + maxGap + " max)");
-				
-				//	close below-average width gaps existing in less than half of row stripes
-				if ((lowSupportSegments.size() != 0) || (lowSupportGaps.size() != 0)) {
-					
-					//	close below-average width gaps existing in less than half of row stripes
-					for (int r = 0; r < tableAreaStripes.length; r++)
-						for (int g = 0; g < stripeSegments[r].gaps.length; g++) {
-							if (stripeSegments[r].gaps[g].overlappingRowCount >= (tableAreaStripes.length / 2))
-								continue;
-							if ((stripeSegments[r].gaps[g].end - stripeSegments[r].gaps[g].start) >= avgGap)
-								continue;
-							for (int x = stripeSegments[r].gaps[g].start; x < stripeSegments[r].gaps[g].end; x++)
-								stripeSegmentColors[r][x] = stripeSegmentColors[r][x-1];
-							for (int x = stripeSegments[r].gaps[g].end; (x < stripeSegmentColors[r].length) && (stripeSegmentColors[r][x] != 0); x++)
-								stripeSegmentColors[r][x] = stripeSegmentColors[r][x-1];
-						}
-					
-					//	close narrower gap to left or right of low-support segments
-					for (int r = 0; r < tableAreaStripes.length; r++) {
-						if (stripeSegments[r].segments.length == 1)
-							continue;
-						for (int s = 0; s < stripeSegments[r].segments.length; s++) {
-							if (stripeSegments[r].segments[s].overlappingRowCount >= (tableAreaStripes.length / 2))
-								continue;
-							int narrowerAdjacentGapIndex;
-							if (s == 0)
-								narrowerAdjacentGapIndex = 0;
-							else if ((s+1) == stripeSegments[r].segments.length)
-								narrowerAdjacentGapIndex = (s-1);
-							else if ((stripeSegments[r].gaps[s-1].end - stripeSegments[r].gaps[s-1].start) > (stripeSegments[r].gaps[s].end - stripeSegments[r].gaps[s].start))
-								narrowerAdjacentGapIndex = s;
-							else narrowerAdjacentGapIndex = (s-1);
-							if ((stripeSegments[r].gaps[narrowerAdjacentGapIndex].end - stripeSegments[r].gaps[narrowerAdjacentGapIndex].start) >= avgGap)
-								continue;
-							for (int x = stripeSegments[r].gaps[narrowerAdjacentGapIndex].start; x < stripeSegments[r].gaps[narrowerAdjacentGapIndex].end; x++)
-								stripeSegmentColors[r][x] = stripeSegmentColors[r][x-1];
-							for (int x = stripeSegments[r].gaps[narrowerAdjacentGapIndex].end; (x < stripeSegmentColors[r].length) && (stripeSegmentColors[r][x] != 0); x++)
-								stripeSegmentColors[r][x] = stripeSegmentColors[r][x-1];
-						}
-					}
-					
-					//	re-compute segmentation with closed gaps
-					System.out.println("     - re-segmenting " + tableAreaStripes.length + " row stripes:");
-					for (int r = 0; r < tableAreaStripes.length; r++) {
-						System.out.println("       - " + tableAreaStripes[r].bounds + ": " + tableAreaStripes[r].words[0].getString());
-						stripeSegments[r] = getRowStripeSegmentation(stripeSegmentColors[r], r, stripeSegmentColors, null);
-						System.out.println("         got " + stripeSegments[r].segments.length + " segments at threshold gap " + minSegmentGap + " (" + stripeSegments[r].minGap + " min, " + stripeSegments[r].maxGap + " max, " + stripeSegments[r].avgGap + " avg)");
-						for (int s = 0; s < stripeSegments[r].segments.length; s++) {
-							if (s != 0)
-								System.out.println("             gap also existing in " + stripeSegments[r].gaps[s-1].overlappingRowCount + " rows");
-							System.out.println("           - " + stripeSegments[r].segments[s].color + " overlapping with " + stripeSegments[r].segments[s].overlappingSegmentCount + " segments in " + stripeSegments[r].segments[s].overlappingRowCount + " rows");
-						}
-						System.out.println("           ==> row obstructs " + stripeSegments[r].getObstructedColumnGaps() + " column gaps");
-					}
-				}
-				
-				//	exclude table with more than one third column gap obstructing rows
-				int gapObstructingRowCount = 0;
-				for (int r = 0; r < tableAreaStripes.length; r++) {
-					if (stripeSegments[r].getObstructedColumnGaps() != 0)
-						gapObstructingRowCount++;
-				}
-				System.out.println("     - got " + gapObstructingRowCount + " out of " + tableAreaStripes.length + " column gap obstructing row stripes");
-				if ((gapObstructingRowCount * 3) > tableAreaStripes.length) {
-					System.out.println("     ==> column gaps too inconsistent");
+				if (col.right <= areaWords[w].bounds.left)
 					continue;
+				multiColumnCellWords.add(areaWords[w]);
+			}
+		}
+		
+		//	get total width of column occupation lows
+		int colOccupationLowWidthSum = 0;
+		for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();)
+			colOccupationLowWidthSum += ((ColumnOccupationLow) colit.next()).getWidth();
+		
+		//	get speculative columns TODO mind row group labels spanning whole table width !!! ==> above lows have to do !!!
+		//	rationale: if we actually have a table, we should be able to distinguish at least _several_ columns
+		ImRegion areaTestTable = new ImRegion(page.getDocument(), page.pageId, tableArea, ImRegion.TABLE_TYPE);
+//		ImRegion[] areaTestCols = ImUtils.createTableColumns(areaTestTable, multiColumnCellWords, (areaStats.avgWordHeight / 3), (areaStats.getBrgColOccupationLowsReduced().size() + 1));
+		ImRegion[] areaTestCols = null;
+		int minAreaTestColCount = (areaStats.getBrgColOccupationLowsReduced().size() + 1);
+		while (areaTestCols == null) {
+//			TODO figure out if we need these thresholds, or if below width sum check is sufficiently safe
+//			if ((minAreaTestColCount * 3) < ((areaStats.getBrgColOccupationLowsReduced().size() + 1) * 2))
+//				break;
+//			if (minAreaTestColCount < ((areaStats.getBrgColOccupationLowsReduced().size() + 1) - 2))
+//				break;
+			areaTestCols = ImUtils.createTableColumns(areaTestTable, multiColumnCellWords, (areaStats.avgWordHeight / 3), minAreaTestColCount);
+			minAreaTestColCount--;
+			if (minAreaTestColCount < 2)
+				break;
+		}
+		if (areaTestCols == null) {
+			pm.setInfo("   ==> cannot build table with no clean column gaps at all");
+			return null;
+		}
+		if (areaTestCols.length < 2) {
+			pm.setInfo("   ==> cannot build table with less than two columns");
+			return null;
+		}
+		int areaTestColGapWidthSum = 0;
+		for (int c = 1; c < areaTestCols.length; c++)
+			areaTestColGapWidthSum += (areaTestCols[c].bounds.left - areaTestCols[c-1].bounds.right);
+		System.out.println("   - column occupation lows sum to " + colOccupationLowWidthSum + ", test column gaps to " + areaTestColGapWidthSum);
+		if ((areaTestCols.length < (areaStats.getBrgColOccupationLowsReduced().size() + 1)) && (areaTestColGapWidthSum < colOccupationLowWidthSum)) {
+			pm.setInfo("   ==> cannot build table with no reliable column gaps");
+			return null;
+		}
+		
+		//	assess cell occupation (especially for row labels and column headers)
+		int areaTestCellArea = 0;
+		int areaTestCellAreaOccupied = 0;
+		int areaTestCellAreaEmpty = 0;
+		int areaTestCellsOccupied = 0;
+		int areaTestCellsEmpty = 0;
+		int[] areaTestCellsLeadingOccupied = new int[(areaTestCols.length < 4) ? 1 : 2];
+		int[] areaTestCellsLeadingEmpty = new int[(areaTestCols.length < 4) ? 1 : 2];
+		int[] areaTestCellsTopOccupied = new int[(areaStripes.length < 4) ? 1 : ((areaStripes.length < 6) ? 2 : 3)];
+		int[] areaTestCellsTopEmpty = new int[(areaStripes.length < 4) ? 1 : ((areaStripes.length < 6) ? 2 : 3)];
+		pm.setInfo("   - potential cells are:");
+		for (int c = 0; c < areaTestCols.length; c++) {
+			pm.setInfo("     - in " + areaTestCols[c].bounds);
+			for (int r = 0; r < areaStripes.length; r++) {
+				BoundingBox tacBounds = new BoundingBox(areaTestCols[c].bounds.left, areaTestCols[c].bounds.right, areaStripes[r].bounds.top, areaStripes[r].bounds.bottom);
+				areaTestCellArea += tacBounds.getArea();
+				ImWord[] tacWords = page.getWordsInside(tacBounds);
+				String tacString = ImUtils.getString(tacWords, ImUtils.leftRightTopDownOrder, true);
+				pm.setInfo("       - " + tacString);
+				if (tacWords.length == 0) {
+					areaTestCellAreaEmpty += tacBounds.getArea();
+					areaTestCellsEmpty++;
+					if (c < areaTestCellsLeadingEmpty.length)
+						areaTestCellsLeadingEmpty[c]++;
+					if (r < areaTestCellsTopEmpty.length)
+						areaTestCellsTopEmpty[r]++;
 				}
-				
-				//	get potential columns (there have to be some, at least, even in presence of multi-column cells)
-				ImRegion tableAreaRegion = new ImRegion(doc, pages[pg].pageId, tableArea, ImRegion.TABLE_TYPE);
-				ImRegion[] tableAreaColumns = ImUtils.createTableColumns(tableAreaRegion, (pages[pg].getImageDPI() / 25), 0); // use 1 mm as minimum gap here, as we have the graphics for insurance
-				if (checkColumns(pages[pg], tableAreaColumns, tableAreaStripes)) {
-					System.out.println("     ==> looking good with all rows");
-				}
-				
-				//	get potential columns omitting any column gap obstructing rows
-				ImRegion[] ouTableAreaColumns;
-				if (gapObstructingRowCount == 0)
-					ouTableAreaColumns = tableAreaColumns;
 				else {
-					HashSet skipRowWords = new HashSet();
-					for (int r = 0; r < tableAreaStripes.length; r++) {
-						if (stripeSegments[r].getObstructedColumnGaps() != 0)
-							skipRowWords.addAll(Arrays.asList(tableAreaStripes[r].words));
-					}
-					ouTableAreaColumns = ImUtils.createTableColumns(tableAreaRegion, skipRowWords, (pages[pg].getImageDPI() / 25), 0); // use 1 mm as minimum gap here, as we have the graphics for insurance
-					if (checkColumns(pages[pg], ouTableAreaColumns, tableAreaStripes)) {
-						System.out.println("     ==> looking good with omitting rows");
-					}
-				}
-				
-				
-				
-				//	TODO_not check row stripe density distribution as well (there has to be some significant outliers for row skipping to make sense)
-				//	==> might be true for intermediate labels, but not for multi-column cells in general
-				//	==> let row stripe segmentation based column split assessment take care of this
-				
-				//	check columns, and try leaving out high-density stripes if columns no good
-				if (!checkColumns(pages[pg], tableAreaColumns, tableAreaStripes)) {
-					boolean[] skipRow = new boolean[tableAreaStripes.length];
-					Arrays.fill(skipRow, false);
-					int skipRowCount = 0;
-					RowStripeScore skipTableAreaScore = tableAreaScore;
-					HashSet skipRowWords = new HashSet();
-					
-					//	skip more and more rows one by one
-					//	TODO make sure not to stop all too early, though, as that might mess up table
-					//	==> TODO keep skipping a little more even when columns check out, collecting results, and pick best columns in the end
-					/*	==> TODO find column scoring scheme:
-					 * - few rows skipped
-					 * - gaps consistent (low difference between minimum and maximum, or low oddity)
-					 * - columns internally consistent, and well-occupied
-					 * 
-					 * ==> TODO_not consider re-scoring solely based on non-skipped row stripes after each round (alleviates mutual scoring of skipped rows)
-					 * ==> tried it, doesn't seem to work all that well ...
-					 */
-					while ((skipRowCount * 3) <= tableAreaStripes.length) {
-						
-						//	find next row to skip
-						int skipRowIndex = -1;
-						float skipRowScore = 1;
-						for (int r = 0; r < tableAreaStripes.length; r++) {
-							if (skipRow[r])
-								continue; // already skipped
-//							if (areaWidthColOccupationScores[r] < skipRowScore) {
-//								skipRowIndex = r;
-//								skipRowScore = areaWidthColOccupationScores[r];
-//							}
-							if (skipTableAreaScore.areaWidthColOccupationScores[r] < skipRowScore) {
-								skipRowIndex = r;
-								skipRowScore = skipTableAreaScore.areaWidthColOccupationScores[r];
-							}
-						}
-						
-						//	nothing left to skip, so we don't have a table
-						if (skipRowIndex == -1) {
-							tableAreaColumns = null;
-							System.out.println("     ==> no more rows to skip");
-							break;
-						}
-						
-						//	mark and count row as skipped
-						skipRow[skipRowIndex] = true;
-						skipRowCount++;
-						System.out.println("     - omitting row " + tableAreaStripes[skipRowIndex].words[0].getString());
-						
-						//	skipped too many row stripes already, so we don't have a table
-						if ((skipRowCount * 3) > tableAreaStripes.length) {
-							tableAreaColumns = null;
-							System.out.println("     ==> skipped too many rows already");
-							break;
-						}
-						
-						//	skip threshold came up above average, so we don't have a table
-//						if (skipRowScore >= areaWidthColOccupationScoreAvg) {
-//							tableAreaColumns = null;
-//							System.out.println("     ==> no use skipping row scored above average");
-//							break;
-//						}
-						if (skipRowScore >= tableAreaScore.areaWidthColOccupationScoreAvg) {
-							tableAreaColumns = null;
-							System.out.println("     ==> no use skipping row scored above average");
-							break;
-						}
-						
-						//	add row words to skip set, and re-compute columns
-						skipRowWords.addAll(Arrays.asList(tableAreaStripes[skipRowIndex].words));
-						tableAreaColumns = ImUtils.createTableColumns(tableAreaRegion, skipRowWords, (pages[pg].getImageDPI() / 25), 0); // use 1 mm as minimum gap here, as we have the graphics for insurance
-						System.out.println("     - columns re-computed omitting " + skipRowWords.size() + " words");
-						
-						//	re-score remaining row stripes
-						//	==> doesn't seem to work all that well ...
-						skipTableAreaScore = new RowStripeScore(tableArea, tableAreaStripes, skipRow, docNormWordSpacing, true);
-//						
-//						//	check result
-//						if (checkColumns(pages[pg], tableAreaColumns, tableAreaStripes))
-//							break;
-					}
-//					for (int r = 0; r < tableAreaStripes.length; r++) {
-//						if (tableAreaStripes[r].getWordDensity() > docWordDensity1d)
-//							skipRowWords.addAll(Arrays.asList(tableAreaStripes[r].words));
-//					}
-//					tableAreaColumns = ImUtils.createTableColumns(tableAreaRegion, skipRowWords, (pages[pg].getImageDPI() / 25), 0); // use 1 mm as minimum gap here, as we have the graphics for insurance
-//					System.out.println("     - columns re-computed omitting " + skipRowWords.size() + " words");
-//					if (!checkColumns(pages[pg], tableAreaColumns, tableAreaStripes))
-//						continue;
-					if (tableAreaColumns == null)
-						continue;
-				}
-				
-				//	mark table candidate for further assessment
-				GraphTableCandiate tableCand = new GraphTableCandiate(tableArea, tableAreaStripes, tableAreaColumns);
-				
-				//	finally ...
-				System.out.println("     ==> looking good for a table");
-				pageTableCandidates.add(tableCand);
-			}
-			
-			//	anything left to work with?
-			if (pageTableCandidates.size() == 0)
-				continue;
-			if (true)
-				continue;
-			
-			//	filter table candidates contained in others and having no more columns than containing one
-			System.out.println(" - filtering " + pageTableCandidates.size() + " candidate table grids");
-			for (int t = 0; t < pageTableCandidates.size(); t++) {
-				GraphTableCandiate tableCand = ((GraphTableCandiate) pageTableCandidates.get(t));
-				for (int ct = (t+1); ct < pageTableCandidates.size(); ct++) {
-					GraphTableCandiate cTableCand = ((GraphTableCandiate) pageTableCandidates.get(ct));
-					if ((cTableCand.columns.length <= tableCand.columns.length) && cTableCand.bounds.liesIn(tableCand.bounds, false)) {
-						pageTableCandidates.remove(ct--);
-						System.out.println("   - removed " + cTableCand.bounds + " as contained in " + tableCand.bounds);
-					}
-				}
-			}
-			
-			//	filter table candidates containing two or more others with more columns than they have themselves (helps sort out stacked tables with partially compatible column gaps marked as one)
-			for (int t = 0; t < pageTableCandidates.size(); t++) {
-				GraphTableCandiate tableCand = ((GraphTableCandiate) pageTableCandidates.get(t));
-				ArrayList subTableCands = new ArrayList();
-				for (int ct = (t+1); ct < pageTableCandidates.size(); ct++) {
-					GraphTableCandiate cTableCand = ((GraphTableCandiate) pageTableCandidates.get(ct));
-					if ((cTableCand.columns.length > tableCand.columns.length) && cTableCand.bounds.liesIn(tableCand.bounds, false))
-						subTableCands.add(cTableCand);
-				}
-				if (subTableCands.size() > 1) {
-					pageTableCandidates.remove(t--);
-					System.out.println("   - removed " + tableCand.bounds + " as conflation of " + subTableCands.size() + " better candidates:");
-					for (int s = 0; s < subTableCands.size(); s++) {
-						GraphTableCandiate subTableCand = ((GraphTableCandiate) subTableCands.get(s));
-						System.out.println("     - " + subTableCand.bounds);
-					}
-				}
-			}
-			
-			//	filter table candidates overlapping two or more others with at least as many columns as they have themselves, and lower column gap oddity (helps sort out stacked tables with partially compatible column gaps marked as one)
-			for (int t = 0; t < pageTableCandidates.size(); t++) {
-				GraphTableCandiate tableCand = ((GraphTableCandiate) pageTableCandidates.get(t));
-				ArrayList subTableCands = new ArrayList();
-				for (int ct = (t+1); ct < pageTableCandidates.size(); ct++) {
-					GraphTableCandiate cTableCand = ((GraphTableCandiate) pageTableCandidates.get(ct));
-					if ((cTableCand.columns.length >= tableCand.columns.length) && (cTableCand.getColumnGapOddity() < tableCand.getColumnGapOddity()) && cTableCand.bounds.overlaps(tableCand.bounds))
-						subTableCands.add(cTableCand);
-				}
-				if (subTableCands.size() > 1) {
-					pageTableCandidates.remove(t--);
-					System.out.println("   - removed " + tableCand.bounds + " as overlapping with " + subTableCands.size() + " better candidates:");
-					for (int s = 0; s < subTableCands.size(); s++) {
-						GraphTableCandiate subTableCand = ((GraphTableCandiate) subTableCands.get(s));
-						System.out.println("     - " + subTableCand.bounds);
-					}
-				}
-			}
-			
-			//	shrink tables to contained words, and show what we have
-			System.out.println(" - retained " + pageTableCandidates.size() + " candidate table grids:");
-			for (int t = 0; t < pageTableCandidates.size(); t++) {
-				GraphTableCandiate tableCand = ((GraphTableCandiate) pageTableCandidates.get(t));
-				System.out.println("   - " + tableCand.bounds + ":");
-				BoundingBox tableWordBounds = ImLayoutObject.getAggregateBox(pages[pg].getWordsInside(tableCand.bounds));
-				if (tableWordBounds != null) {
-					tableCand = new GraphTableCandiate(tableWordBounds, tableCand.rowStripes, tableCand.columns);
-					pageTableCandidates.set(t, tableCand);
-					System.out.println("     - bounding box reduced to words: " + tableWordBounds);
-				}
-				System.out.println("     - " + tableCand.columns.length + " columns, gaps are " + tableCand.avgColumnGap + " on average (min " + tableCand.minColumnGap + ", max " + tableCand.maxColumnGap + "):");
-				for (int c = 0; c < tableCand.columns.length; c++) {
-					ImWord[] colWords = pages[pg].getWordsInside(tableCand.columns[c].bounds);
-					ImUtils.sortLeftRightTopDown(colWords);
-					System.out.println("       - " + tableCand.columns[c].bounds + ": " + ((colWords.length == 0) ? "<empty>" : colWords[0].getString()));
-				}
-				System.out.println("     - column gap oddity quotient is " + tableCand.getColumnGapOddity());
-				System.out.println("     - " + tableCand.rowStripes.length + " rows:");
-				for (int r = 0; r < tableCand.rowStripes.length; r++)
-					System.out.println("       - " + tableCand.rowStripes[r].bounds + ": " + tableCand.rowStripes[r].words[0].getString());
-				RowStripeGroup[] rowStripeGroups = getRowStripeGroups(pages[pg], tableCand.bounds, tableCand.rowStripes);
-				System.out.println("     - row stripes grouped into " + rowStripeGroups.length + " table rows:");
-				for (int g = 0; g < rowStripeGroups.length; g++) {
-					System.out.println("       - " + rowStripeGroups[g].bounds);
-					for (int r = 0; r < rowStripeGroups[g].rowStripes.length; r++)
-						System.out.println("         - " + rowStripeGroups[g].rowStripes[r].bounds + ": " + rowStripeGroups[g].rowStripes[r].words[0].getString() + " (spaces are " + rowStripeGroups[g].rowStripes[r].aSpace + " above, " + rowStripeGroups[g].rowStripes[r].bSpace + " below)");
+					areaTestCellAreaOccupied += tacBounds.getArea();
+					areaTestCellsOccupied++;
+					if (c < areaTestCellsLeadingOccupied.length)
+						areaTestCellsLeadingOccupied[c]++;
+					if (r < areaTestCellsTopOccupied.length)
+						areaTestCellsTopOccupied[r]++;
 				}
 			}
 		}
 		
-		if (true)
-			return;
-		
-		//	assess block density for individual pages
-		BlockData[][] pageBlockData = new BlockData[pages.length][];
-		CountingSet docBlockDensities = new CountingSet(new TreeMap());
-		CountingSet docStripeDensities = new CountingSet(new TreeMap());
-		for (int pg = 0; pg < pages.length; pg++) {
-			System.out.println("Assessing page " + pages[pg].pageId);
-			
-			RowStripe[] pgStripes = getRowStripes(pages[pg], pages[pg].bounds);
-			System.out.println(" - got " + pgStripes.length + " overall stripes");
-			float pgWordDensity = getWordDensity(pgStripes);
-			System.out.println(" --> overall word density is " + pgWordDensity);
-			
-			//	assess page blocks
-			ImRegion[] pgBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
-			Arrays.sort(pgBlocks, ImUtils.topDownOrder);
-			ArrayList pgBlockData = new ArrayList();
-			for (int b = 0; b < pgBlocks.length; b++) {
-				System.out.println(" - assessing block " + pgBlocks[b].bounds);
-				
-				RowStripe[] bStripes = getRowStripes(pages[pg], pgBlocks[b].bounds);
-				if (bStripes.length == 0) {
-					System.out.println("   --> empty block");
-					continue;
-				}
-				System.out.println("   - got " + bStripes.length + " block stripes");
-				float bWordDensity = getWordDensity(bStripes);
-				System.out.println("   --> block word density is " + bWordDensity);
-				
-				docBlockDensities.add(new Integer((int) (20 * bWordDensity)));
-				for (int s = 0; s < bStripes.length; s++)
-					docStripeDensities.add(new Integer((int) (20 * bStripes[s].getWordDensity())));
-				
-				pgBlockData.add(new BlockData(pgBlocks[b], bWordDensity, bStripes));
-			}
-			
-			//	store blocks and stripes
-			pageBlockData[pg] = ((BlockData[]) pgBlockData.toArray(new BlockData[pgBlockData.size()]));
-//			
-//			ImRegion[] paragraphs = pages[pg].getRegions(ImRegion.PARAGRAPH_TYPE);
-//			for (int p = 0; p < paragraphs.length; p++) {
-//				System.out.println(" - assessing paragra " + paragraphs[p].bounds);
-//				
-//				float pWordDensity = assessWordDensity(paragraphs[p]);
-//				System.out.println("   --> paragraph word density is " + pWordDensity);
-//			}
+		//	test for super sparse candidates (graphics with labels mistaken for tables)
+		int sparseTableAreaScore = 0;
+		pm.setInfo("   --> got " + areaTestCellArea + " pixels occupied by cells out of " + tableArea.getArea() + " (" + ((areaTestCellArea * 100) / tableArea.getArea()) + "%)");
+		pm.setInfo("   --> got " + areaTestCellAreaOccupied + " pixels occupied by occupied cells out of " + tableArea.getArea() + " (" + ((areaTestCellAreaOccupied * 100) / tableArea.getArea()) + "%)");
+		pm.setInfo("   --> got " + areaTestCellAreaEmpty + " pixels occupied by empty cells out of " + tableArea.getArea() + " (" + ((areaTestCellAreaEmpty * 100) / tableArea.getArea()) + "%)");
+		if ((areaTestCellArea * 5) < tableArea.getArea()) { // less than 20% of overall area occupied by cells
+			sparseTableAreaScore++;
+			pm.setInfo("   ==> area sparsely covered by cells");
 		}
-//		
-//		//	compute average density of document blocks
-//		int stripeWidthSum = 0;
-//		int wordWidthSum = 0;
-//		int stripeArea = 0;
-//		int wordArea = 0;
-//		int wordDistanceSum = 0;
-//		float nWordDistanceSum = 0;
-//		int wordDistanceCount = 0;
-//		for (int pg = 0; pg < pages.length; pg++) {
-//			for (int b = 0; b < pageBlockData[pg].length; b++)
-//				for (int s = 0; s < pageBlockData[pg][b].rowStripes.length; s++) {
-//					stripeWidthSum += (pageBlockData[pg][b].rowStripes[s].bounds.right - pageBlockData[pg][b].rowStripes[s].bounds.left);
-//					wordWidthSum += pageBlockData[pg][b].rowStripes[s].wordWidthSum;
-//					stripeArea += pageBlockData[pg][b].rowStripes[s].area;
-//					wordArea += pageBlockData[pg][b].rowStripes[s].wordArea;
-//					wordDistanceSum += pageBlockData[pg][b].rowStripes[s].wordDistanceSum;
-//					nWordDistanceSum += pageBlockData[pg][b].rowStripes[s].nWordDistanceSum;
-//					wordDistanceCount += pageBlockData[pg][b].rowStripes[s].wordDistanceCount;
+		else if ((areaTestCellAreaOccupied * 10) < tableArea.getArea()) { // less than 10% of overall area occupied by non-empty cells
+			sparseTableAreaScore++;
+			pm.setInfo("   ==> area sparsely covered by populated cells");
+		}
+		pm.setInfo("   --> got " + areaTestCellsOccupied + " occupied cells, " + areaTestCellsEmpty + " empty ones");
+		if ((areaTestCellsOccupied * 3) < (areaTestCellsEmpty)) { // less than 25% of cells populated
+			sparseTableAreaScore++;
+			pm.setInfo("   ==> cells sparsely populated");
+		}
+		pm.setInfo("   --> got " + max(areaTestCellsLeadingOccupied) + " occupied row label cells, " + min(areaTestCellsLeadingEmpty) + " empty ones");
+		if (max(areaTestCellsLeadingOccupied) < min(areaTestCellsLeadingEmpty)) { // less than half of potential row labels populated
+			sparseTableAreaScore++;
+			pm.setInfo("   ==> row labels sparsely populated");
+		}
+		pm.setInfo("   --> got " + max(areaTestCellsTopOccupied) + " occupied column header cells, " + min(areaTestCellsTopEmpty) + " empty ones");
+		if (max(areaTestCellsTopOccupied) < min(areaTestCellsTopEmpty)) { // less than half of potential column headers populated
+			sparseTableAreaScore++;
+			pm.setInfo("   ==> column headers sparsely populated");
+		}
+		if (sparseTableAreaScore >= 3) {
+			pm.setInfo("   ==> cannot build table in all too sparse area");
+			return null;
+		}
+		
+		//	use this for debug
+//		BufferedImage areaImage = null;
+		Graphics2D areaGr = null;
+		
+		//	if we have considerable horizontal peaks in in-word graphics, check if they coincide with row gaps
+		if (areaStats.grRowOccupations != null) {
+			System.out.println("Checking horizontal graphics in " + areaStats.wordBounds + ":");
+//			if (areaImage == null) {
+//				areaImage = new BufferedImage(areaStats.grImage.getWidth(), areaStats.grImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
+//				areaGr = areaImage.createGraphics();
+//				areaGr.drawImage(areaStats.grImage, 0, 0, null);
+//				areaGr.setColor(new Color(128, 128, 128, 128));
+//				for (int w = 0; w < areaStats.words.length; w++) {
+//					int wordLeft = (areaStats.words[w].bounds.left - areaStats.grBounds.left);
+//					int wordTop = (areaStats.words[w].bounds.top - areaStats.grBounds.top);
+//					areaGr.fillRect(wordLeft, wordTop, areaStats.words[w].bounds.getWidth(), areaStats.words[w].bounds.getHeight());
 //				}
+//			}
+//			areaGr.setColor(new Color(0, 0, 255, 64));
+//			for (int tr = 0; tr < areaStripes.length; tr++)
+//				areaGr.fillRect(0, (areaStripes[tr].bounds.top - areaStats.grBounds.top), areaStats.grBounds.getWidth(), areaStripes[tr].bounds.getHeight());
+//			areaGr.setColor(new Color(0, 0, 255, 128));
+//			for (int r = 0; r < areaStats.grRowOccupations.length; r++)
+//				areaGr.fillRect(0, r, areaStats.grRowOccupations[r], 1);
+			GraphicsPeakStats grRowStats25 = analyzeRowGraphicsPeaks(localAreaStats, areaStripes, areaWordHeight, 0.25f, 0.7f, areaGr);
+//			GraphicsPeakStats grRowStats33 = analyzeRowGraphicsPeaks(localAreaStats, areaStripes, areaWordHeight, 0.33f, 0.7f, areaGr);
+//			GraphicsPeakStats grRowStats50 = analyzeRowGraphicsPeaks(localAreaStats, areaStripes, areaWordHeight, 0.5f, 0.7f, areaGr);
+//			GraphicsPeakStats grRowStats67 = analyzeRowGraphicsPeaks(localAreaStats, areaStripes, areaWordHeight, 0.67f, 0.7f, areaGr);
+			//	TODO maybe use 33 stats ???
+			if ((areaStats.grCount == 1) && (grRowStats25.fullHeightPeaks == 0) && ((areaStats.inWordGrBounds.getWidth() * 5) > (areaStats.wordBounds.getWidth() * 4))) {
+				pm.setInfo("   ==> cannot build single-piece grid table with short horizontal grid lines");
+				return null; // if we have a single-piece full-width grid, there has to be at least one spanning horizontal line
+			}
+			if ((grRowStats25.peaks != 0) && (grRowStats25.fullHeightPeaks == 0)) {
+				pm.setInfo("   ==> cannot build table with short horizontal grid lines");
+				return null; // if we have horizontal peaks, at least the one of them has to go all the width: the one below the column headers
+			}
+			if ((grRowStats25.peaks != 0) && (grRowStats25.intraStripePeaks > grRowStats25.interStripePeaks)) {
+				pm.setInfo("   ==> cannot build table with in-row horizontal grid lines");
+				return null; // if we have horizontal peaks, at least half of them should be between row stripes
+			}
+		}
+		
+		//	if we have considerable vertical peaks in in-word graphics, check if they coincide with column gaps
+		if (areaStats.grColOccupations != null) {
+			System.out.println("Checking vertical graphics " + areaStats.wordBounds + ":");
+//			if (areaImage == null) {
+//				areaImage = new BufferedImage(areaStats.grImage.getWidth(), areaStats.grImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
+//				areaGr = areaImage.createGraphics();
+//				areaGr.drawImage(areaStats.grImage, 0, 0, null);
+//				areaGr.setColor(new Color(128, 128, 128, 128));
+//				for (int w = 0; w < areaStats.words.length; w++) {
+//					int wordLeft = (areaStats.words[w].bounds.left - areaStats.grBounds.left);
+//					int wordTop = (areaStats.words[w].bounds.top - areaStats.grBounds.top);
+//					areaGr.fillRect(wordLeft, wordTop, areaStats.words[w].bounds.getWidth(), areaStats.words[w].bounds.getHeight());
+//				}
+//			}
+//			areaGr.setColor(new Color(255, 0, 0, 64));
+//			for (int tc = 0; tc < areaTestCols.length; tc++)
+//				areaGr.fillRect((areaTestCols[tc].bounds.left - areaStats.grBounds.left), 0, areaTestCols[tc].bounds.getWidth(), areaStats.grBounds.getHeight());
+//			areaGr.setColor(new Color(255, 0, 0, 128));
+//			for (int c = 0; c < areaStats.grColOccupations.length; c++)
+//				areaGr.fillRect(c, (areaStats.grBounds.getHeight() - areaStats.grColOccupations[c]), 1, areaStats.grColOccupations[c]);
+			GraphicsPeakStats grColStats25 = analyzeColGraphicsPeaks(localAreaStats, areaTestCols, areaWordHeight, docNormSpaceWidth, 0.25f, 0.8f, areaGr);
+//			GraphicsPeakStats grColStats33 = analyzeColGraphicsPeaks(localAreaStats, areaTestCols, areaWordHeight, docNormSpaceWidth, 0.33f, 0.8f, areaGr);
+//			GraphicsPeakStats grColStats50 = analyzeColGraphicsPeaks(localAreaStats, areaTestCols, areaWordHeight, docNormSpaceWidth, 0.5f, 0.8f, areaGr);
+//			GraphicsPeakStats grColStats67 = analyzeColGraphicsPeaks(localAreaStats, areaTestCols, areaWordHeight, docNormSpaceWidth, 0.67f, 0.8f, areaGr);
+			//	TODO maybe use 33 stats ???
+			if ((areaStats.grCount == 1) && (grColStats25.fullHeightPeaks == 0) && ((areaStats.inWordGrBounds.getHeight() * 5) > (areaStats.wordBounds.getHeight() * 4))) {
+				pm.setInfo("   ==> cannot build single-piece grid table with short vertical grid lines");
+				return null; // if we have a single-piece full-height grid, there has to be at least one spanning horizontal line
+			}
+			if ((grColStats25.peaks != 0) && (grColStats25.fullHeightPeaks == 0)) {
+				pm.setInfo("   ==> cannot build table with low vertical grid lines");
+				return null; // if we have vertical peaks, at least the one of them has to go all the height: the one right of the row labels
+			}
+			if ((grColStats25.peaks != 0) && (grColStats25.intraStripePeaks > grColStats25.interStripePeaks)) {
+				pm.setInfo("   ==> cannot build table with in-column vertical grid lines");
+				return null; // if we have vertical peaks, at least half of them should be between column stripes
+			}
+		}
+//		if (areaImage != null) {
+//			areaGr.dispose();
+//			ImageDisplayDialog grIdd = new ImageDisplayDialog("Table Area Graphics in Page " + page.pageId + " at " + areaStats.grBounds);
+//			grIdd.addImage(areaImage, "");
+//			grIdd.setSize(600, 800);
+//			grIdd.setLocationRelativeTo(null);
+//			grIdd.setVisible(true);
 //		}
-//		float docWordDensity1d = ((stripeWidthSum < 1) ? 0 : (((float) wordWidthSum) / stripeWidthSum));
-//		float docWordDensity2d = ((stripeArea < 1) ? 0 : (((float) wordArea) / stripeArea));
-//		System.out.println("Average document word density is " + docWordDensity1d + " horizonatally, " + docWordDensity2d + " by area");
-//		float docWordSpacing = ((wordDistanceCount < 1) ? 0 : (((float) wordDistanceSum) / wordDistanceCount));
-//		System.out.println("Average document word spacing " + docWordSpacing);
-//		float docNormWordSpacing = ((wordDistanceCount < 1) ? 0 : (((float) nWordDistanceSum) / wordDistanceCount));
-//		System.out.println("Average normalized document word spacing " + docNormWordSpacing);
-//		System.out.println("Block density distripution:");
-//		for (int d = 20; d >= 0; d--)
-//			System.out.println(" - " + (d * 5) + ": " + docBlockDensities.getCount(new Integer(d)));
-//		System.out.println("Stripe density distripution:");
-//		for (int d = 20; d >= 0; d--)
-//			System.out.println(" - " + (d * 5) + ": " + docStripeDensities.getCount(new Integer(d)));
-//		//	as it seems (at least from 3 test documents of rather different layout), document average block density makes for a good threshold above which a block is surely NOT a table
 		
-		//	assess page blocks
-		for (int pg = 0; pg < pages.length; pg++) {
-			
-			//	assess individual blocks
-			for (int b = 0; b < pageBlockData[pg].length; b++) {
-				
-				//	this one is too dense to be a table
-				if (pageBlockData[pg][b].density >= docWordDensity1d)
-					continue;
-				
-				//	assess block
-				assessBlockData(pages[pg], pageBlockData[pg][b], docWordDensity1d);
-			}
-			
-			//	try and assemble row stripe groups into tables
-			//	TODO do this _per_column_, so top-down sort order doesn't alternate left-right in two-column layouts
-			ArrayList tableRowStripeGroups = new ArrayList();
-			ArrayList tableCandidates = new ArrayList();
-			for (int b = 0; b < pageBlockData[pg].length; b++) {
-				
-				//	this one is too dense to be a table
-				if (pageBlockData[pg][b].density >= docWordDensity1d) {
-					tableRowStripeGroups.clear(); // cannot continue table across this block
-					continue;
-				}
-				
-				//	this one was excluded as a table
-				if (pageBlockData[pg][b].rowStripeGroups == null) {
-					tableRowStripeGroups.clear(); // cannot continue table across this block
-					continue;
-				}
-				
-				//	assess individual row stripe groups
-				for (int sg = 0; sg < pageBlockData[pg][b].rowStripeGroups.length; sg++) {
-					
-					//	table ends here
-					if (!pageBlockData[pg][b].rowStripeGroups[sg].isTablePart) {
-						tableRowStripeGroups.clear(); // cannot continue table across this row stripe group
-						continue;
+		//	TODO mark region as dead if (a) only two lines contained and (b) column split fails
+		
+		//	compute average column spacing ...
+		//	TODO use table area stats above
+		//	TODO maybe also compute mean (by means of CountingSet and elimination of extremes)
+		int columnGapSum = 0;
+		for (int c = 1; c < areaTestCols.length; c++)
+			columnGapSum += (areaTestCols[c].bounds.left - areaTestCols[c-1].bounds.right);
+		int avgColumnGap = (columnGapSum / (areaTestCols.length - 1));
+		pm.setInfo("   - average column gap is " + avgColumnGap);
+		
+		//	TODO ... and compare in-cell word spacing to that
+		for (int c = 0; c < areaTestCols.length; c++) {
+			pm.setInfo("   - checking words distances in " + areaTestCols[c].bounds);
+			for (int r = 0; r < areaStripes.length; r++) {
+				BoundingBox tacBounds = new BoundingBox(areaTestCols[c].bounds.left, areaTestCols[c].bounds.right, areaStripes[r].bounds.top, areaStripes[r].bounds.bottom);
+				ImWord[] tacWords = page.getWordsInside(tacBounds);
+				ImUtils.sortLeftRightTopDown(tacWords);
+				for (int w = 1; w < tacWords.length; w++) {
+					if (tacWords[w-1].bounds.bottom < tacWords[w].centerY)
+						continue; // no use comparing across line break
+					int tacWordDist = (tacWords[w].bounds.left - tacWords[w-1].bounds.right);
+					if ((avgColumnGap * 3) < (tacWordDist * 4)) {
+						pm.setInfo("     - column gap grade word distance of " + tacWordDist + " in " + ImUtils.getString(tacWords, ImUtils.leftRightTopDownOrder, true) + " between '" + tacWords[w-1].getString() + "' and '" + tacWords[w].getString() + "'");
+						//	TODO make this count
 					}
-					
-					//	add current row stripe group ...
-					tableRowStripeGroups.add(pageBlockData[pg][b].rowStripeGroups[sg]);
-					
-					//	... and check for table
-					TableCandidate tabCand = checkForTable(tableRowStripeGroups, docWordDensity1d);
-					
-					//	row stripes incompatible, start over with current one alone
-					if (tabCand == null) {
-						tableRowStripeGroups.clear();
-						sg--;
-						continue;
-					}
-					
-					//	too few full width row stripes
-					if (tabCand.fullWidthRowStripeCount < 3) {
-						System.out.println(" ==> too few full-width rows for fully blown table, need mergers");
-						continue;
-					}
-					
-					//	this one looks good, keep it
-					tableCandidates.add(tabCand);
-					System.out.println(" ==> table candidate retained for further assessment");
 				}
 			}
-			
-			//	sort table candidates ()
-			Collections.sort(tableCandidates);
-			
-			//	remove table candidates nested in others
-			//	TODO maybe add some comparative checks
-			for (int tc = 0; tc < tableCandidates.size(); tc++) {
-				TableCandidate tabCand = ((TableCandidate) tableCandidates.get(tc));
-				for (int ctc = (tc+1); ctc < tableCandidates.size(); ctc++) {
-					TableCandidate cTabCand = ((TableCandidate) tableCandidates.get(ctc));
-					if (tabCand.bounds.includes(cTabCand.bounds, false))
-						tableCandidates.remove(ctc--);
-				}
-			}
-			
-			//	what do we have?
-			System.out.println("Found " + tableCandidates.size() + " likely tables in page " + pg + ":");
-			for (int tc = 0; tc < tableCandidates.size(); tc++) {
-				TableCandidate tabCand = ((TableCandidate) tableCandidates.get(tc));
-				System.out.println(" - " + tabCand.bounds + ", rows groups are:");
-				for (int sg = 0; sg < tabCand.rowStripeGroups.length; sg++) {
-					System.out.print("   - " + tabCand.rowStripeGroups[sg].bounds + ": ");
-					for (int rs = 0; rs < tabCand.rowStripeGroups[sg].rowStripes.length; rs++)
-						System.out.print(((rs == 0) ? "" : ", ") + tabCand.rowStripeGroups[sg].rowStripes[rs].words[0].getString());
-					System.out.println();
-				}
-				
-				//	try column split, requiring at least 3 columns
-				ImRegion tabReg = new ImRegion(doc, pages[pg].pageId, tabCand.bounds, ImRegion.TABLE_TYPE);
-				ImRegion[] tabCols = ImUtils.getTableColumns(tabReg, (pages[pg].getImageDPI() / 13), 0);
-				if (tabCols == null) {
-					System.out.println(" ==> could not identify columns");
-					tableCandidates.remove(tc--);
-					continue;
-				}
-				if (tabCols.length < 3) {
-					System.out.println(" ==> got only " + tabCols.length + " columns, too few");
-					tableCandidates.remove(tc--);
-					continue;
-				}
-				System.out.println(" - " + tabCols.length + " columns");
-				for (int c = 0; c < tabCols.length; c++) {
-					ImWord[] colWords = pages[pg].getWordsInside(tabCols[c].bounds);
-					Arrays.sort(colWords, ImUtils.topDownOrder);
-					System.out.println("   - " + tabCols[c].bounds + ": " + colWords[0].getString());
-				}
-				
-				//	TODO merge columns with single words into nearest more strongly occupied column
-				
-				//	TODO assess column symmetry
-			}
+		}
+		
+		//	finally ...
+		return new TableAreaCandidate(areaStripes, areaTestCols, areaStats);
+	}
+	
+	private static int min(int[] ints) {
+		int minInt = Integer.MAX_VALUE;
+		for (int i = 0; i < ints.length; i++) {
+			if (ints[i] < minInt)
+				minInt = ints[i];
+		}
+		return minInt;
+	}
+	
+	private static int max(int[] ints) {
+		int maxInt = Integer.MIN_VALUE;
+		for (int i = 0; i < ints.length; i++) {
+			if (maxInt < ints[i])
+				maxInt = ints[i];
+		}
+		return maxInt;
+	}
+	
+	private static int avg(int[] ints) {
+		int sum = 0;
+		for (int i = 0; i < ints.length; i++)
+			sum += ints[i];
+		return ((ints.length == 0) ? 0 : ((sum + (ints.length / 2)) / ints.length));
+	}
+	
+	private static class GraphicsPeakStats {
+		final int peaks;
+		final int fullHeightPeaks;
+		final int interStripePeaks;
+		final int intraStripePeaks;
+		final int[] stripeIntraPeaks;
+		GraphicsPeakStats(int peaks, int fullHeightPeaks, int interStripePeaks, int intraStripePeaks, int[] stripeIntraPeaks) {
+			this.peaks = peaks;
+			this.fullHeightPeaks = fullHeightPeaks;
+			this.interStripePeaks = interStripePeaks;
+			this.intraStripePeaks = intraStripePeaks;
+			this.stripeIntraPeaks = stripeIntraPeaks;
 		}
 	}
 	
-	private static class RowStripeScore {
-		final float[] areaWidthColOccupationScores;
-		final float[] stripeWidthColOccupationScores;
-		final float[] bAreaWidthColOccupationScores;
-		final float[] bStripeWidthColOccupationScores;
-		final float areaWidthColOccupationScoreAvg;
-		final float stripeWidthColOccupationScoreAvg;
-		final float bAreaWidthColOccupationScoreAvg;
-		final float bStripeWidthColOccupationScoreAvg;
-		RowStripeScore(BoundingBox tableArea, RowStripe[] rowStripes, boolean[] skipStripes, float docNormWordSpacing, boolean verbose) {
-			HashSet areaPixelRows = new HashSet();
-			int[] areaColPixelRowCounts = new int[tableArea.getWidth()];
-			Arrays.fill(areaColPixelRowCounts, 0);
-			int[] bAreaColPixelRowCounts = new int[tableArea.getWidth()];
-			Arrays.fill(bAreaColPixelRowCounts, 0);
-			for (int r = 0; r < rowStripes.length; r++) {
-				if ((skipStripes != null) && skipStripes[r])
-					continue;
-				for (int y = rowStripes[r].bounds.top; y < rowStripes[r].bounds.bottom; y++)
-					areaPixelRows.add(new Integer(y));
-				for (int w = 0; w < rowStripes[r].words.length; w++) {
-					for (int x = rowStripes[r].words[w].bounds.left; x < rowStripes[r].words[w].bounds.right; x++) {
-						areaColPixelRowCounts[x - tableArea.left] += rowStripes[r].words[w].bounds.getHeight();
-						bAreaColPixelRowCounts[x - tableArea.left] += rowStripes[r].words[w].bounds.getHeight();
-					}
-					if (((w+1) < rowStripes[r].words.length) && ((rowStripes[r].words[w+1].bounds.left - rowStripes[r].words[w].bounds.right) < (rowStripes[r].words[w].bounds.getHeight() * docNormWordSpacing))) {
-						for (int x = rowStripes[r].words[w].bounds.right; x < rowStripes[r].words[w+1].bounds.left; x++)
-							bAreaColPixelRowCounts[x - tableArea.left] += rowStripes[r].words[w].bounds.getHeight();
-					}
-				}
-			}
-			if (verbose) System.out.println("     - got " + areaPixelRows.size() + " occupied pixel rows in area of height " + tableArea.getHeight());
-			if (verbose) System.out.println("     - pixel column occupation distribution is " + Arrays.toString(areaColPixelRowCounts));
-			if (verbose) System.out.println("     - bridged pixel column occupation distribution is " + Arrays.toString(bAreaColPixelRowCounts));
-			this.areaWidthColOccupationScores = new float[rowStripes.length];
-			float areaWidthColOccupationScoreSum = 0;
-			this.stripeWidthColOccupationScores = new float[rowStripes.length];
-			float stripeWidthColOccupationScoreSum = 0;
-			this.bAreaWidthColOccupationScores = new float[rowStripes.length];
-			float bAreaWidthColOccupationScoreSum = 0;
-			this.bStripeWidthColOccupationScores = new float[rowStripes.length];
-			float bStripeWidthColOccupationScoreSum = 0;
-			//	TODO normalize these guys by density as well ???
-			if (verbose) System.out.println("     - assessing " + rowStripes.length + " row stripes:");
-			int colOccupationScoreCount = 0;
-			for (int r = 0; r < rowStripes.length; r++) {
-				if ((skipStripes != null) && skipStripes[r])
-					continue;
-				if (verbose) System.out.println("       - " + rowStripes[r].bounds + ": " + rowStripes[r].words[0].getString());
-				if (verbose) System.out.println("         density is " + rowStripes[r].getWordDensity());
-				boolean[] colHasPixel = new boolean[tableArea.getWidth()];
-				Arrays.fill(colHasPixel, false);
-				boolean[] bColHasPixel = new boolean[tableArea.getWidth()];
-				Arrays.fill(bColHasPixel, false);
-				for (int w = 0; w < rowStripes[r].words.length; w++) {
-					for (int x = rowStripes[r].words[w].bounds.left; x < rowStripes[r].words[w].bounds.right; x++) {
-						colHasPixel[x - tableArea.left] = true;
-						bColHasPixel[x - tableArea.left] = true;
-					}
-					if (((w+1) < rowStripes[r].words.length) && ((rowStripes[r].words[w+1].bounds.left - rowStripes[r].words[w].bounds.right) < (rowStripes[r].words[w].bounds.getHeight() * docNormWordSpacing))) {
-						for (int x = rowStripes[r].words[w].bounds.right; x < rowStripes[r].words[w+1].bounds.left; x++)
-							bColHasPixel[x - tableArea.left] = true;
-					}
-				}
-				int areaWidthColOccupationScoreSumRs = 0;
-				int stripeWidthColOccupationScoreSumRs = 0;
-				int bAreaWidthColOccupationScoreSumRs = 0;
-				int bStripeWidthColOccupationScoreSumRs = 0;
-				for (int x = 0; x < colHasPixel.length; x++) {
-					if (colHasPixel[x])
-						areaWidthColOccupationScoreSumRs += areaColPixelRowCounts[x];
-					else areaWidthColOccupationScoreSumRs += (areaPixelRows.size() - areaColPixelRowCounts[x]);
-					if (bColHasPixel[x])
-						bAreaWidthColOccupationScoreSumRs += bAreaColPixelRowCounts[x];
-					else bAreaWidthColOccupationScoreSumRs += (areaPixelRows.size() - bAreaColPixelRowCounts[x]);
-					if ((x >= (rowStripes[r].bounds.left - tableArea.left)) && (x < (rowStripes[r].bounds.right - tableArea.left))) {
-						if (colHasPixel[x])
-							stripeWidthColOccupationScoreSumRs += areaColPixelRowCounts[x];
-						else stripeWidthColOccupationScoreSumRs += (areaPixelRows.size() - areaColPixelRowCounts[x]);
-						if (bColHasPixel[x])
-							bStripeWidthColOccupationScoreSumRs += bAreaColPixelRowCounts[x];
-						else bStripeWidthColOccupationScoreSumRs += (areaPixelRows.size() - bAreaColPixelRowCounts[x]);
-					}
-				}
-				this.areaWidthColOccupationScores[r] = (((float) areaWidthColOccupationScoreSumRs) / (tableArea.getWidth() * areaPixelRows.size()));
-				areaWidthColOccupationScoreSum += this.areaWidthColOccupationScores[r];
-				this.stripeWidthColOccupationScores[r] = (((float) stripeWidthColOccupationScoreSumRs) / (rowStripes[r].bounds.getWidth() * areaPixelRows.size()));
-				stripeWidthColOccupationScoreSum += this.stripeWidthColOccupationScores[r];
-				if (verbose) System.out.println("         column occupation score is " + this.areaWidthColOccupationScores[r] + " whole width, " + this.stripeWidthColOccupationScores[r] + " stripe width");
-				this.bAreaWidthColOccupationScores[r] = (((float) bAreaWidthColOccupationScoreSumRs) / (tableArea.getWidth() * areaPixelRows.size()));
-				bAreaWidthColOccupationScoreSum += this.bAreaWidthColOccupationScores[r];
-				this.bStripeWidthColOccupationScores[r] = (((float) bStripeWidthColOccupationScoreSumRs) / (rowStripes[r].bounds.getWidth() * areaPixelRows.size()));
-				bStripeWidthColOccupationScoreSum += this.bStripeWidthColOccupationScores[r];
-				if (verbose) System.out.println("         bridged column occupation score is " + this.bAreaWidthColOccupationScores[r] + " whole width, " + this.bStripeWidthColOccupationScores[r] + " stripe width");
-				//	TODO normalize these guys by density as well ???
-				colOccupationScoreCount++;
-			}
-			this.areaWidthColOccupationScoreAvg = (areaWidthColOccupationScoreSum / colOccupationScoreCount);
-			this.stripeWidthColOccupationScoreAvg = (stripeWidthColOccupationScoreSum / colOccupationScoreCount);
-			if (verbose) System.out.println("     - avg column occupation score is " + this.areaWidthColOccupationScoreAvg + " whole width, " + this.stripeWidthColOccupationScoreAvg + " stripe width");
-			this.bAreaWidthColOccupationScoreAvg = (bAreaWidthColOccupationScoreSum / colOccupationScoreCount);
-			this.bStripeWidthColOccupationScoreAvg = (bStripeWidthColOccupationScoreSum / colOccupationScoreCount);
-			if (verbose) System.out.println("     - avg bridged column occupation score is " + this.bAreaWidthColOccupationScoreAvg + " whole width, " + this.bStripeWidthColOccupationScoreAvg + " stripe width");
+	private static GraphicsPeakStats analyzeRowGraphicsPeaks(TableAreaStatistics areaStats, TableAreaStripe[] areaStripes, float areaWordHeight, float peakFactor, float fullHeightPeakFactor, Graphics2D areaGr) {
+		int avgRowOccupation = avg(areaStats.grRowOccupations);
+		if (areaGr != null) {
+			int minRowPeakOccupation = (avgRowOccupation + Math.round((areaStats.grBounds.getWidth() - avgRowOccupation) * peakFactor));
+			areaGr.setColor(new Color(0, 0, 255, 255));
+			areaGr.fillRect((minRowPeakOccupation - 1), 0, 2, areaStats.grBounds.getHeight());
 		}
+		BoundingBox[] stripeBoxes = new BoundingBox[areaStripes.length];
+		for (int s = 0; s < areaStripes.length; s++)
+			stripeBoxes[s] = areaStripes[s].bounds;
+		return analyzeGraphicsPeaks(areaStats.grRowOccupations, avgRowOccupation, areaStats.grBounds.getWidth(), peakFactor, fullHeightPeakFactor, areaWordHeight, areaStats.grBounds.top, stripeBoxes, false);
 	}
 	
-	private static class RowStripeSegmentation {
-		final RowStripeSegment[] segments;
-		final int minSeg;
-		final int maxSeg;
-		final int avgSeg;
-		final RowStripeGap[] gaps;
-		final int minGap;
-		final int maxGap;
-		final int avgGap;
-		RowStripeSegmentation(RowStripeSegment[] segments, RowStripeGap[] gaps) {
-			this.segments = segments;
-			int minSeg = Integer.MAX_VALUE;
-			int maxSeg = 0;
-			int segSum = 0;
-			
-			for (int s = 0; s < this.segments.length; s++) {
-				int seg = (this.segments[s].end - this.segments[s].start);
-				minSeg = Math.min(seg, minSeg);
-				maxSeg = Math.max(seg, maxSeg);
-				segSum += seg;
-			}
-			if (this.segments.length == 0) {
-				this.minSeg = -1;
-				this.maxSeg = -1;
-				this.avgSeg = -1;
-			}
-			else {
-				this.minSeg = minSeg;
-				this.maxSeg = maxSeg;
-				this.avgSeg = ((segSum + (this.segments.length / 2)) / this.segments.length);
-			}
-			
-			this.gaps = gaps;
-			int minGap = Integer.MAX_VALUE;
-			int maxGap = 0;
-			int gapSum = 0;
-			for (int g = 0; g < this.gaps.length; g++) {
-				int gap = (this.gaps[g].end - this.gaps[g].start);
-				minGap = Math.min(gap, minGap);
-				maxGap = Math.max(gap, maxGap);
-				gapSum += gap;
-			}
-			if (this.gaps.length == 0) {
-				this.minGap = -1;
-				this.maxGap = -1;
-				this.avgGap = -1;
-			}
-			else {
-				this.minGap = minGap;
-				this.maxGap = maxGap;
-				this.avgGap = ((gapSum + (this.gaps.length / 2)) / this.gaps.length);
-			}
+	private static GraphicsPeakStats analyzeColGraphicsPeaks(TableAreaStatistics areaStats, ImRegion[] areaTestCols, float areaWordHeight, float docNormSpaceWidth, float peakFactor, float fullHeightPeakFactor, Graphics2D areaGr) {
+		int avgColOccupation = avg(areaStats.grColOccupations);
+		if (areaGr != null) {
+			int minColPeakOccupation = (avgColOccupation + Math.round((areaStats.grBounds.getHeight() - avgColOccupation) * peakFactor));
+			areaGr.setColor(new Color(255, 0, 0, 255));
+			areaGr.fillRect(0, (areaStats.grBounds.getHeight() - minColPeakOccupation - 1), areaStats.grBounds.getWidth(), 2);
 		}
-		//	TODO add any evaluation method we might need ...
-		boolean obstructsColumnGap() {
-			for (int s = 0; s < this.segments.length; s++) {
-				if (this.segments[s].obstructsSegmentGap())
-					return true;
-			}
-			return false;
-		}
-		int getObstructedColumnGaps() {
-			int ocgs = 0;
-			for (int s = 0; s < this.segments.length; s++) {
-				int osgs = this.segments[s].getObstructedSegmentGaps();
-				if (osgs > 0)
-					ocgs += ((osgs + this.segments[s].overlappingRowCount - 1) / this.segments[s].overlappingRowCount);
-			}
-			return ocgs;
-		}
+		BoundingBox[] stripeBoxes = new BoundingBox[areaTestCols.length];
+		for (int s = 0; s < areaTestCols.length; s++)
+			stripeBoxes[s] = areaTestCols[s].bounds;
+		return analyzeGraphicsPeaks(areaStats.grColOccupations, avgColOccupation, areaStats.grBounds.getHeight(), peakFactor, fullHeightPeakFactor, (areaWordHeight * docNormSpaceWidth * 2), areaStats.grBounds.left, stripeBoxes, true);
 	}
 	
-	private static class RowStripeSegment {
-		final int start;
-		final int end;
-		final int color;
-		final int overlappingRowCount;
-		final int overlappingSegmentCount;
-		RowStripeSegment(int start, int end, int color, int overlappingRowCount, int overlappingSegmentCount) {
-			this.start = start;
-			this.end = end;
-			this.color = color;
-			this.overlappingRowCount = overlappingRowCount;
-			this.overlappingSegmentCount = overlappingSegmentCount;
-		}
-		boolean obstructsSegmentGap() {
-			return (this.overlappingSegmentCount > this.overlappingRowCount);
-		}
-		int getObstructedSegmentGaps() {
-			return Math.max((this.overlappingSegmentCount - this.overlappingRowCount), 0);
-		}
-	}
-	
-	private static class RowStripeGap {
-		final int start;
-		final int end;
-		final int overlappingRowCount;
-		RowStripeGap(int start, int end, int overlappingRowCount) {
-			this.start = start;
-			this.end = end;
-			this.overlappingRowCount = overlappingRowCount;
-		}
-	}
-	
-	private static RowStripeSegmentation getRowStripeSegmentation(int[] rowSegmentColors, int rowIndex, int[][] areaRowSegmentColors, boolean[] skipRows) {
-		ArrayList segs = new ArrayList();
-		HashSet segOverlappingRows = new HashSet();
-		HashSet segOverlappingSegs = new HashSet();
-		int segStart = -1;
-		int segColor = -1;
-		
-		ArrayList gaps = new ArrayList();
-		HashSet gapOverlappingRows = new HashSet();
-		int gapStart = -1;
-		
-		for (int x = 0; x < rowSegmentColors.length; x++) {
-			if (rowSegmentColors[x] == 0) {
-				if (segStart != -1) {
-					segs.add(new RowStripeSegment(segStart, x, segColor, segOverlappingRows.size(), segOverlappingSegs.size()));
-					segStart = -1;
-				}
-				if ((x != 0) && (segs.size() != 0) && (rowSegmentColors[x] != rowSegmentColors[x-1])) {
-					gapOverlappingRows.clear();
-					gapStart = x;
-				}
-				for (int r = 0; r < areaRowSegmentColors.length; r++) {
-					if (r == rowIndex)
-						continue;
-					if ((skipRows != null) && skipRows[r])
-						continue;
-					if (areaRowSegmentColors[r][x] == 0)
-						gapOverlappingRows.add(new Integer(r));
-				}
-			}
-			
-			else {
-				if (gapStart != -1) {
-					gaps.add(new RowStripeGap(gapStart, x, gapOverlappingRows.size()));
-					gapStart = -1;
-				}
-				if ((x == 0) || (rowSegmentColors[x] != rowSegmentColors[x-1])) {
-					segOverlappingRows.clear();
-					segOverlappingSegs.clear();
-					segStart = x;
-					segColor = rowSegmentColors[x];
-				}
-				for (int r = 0; r < areaRowSegmentColors.length; r++) {
-					if (r == rowIndex)
-						continue;
-					if ((skipRows != null) && skipRows[r])
-						continue;
-					if (areaRowSegmentColors[r][x] != 0) {
-						segOverlappingRows.add(new Integer(r));
-//						overlappingSegs.add(r + "-" + areaRowSegmentColors[r][x]);
-						segOverlappingSegs.add(new Integer((r << 16) + areaRowSegmentColors[r][x]));
-						//	TODOne use Integer instead of String, with row number shifted left by 16 bits (way faster ...)
-					}
-				}
-			}
-		}
-		if (segStart != -1) {
-			segs.add(new RowStripeSegment(segStart, rowSegmentColors.length, segColor, segOverlappingRows.size(), segOverlappingSegs.size()));
-			segStart = -1;
-		}
-		return new RowStripeSegmentation(((RowStripeSegment[]) segs.toArray(new RowStripeSegment[segs.size()])), ((RowStripeGap[]) gaps.toArray(new RowStripeGap[gaps.size()])));
-	}
-	
-	private static boolean checkColumns(ImPage page, ImRegion[] columns, RowStripe[] rowStripes) {
-		
-		//	check columns
-		if (columns == null) {
-			System.out.println("     ==> could not identify columns");
-			return false;
-		}
-		
-		//	check column count
-		System.out.println("     - got " + columns.length + " columns");
-		if (columns.length < 3) {
-			System.out.println("     ==> too few columns");
-			return false;
-		}
-		
-		//	assess column gaps, and show table column header starts
-		int minColGap = Integer.MAX_VALUE;
-		int maxColGap = 0;
-		int colGapCount = 0;
-		int colGapSum = 0;
-		for (int c = 0; c < columns.length; c++) {
-			ImWord[] colWords = page.getWordsInside(columns[c].bounds);
-			ImUtils.sortLeftRightTopDown(colWords);
-			System.out.println("       - " + columns[c].bounds + ": " + ((colWords.length == 0) ? "<empty>" : colWords[0].getString()));
-			if (c == 0)
+	private static GraphicsPeakStats analyzeGraphicsPeaks(int[] grOccupations, int avgOccupation, int maxGrOccupation, float peakFactor, float fullHeightPeakFactor, float stripeMinWidth, int areaOffset, BoundingBox[] areaStripes, boolean stripesVertical) {
+		int peaks = 0;
+		int fullHeightPeaks = 0;
+		int interStripePeaks = 0;
+		int intraStripePeaks = 0;
+		int[] stripeIntraPeaks = new int[areaStripes.length];
+		int minPeakOccupation = (avgOccupation + Math.round((maxGrOccupation - avgOccupation) * peakFactor));
+		int minFullHeightPeakOccupation = (avgOccupation + Math.round((maxGrOccupation - avgOccupation) * fullHeightPeakFactor));
+		for (int o = 0; o < grOccupations.length; o++) {
+			if (grOccupations[o] < minPeakOccupation)
 				continue;
-			int colGap = (columns[c].bounds.left - columns[c-1].bounds.right);
-			minColGap = Math.min(minColGap, colGap);
-			maxColGap = Math.max(maxColGap, colGap);
-			colGapCount++;
-			colGapSum += colGap;
-		}
-		int minColumnGap = minColGap;
-		int maxColumnGap = maxColGap;
-		int avgColumnGap = ((colGapCount == 0) ? 0 : ((colGapSum + (colGapCount / 2)) / colGapCount));
-		System.out.println("       - column gaps are " + avgColumnGap + " on average (min " + minColumnGap + ", max " + maxColumnGap + ")");
-		
-		//	check average column gap (should be 2 mm at least below 6 columns or 4 rows, and at least 1 mm above both)
-		if (avgColumnGap < (((columns.length < 6) || (rowStripes.length < 4)) ? (page.getImageDPI() / 13) : (page.getImageDPI() / 25))) {
-			System.out.println("     ==> columns gaps too narrow on average, below " + (page.getImageDPI() / 13) + "/"  + (page.getImageDPI() / 25));
-			return false;
-		}
-		
-		//	this looks OK
-		return true;
-	}
-	
-	private static int[] getRowStripeSegmentColors(BoundingBox tableArea, RowStripe rowStripe, int minSegmentGap) {
-		int[] rowStripeSegmentColors = new int[tableArea.getWidth()];
-		Arrays.fill(rowStripeSegmentColors, 0);
-		int segColor = -1;
-		for (int w = 0; w < rowStripe.words.length; w++) {
-			if (segColor == -1)
-				segColor = rowStripe.words[w].bounds.left;
-			for (int x = rowStripe.words[w].bounds.left; x < rowStripe.words[w].bounds.right; x++)
-				rowStripeSegmentColors[x - tableArea.left] = segColor;
-			if (((w+1) < rowStripe.words.length) && ((rowStripe.words[w+1].bounds.left - rowStripe.words[w].bounds.right) < minSegmentGap)) {
-				for (int x = rowStripe.words[w].bounds.right; x < rowStripe.words[w+1].bounds.left; x++)
-					rowStripeSegmentColors[x - tableArea.left] = segColor;
+			int peakHeightSum = grOccupations[o];
+			for (int lo = (o+1); lo < grOccupations.length; lo++) {
+				if (grOccupations[lo] >= minPeakOccupation) {
+					peakHeightSum += grOccupations[lo];
+					continue;
+				}
+				int peakWidth = (lo-o);
+				int peakHeight = (peakHeightSum / peakWidth);
+				System.out.println(" - got peak from " + o + " to " + (lo-1) + " at " + peakHeight + " of " + maxGrOccupation);
+				peaks++;
+				if (peakHeight > minFullHeightPeakOccupation)
+					fullHeightPeaks++; // count 80% as full height (comb grid tables don't go up all the way)
+				//	TODO use grid type distinction from area stats for this switch (once it's implemented)
+				//	peak to low to even accommodate a word, hardly a stripe grid
+				if (peakWidth < stripeMinWidth) {
+					int peakCenter = (o + (peakWidth / 2) + areaOffset);
+					//	TODO cut some slack for mingled lines?
+					for (int s = 0; s < areaStripes.length; s++) {
+						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= peakCenter)
+							continue;
+						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakCenter) {
+							intraStripePeaks++;
+							stripeIntraPeaks[s]++;
+							System.out.println("   --> found center " + peakCenter + " inside " + areaStripes[s]);
+						}
+						else {
+							interStripePeaks++;
+							System.out.println("   --> found center " + peakCenter + " before " + areaStripes[s]);
+						}
+						break;
+					}
+				}
+				//	peak to wide to be a simple line, likely stripe grid, look at flanks
+				else {
+					int peakMinFlank = ((o / 2) + areaOffset);
+					//	TODO cut some slack for mingled flanks?
+					for (int s = 0; s < areaStripes.length; s++) {
+						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= peakMinFlank)
+							continue;
+						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakMinFlank) {
+							intraStripePeaks++;
+							stripeIntraPeaks[s]++;
+							System.out.println("   --> found min flank " + peakMinFlank + " inside " + areaStripes[s]);
+						}
+						else {
+							interStripePeaks++;
+							System.out.println("   --> found min flank " + peakMinFlank + " before " + areaStripes[s]);
+						}
+						break;
+					}
+					int peakMaxFlank = ((lo / 2) + areaOffset);
+					//	TODO cut some slack for mingled flanks?
+					for (int s = 0; s < areaStripes.length; s++) {
+						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= peakMaxFlank)
+							continue;
+						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakMaxFlank) {
+							intraStripePeaks++;
+							stripeIntraPeaks[s]++;
+							System.out.println("   --> found max flank " + peakMaxFlank + " inside " + areaStripes[s]);
+						}
+						else {
+							interStripePeaks++;
+							System.out.println("   --> found max flank " + peakMaxFlank + " before " + areaStripes[s]);
+						}
+						break;
+					}
+				}
+				o = lo;
+				break;
 			}
-			else segColor = -1;
 		}
-		return rowStripeSegmentColors;
+		System.out.println(" ==> got " + peaks + " peaks, " + fullHeightPeaks + " full height ones, " + interStripePeaks + " between stripes, and " + intraStripePeaks + " inside stripes (" + Arrays.toString(stripeIntraPeaks) + ")");
+		return new GraphicsPeakStats(peaks, fullHeightPeaks, interStripePeaks, intraStripePeaks, stripeIntraPeaks);
 	}
 	
-	private static int countSegments(int[] segmentColors) {
-		int segCount = 0;
-		for (int x = 0; x < segmentColors.length; x++) {
-			if (segmentColors[x] == 0)
-				continue;
-			if ((x == 0) || (segmentColors[x] != segmentColors[x-1]))
-				segCount++;
-		}
-		return segCount;
-	}
-	
-	private static class GraphTableCandiate {
+	private static class TableAreaStripe {
+		final ImWord[] words;
 		final BoundingBox bounds;
-		final RowStripe[] rowStripes;
-		final ImRegion[] columns;
-		final int minColumnGap;
-		final int maxColumnGap;
-		final int avgColumnGap;
-		GraphTableCandiate(BoundingBox bounds, RowStripe[] rowStripes, ImRegion[] columns) {
-			this.bounds = bounds;
-			this.rowStripes = rowStripes;
-			this.columns = columns;
-			int minColGap = Integer.MAX_VALUE;
-			int maxColGap = 0;
-			int colGapCount = 0;
-			int colGapSum = 0;
-			for (int c = 1; c < this.columns.length; c++) {
-				int colGap = (this.columns[c].bounds.left - this.columns[c-1].bounds.right);
-				minColGap = Math.min(minColGap, colGap);
-				maxColGap = Math.max(maxColGap, colGap);
-				colGapCount++;
-				colGapSum += colGap;
+		final int wordWidthSum;
+		final int wordHeightSum;
+		final int wordArea;
+		final int wordDistanceCount;
+		final int wordDistanceSum;
+		final float nWordDistanceSum;
+		final int area;
+		TableAreaStripe(ImWord[] words) {
+			Arrays.sort(words, ImUtils.leftRightOrder);
+			this.words = words;
+			this.bounds = ImLayoutObject.getAggregateBox(this.words);
+			
+			int wordArea = 0;
+			int wordWidthSum = 0;
+			int wordHeightSum = 0; // using average word height as proxy for both font size and DPI
+			int wordDistanceCount = 0;
+			int minWordDistance = Integer.MAX_VALUE;
+			int maxWordDistance = 0;
+			int wordDistanceSum = 0;
+			int wordDistanceSquareSum = 0;
+			for (int w = 0; w < this.words.length; w++) {
+				wordArea += getArea(this.words[w]);
+				wordWidthSum += (this.words[w].bounds.right - this.words[w].bounds.left);
+				wordHeightSum += (this.words[w].bounds.bottom - this.words[w].bounds.top);
+				if (w != 0) {
+					int wordDistance = (this.words[w].bounds.left - this.words[w-1].bounds.right);
+					if (wordDistance > 0) {
+						wordDistanceCount++;
+						minWordDistance = Math.min(minWordDistance, wordDistance);
+						maxWordDistance = Math.max(maxWordDistance, wordDistance);
+						wordDistanceSum += wordDistance;
+						wordDistanceSquareSum += (wordDistance * wordDistance);
+					}
+				}
 			}
-			this.minColumnGap = minColGap;
-			this.maxColumnGap = maxColGap;
-			this.avgColumnGap = ((colGapCount == 0) ? 0 : ((colGapSum + (colGapCount / 2)) / colGapCount));
-		}
-		float getColumnGapOddity() {
-			return (((float) this.maxColumnGap) / this.minColumnGap);
+			
+			//	compute overall word stats
+			this.wordWidthSum = wordWidthSum;
+			this.wordHeightSum = wordHeightSum;
+			this.wordArea = wordArea;
+			this.wordDistanceCount = wordDistanceCount;
+			this.wordDistanceSum = wordDistanceSum;
+			this.nWordDistanceSum = (((float) (wordDistanceSum * this.words.length)) / wordHeightSum);
+			
+			//	compute own stats
+			this.area = getArea(this.bounds);
 		}
 	}
 	
+	private static TableAreaStripe[] getTableAreaStripes(ImPage page, TableAreaStatistics stats) {
+		ArrayList stripeList = new ArrayList();
+		int lastNonEmptyRow = -1;
+		for (int r = 0; r < stats.rowOccupations.length; r++) {
+			if (stats.rowOccupations[r] == 0) {
+				if (lastNonEmptyRow != -1) {
+					BoundingBox stipeBounds = new BoundingBox(stats.wordBounds.left, stats.wordBounds.right, (stats.wordBounds.top + lastNonEmptyRow), (stats.wordBounds.top + r));
+					ImWord[] stripeWords = page.getWordsInside(stipeBounds);
+					if (stripeWords.length != 0)
+						stripeList.add(new TableAreaStripe(stripeWords));
+				}
+				lastNonEmptyRow = -1;
+			}
+			else if (lastNonEmptyRow == -1)
+				lastNonEmptyRow = r;
+		}
+		if (lastNonEmptyRow != -1) {
+			BoundingBox stipeBounds = new BoundingBox(stats.wordBounds.left, stats.wordBounds.right, (stats.wordBounds.top + lastNonEmptyRow), (stats.wordBounds.top + stats.rowOccupations.length));
+			ImWord[] stripeWords = page.getWordsInside(stipeBounds);
+			if (stripeWords.length != 0)
+				stripeList.add(new TableAreaStripe(stripeWords));
+		}
+		return ((TableAreaStripe[]) stripeList.toArray(new TableAreaStripe[stripeList.size()]));
+	}
 	/*
 When seeking tables split up into multiple blocks:
 - compare column gaps and anchors between adjacent blocks ...
@@ -2714,36 +1861,6 @@ When seeking tables split up into multiple blocks:
 - ... potential column splits and gaps (gap width in particular), ...
 - ... etc.
 	 */
-	private static class ColumnCompatibility {
-		final float sharedWordCols;
-		final float sharedNonWordCols;
-		ColumnCompatibility(float sharedWordCols, float sharedNonWordCols) {
-			this.sharedWordCols = sharedWordCols;
-			this.sharedNonWordCols = sharedNonWordCols;
-		}
-		public String toString() {
-			return ((this.sharedWordCols + this.sharedNonWordCols) + " (" + this.sharedWordCols + " words, " + this.sharedNonWordCols + " space)");
-		}
-	}
-	
-	private static ColumnCompatibility getColumnCompatibility(int left1, boolean[] colHasWord1, int left2, boolean[] colHasWord2, boolean expand) {
-		int minCol = (expand ? Math.min(left1, left2) : Math.max(left1, left2));
-		int maxCol = (expand ? Math.max((left1 + colHasWord1.length), (left2 + colHasWord2.length)) : Math.min((left1 + colHasWord1.length), (left2 + colHasWord2.length)));
-		if (maxCol <= minCol)
-			return new ColumnCompatibility(0, 0);
-		int sWordCols = 0;
-		int sNonWordCols = 0;
-		for (int c = minCol; c < maxCol; c++) {
-			boolean isWordCol1 = (((c < left1) || (c >= (left1 + colHasWord1.length))) ? false : colHasWord1[c - left1]);
-			boolean isWordCol2 = (((c < left2) || (c >= (left2 + colHasWord2.length))) ? false : colHasWord2[c - left2]);
-			if (isWordCol1 && isWordCol2)
-				sWordCols++;
-			else if (!isWordCol1 && !isWordCol2)
-				sNonWordCols++;
-		}
-		return new ColumnCompatibility((((float) sWordCols) / (maxCol - minCol)), (((float) sNonWordCols) / (maxCol - minCol)));
-	}
-	
 	private static final Comparator topDownGraphicsOrder = new Comparator() {
 		public int compare(Object obj1, Object obj2) {
 			BoundingBox bb1 = ((Graphics) obj1).getBounds();

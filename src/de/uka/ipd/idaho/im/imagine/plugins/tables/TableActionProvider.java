@@ -27,27 +27,42 @@
  */
 package de.uka.ipd.idaho.im.imagine.plugins.tables;
 
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.Point;
+import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Transferable;
+import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.io.StringReader;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 
+import de.uka.ipd.idaho.gamta.util.CountingSet;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
@@ -58,10 +73,16 @@ import de.uka.ipd.idaho.im.ImObject;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
+import de.uka.ipd.idaho.im.analysis.Imaging;
+import de.uka.ipd.idaho.im.analysis.Imaging.AnalysisImage;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.basic.RegionActionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.ColumnOccupationFlank;
+import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.ColumnOccupationLow;
+import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.GraphicsSlice;
+import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.RowOccupationGap;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
@@ -292,7 +313,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			return;
 		
 		//	get table word lies in
-		ImRegion[] wordTable = this.getRegionsOverlapping(wordPage, word.bounds, ImRegion.TABLE_TYPE);
+		ImRegion[] wordTable = getRegionsOverlapping(wordPage, word.bounds, ImRegion.TABLE_TYPE);
 		if (wordTable.length != 1)
 			return;
 		
@@ -472,7 +493,13 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		doc.cleanupAnnotations();
 	}
 	
-	private void cleanupTableAnnotations(ImDocument doc, ImRegion table) {
+	/**
+	 * Clean up the annotations in a table, i.e., make sure they do not cross
+	 * cell boundaries.
+	 * @param doc the document the table belongs to
+	 * @param table the table to clean up
+	 */
+	public void cleanupTableAnnotations(ImDocument doc, ImRegion table) {
 		
 		//	get annotations lying inside table
 		ImAnnotation[] annots = doc.getAnnotations(table.pageId);
@@ -594,6 +621,20 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	get selected words
 		ImWord[] selectedWords = page.getWordsInside(selectedBox);
 		
+		//	get selected columns and rows before shrinking selection (they can be more than half empty so center point ends up outside word box ...)
+		ImRegion[] selectedCols = null;
+		if ((idmp != null) && idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE))
+			selectedCols = getRegionsInside(page, selectedBox, ImRegion.TABLE_COL_TYPE, true);
+		ImRegion[] selectedRows = null;
+		if ((idmp != null) && idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE))
+			selectedRows = getRegionsInside(page, selectedBox, ImRegion.TABLE_ROW_TYPE, true);
+		
+		
+		//	get selected cells before shrinking selection (they are the one region type that can be empty ...)
+		ImRegion[] selectedCells = null;
+		if ((idmp != null) && idmp.areRegionsPainted(ImRegion.TABLE_CELL_TYPE))
+			selectedCells = getRegionsInside(page, selectedBox, ImRegion.TABLE_CELL_TYPE, true);
+		
 		//	shrink bounding box to words
 		if (selectedWords.length != 0) {
 			int tbLeft = selectedBox.right;
@@ -610,61 +651,20 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		}
 		
 		//	return actions if selection not empty
-		return this.getActions(page, selectedWords, selectedBox, idmp);
+		return this.getActions(page, selectedWords, selectedBox, selectedCols, selectedRows, selectedCells, idmp);
 	}
 	
-	private SelectionAction[] getActions(final ImPage page, final ImWord[] selWords, final BoundingBox selWordsBox, final ImDocumentMarkupPanel idmp) {
+	private SelectionAction[] getActions(final ImPage page, final ImWord[] selWords, final BoundingBox selWordsBox, final ImRegion[] selCols, final ImRegion[] selRows, final ImRegion[] selCells, final ImDocumentMarkupPanel idmp) {
 		LinkedList actions = new LinkedList();
 		
 		//	get table(s) overlapping selection, even without center
-		final ImRegion[] selTables = this.getRegionsOverlapping(page, selWordsBox, ImRegion.TABLE_TYPE);
+		final ImRegion[] selTables = getRegionsOverlapping(page, selWordsBox, ImRegion.TABLE_TYPE);
 		
 		//	if multiple tables selected, offer merging
 		if (selTables.length > 1) {
 			actions.add(new SelectionAction("mergeTable", "Merge Tables", "Merge the selected tables into one.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					
-					//	prepare marking table in convex hull of selected tables
-					BoundingBox mTableBox = ImLayoutObject.getAggregateBox(selTables);
-					ImWord[] mTableWords = page.getWordsInside(mTableBox);
-					ImRegion mTableRegion = new ImRegion(page.getDocument(), page.pageId, mTableBox, ImRegion.TABLE_TYPE);
-					
-					//	get rows and columns of merged table
-					ImRegion[] mTableRows = ImUtils.createTableRows(mTableRegion);
-					if (mTableRows == null) {
-						DialogFactory.alert("The selected tables cannot be merged because it does not split into rows.", "Cannot Merge Tables", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					ImRegion[] mTableCols = ImUtils.createTableColumns(mTableRegion);
-					if (mTableCols == null) {
-						DialogFactory.alert("The selected tables cannot be merged because it does not split into columns.", "Cannot Merge Tables", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					//	remove existing tables
-					for (int t = 0; t < selTables.length; t++) {
-						ImRegion[] tableRows = getRegionsInside(page, selTables[t].bounds, ImRegion.TABLE_ROW_TYPE, true);
-						for (int r = 0; r < tableRows.length; r++)
-							page.removeRegion(tableRows[r]);
-						ImRegion[] tableCols = getRegionsInside(page, selTables[t].bounds, ImRegion.TABLE_COL_TYPE, true);
-						for (int c = 0; c < tableCols.length; c++)
-							page.removeRegion(tableCols[c]);
-						selTables[t].setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
-						page.removeRegion(selTables[t]);
-					}
-					
-					//	attach rows and columns to page to prevent duplicating generation
-					for (int r = 0; r < mTableRows.length; r++) {
-						if (mTableRows[r].getPage() == null)
-							page.addRegion(mTableRows[r]);
-					}
-					for (int c = 0; c < mTableCols.length; c++) {
-						if (mTableCols[c].getPage() == null)
-							page.addRegion(mTableCols[c]);
-					}
-					
-					//	mark table
-					return markTable(page, mTableWords, mTableBox, invoker);
+					return mergeTables(page, selTables, idmp);
 				}
 			});
 			
@@ -679,7 +679,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			if (selWords.length != 0)
 				actions.add(new SelectionAction("markRegionTable", "Mark Table", "Mark selected words as a table and analyze table structure.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return markTable(page, selWords, selWordsBox, invoker);
+						return markTable(page, selWords, selWordsBox, null, invoker);
 					}
 				});
 			
@@ -811,54 +811,85 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		}
 		
 		//	working on table rows
-		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && (selWords.length != 0)) {
-			final ImRegion[] selectedRows = this.getRegionsInside(page, selWordsBox, ImRegion.TABLE_ROW_TYPE, true);
-			final ImRegion[] partSelectedRows = this.getRegionsIncluding(page, selWordsBox, ImRegion.TABLE_ROW_TYPE, true);
+		if ((selRows != null) && (selWords.length != 0)) {
+			final ImRegion[] partSelRows = getRegionsIncluding(page, selWordsBox, ImRegion.TABLE_ROW_TYPE, true);
 			
 			//	if multiple table row regions selected, offer merging them, and cells along the way
-			if (selectedRows.length > 1)
+			if (selRows.length > 1)
 				actions.add(new SelectionAction("tableMergeRows", "Merge Table Rows", "Merge selected table rows.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return mergeTableRows(selTables[0], selectedRows);
+						return mergeTableRows(selTables[0], selRows);
 					}
 				});
 			
 			//	if only part of one row selected, offer splitting row
-			else if (partSelectedRows.length == 1) {
+			else if (partSelRows.length == 1) {
 				actions.add(new SelectionAction("tableSplitRow", "Split Table Row", "Split selected table row.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return splitTableRow(selTables[0], partSelectedRows[0], selWordsBox);
+						return splitTableRow(selTables[0], partSelRows[0], selWordsBox);
 					}
 				});
 				if (!selTables[0].hasAttribute("rowsContinueFrom") && !selTables[0].hasAttribute("rowsContinueIn"))
 					actions.add(new SelectionAction("tableSplitRow", "Split Table Row to Lines", "Split selected table row into individual lines.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return splitTableRowToLines(selTables[0], partSelectedRows[0]);
+							return splitTableRowToLines(page, selTables[0], partSelRows[0]);
 						}
 					});
 			}
 		}
 		
 		//	working on table columns
-		if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && (selWords.length != 0)) {
-			final ImRegion[] selectedCols = this.getRegionsInside(page, selWordsBox, ImRegion.TABLE_COL_TYPE, true);
-			final ImRegion[] partSelectedCols = this.getRegionsIncluding(page, selWordsBox, ImRegion.TABLE_COL_TYPE, true);
+		if ((selCols != null) && (selWords.length != 0)) {
+			final ImRegion[] partSelCols = getRegionsIncluding(page, selWordsBox, ImRegion.TABLE_COL_TYPE, true);
 			
 			//	if multiple table column regions selected, offer merging them, and cells along the way
-			if (selectedCols.length > 1)
+			if (selCols.length > 1)
 				actions.add(new SelectionAction("tableMergeColumns", "Merge Table Columns", "Merge selected table columns.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return mergeTableCols(selTables[0], selectedCols);
+						return mergeTableCols(selTables[0], selCols);
 					}
 				});
 			
 			//	if only part of one column selected, offer splitting column
-			else if (partSelectedCols.length == 1)
+			else if (partSelCols.length == 1)
 				actions.add(new SelectionAction("tableSplitColumns", "Split Table Column", "Split selected table column.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return splitTableCol(selTables[0], partSelectedCols[0], selWordsBox);
+						return splitTableCol(page, selTables[0], partSelCols[0], selWordsBox);
 					}
 				});
+		}
+		
+		//	working on table cells
+		if ((selCells != null) && (selWords.length != 0)) {
+			final ImRegion[] partSelCells = getRegionsIncluding(page, selWordsBox, ImRegion.TABLE_CELL_TYPE, true);
+			
+			//	if multiple table cell regions selected, offer merging them
+			if (selCells.length > 1)
+				actions.add(new SelectionAction("tableMergeCells", "Merge Table Cells", "Merge selected table cells.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return mergeTableCells(selTables[0], selCells);
+					}
+				});
+			
+			//	if only part of one cell selected, offer splitting cell
+			else if (partSelCells.length == 1) {
+				final ImRegion[] partSelRows = getRegionsOverlapping(page, selWordsBox, ImRegion.TABLE_ROW_TYPE);
+				final ImRegion[] selCellRows = getRegionsOverlapping(page, partSelCells[0].bounds, ImRegion.TABLE_ROW_TYPE);
+				final ImRegion[] partSelCols = getRegionsOverlapping(page, selWordsBox, ImRegion.TABLE_COL_TYPE);
+				final ImRegion[] selCellCols = getRegionsOverlapping(page, partSelCells[0].bounds, ImRegion.TABLE_COL_TYPE);
+				if ((partSelRows.length != 0) && (partSelRows.length < selCellRows.length))
+					actions.add(new SelectionAction("tableSplitCells", "Split Table Cell (Rows)", "Split selected table cell horizontally.") {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return splitTableCellRows(selTables[0], partSelCells[0], selCellRows, selCellCols, selWordsBox);
+						}
+					});
+				if ((partSelCols.length != 0) && (partSelCols.length < selCellCols.length))
+					actions.add(new SelectionAction("tableSplitCells", "Split Table Cell (Columns)", "Split selected table cell vertically.") {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return splitTableCellCols(selTables[0], partSelCells[0], selCellRows, selCellCols, selWordsBox);
+						}
+					});
+			}
 		}
 		
 		//	reduce size of table
@@ -873,204 +904,14 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (selNonTableWords.length != 0)
 			actions.add(new SelectionAction("tableExtend", "Extend Table", "Extend table to include all selected words.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					
-					//	prepare marking table in convex hull of selected tables
-					BoundingBox extWordsBox = ImLayoutObject.getAggregateBox(selNonTableWords);
-					BoundingBox extTableBox = new BoundingBox(
-							Math.min(extWordsBox.left, selTables[0].bounds.left),
-							Math.max(extWordsBox.right, selTables[0].bounds.right),
-							Math.min(extWordsBox.top, selTables[0].bounds.top),
-							Math.max(extWordsBox.bottom, selTables[0].bounds.bottom)
-						);
-					ImRegion extTableRegion = new ImRegion(page.getDocument(), page.pageId, extTableBox, ImRegion.TABLE_TYPE);
-					
-					//	get rows and columns of extended table
-					ImRegion[] extTableRows = ImUtils.createTableRows(extTableRegion);
-					if (extTableRows == null) {
-						DialogFactory.alert("The table cannot be extended because the extension does not split into rows.", "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					ImRegion[] extTableCols = ImUtils.createTableColumns(extTableRegion);
-					if (extTableCols == null) {
-						DialogFactory.alert("The table cannot be extended because the extension does not split into columns.", "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
-						return false;
-					}
-					
-					//	get original rows and columns
-					ImRegion[] selTableRows = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_ROW_TYPE, true);
-//					for (int r = 0; r < selTableRows.length; r++)
-//						page.removeRegion(selTableRows[r]);
-					ImRegion[] selTableCols = getRegionsInside(page, selTables[0].bounds, ImRegion.TABLE_COL_TYPE, true);
-//					for (int c = 0; c < selTableCols.length; c++)
-//						page.removeRegion(selTableCols[c]);
-//					
-//					//	remove old table (no need for cleaning up words, as they all are in new table
-//					selTables[0].setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
-//					page.removeRegion(selTables[0]);
-					
-					//	make sure exiting row gaps are preserved
-					ArrayList extTableRowList = new ArrayList(Arrays.asList(extTableRows));
-					HashSet extTableRowBoxes = new HashSet();
-					for (int r = 0; r < extTableRowList.size(); r++) {
-						ImRegion extTableRow = ((ImRegion) extTableRowList.get(r));
-						ArrayList tableRowList = new ArrayList(1);
-						for (int cr = 0; cr < selTableRows.length; cr++) {
-							if (selTableRows[cr].bounds.overlaps(extTableRow.bounds))
-								tableRowList.add(selTableRows[cr]);
-						}
-						if (tableRowList.size() < 2)
-							continue;
-						for (int sr = 0; sr < tableRowList.size(); sr++) {
-							ImRegion sTableRow = ((ImRegion) tableRowList.get(sr));
-							BoundingBox sTableRowBox = new BoundingBox(extTableRow.bounds.left, extTableRow.bounds.right, Math.max(extTableRow.bounds.top,  sTableRow.bounds.top), Math.min(extTableRow.bounds.bottom, sTableRow.bounds.bottom));
-							ImWord[] sTableRowWords = page.getWordsInside(sTableRowBox);
-							if (sTableRowWords.length == 0)
-								continue;
-							sTableRowBox = ImLayoutObject.getAggregateBox(sTableRowWords);
-							if (extTableRowBoxes.add(sTableRowBox.toString())) {
-								sTableRow = new ImRegion(page.getDocument(), page.pageId, sTableRowBox, ImRegion.TABLE_ROW_TYPE);
-								extTableRowList.add((r + sr + 1), sTableRow);
-							}
-						}
-						extTableRowList.remove(r);
-					}
-					
-					//	if we have considerably overlapping splits, prompt user to merge rows first
-					Collections.sort(extTableRowList, ImUtils.topDownOrder);
-					for (int r = 1; r < extTableRowList.size(); r++) {
-						ImRegion tExtTableRow = ((ImRegion) extTableRowList.get(r-1));
-						ImRegion bExtTableRow = ((ImRegion) extTableRowList.get(r));
-						int overlap = tExtTableRow.bounds.bottom - bExtTableRow.bounds.top;
-						if ((overlap * 2) > Math.min((tExtTableRow.bounds.bottom - tExtTableRow.bounds.top), (bExtTableRow.bounds.bottom - bExtTableRow.bounds.top))) {
-							DialogFactory.alert(("The table cannot be extended because the extension would merge existing table rows.\r\nTo extend the table, merge the affected rows first:\r\n" + tExtTableRow.bounds + " and " + bExtTableRow.bounds), "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
-							return false;
-						}
-					}
-					
-					//	keep existing rows together
-					for (int r = 0; r < selTableRows.length; r++) {
-						ArrayList tableRowList = new ArrayList(1);
-						for (int cr = 0; cr < extTableRowList.size(); cr++) {
-							ImRegion extTableRow = ((ImRegion) extTableRowList.get(cr));
-							if (selTableRows[r].bounds.overlaps(extTableRow.bounds))
-								tableRowList.add(extTableRow);
-						}
-						if (tableRowList.size() < 2)
-							continue;
-						BoundingBox mTableRowBox = ImLayoutObject.getAggregateBox((ImRegion[]) tableRowList.toArray(new ImRegion[tableRowList.size()]));
-						ImWord[] mTableRowWords = page.getWordsInside(mTableRowBox);
-						if (mTableRowWords.length == 0)
-							continue;
-						ImRegion mExtTableRow = new ImRegion(page.getDocument(), page.pageId, ImLayoutObject.getAggregateBox(mTableRowWords), ImRegion.TABLE_ROW_TYPE);
-						for (int mr = 0; mr < extTableRowList.size(); mr++) {
-							ImRegion extTableRow = ((ImRegion) extTableRowList.get(mr));
-							if (selTableRows[r].bounds.overlaps(extTableRow.bounds)) {
-								if (mExtTableRow == null)
-									extTableRowList.remove(mr--);
-								else {
-									extTableRowList.set(mr, mExtTableRow);
-									mExtTableRow = null;
-								}
-							}
-						}
-					}
-					
-					//	make sure exiting columns gaps are preserved
-					ArrayList extTableColList = new ArrayList(Arrays.asList(extTableCols));
-					HashSet extTableColBoxes = new HashSet();
-					for (int c = 0; c < extTableColList.size(); c++) {
-						ImRegion extTableCol = ((ImRegion) extTableColList.get(c));
-						ArrayList tableColList = new ArrayList(1);
-						for (int cc = 0; cc < selTableCols.length; cc++) {
-							if (selTableCols[cc].bounds.overlaps(extTableCol.bounds))
-								tableColList.add(selTableCols[cc]);
-						}
-						if (tableColList.size() < 2)
-							continue;
-						for (int sc = 0; sc < tableColList.size(); sc++) {
-							ImRegion sTableCol = ((ImRegion) tableColList.get(sc));
-							BoundingBox sTableColBox = new BoundingBox(Math.max(extTableCol.bounds.left,  sTableCol.bounds.left), Math.min(extTableCol.bounds.right, sTableCol.bounds.right), extTableCol.bounds.top, extTableCol.bounds.bottom);
-							ImWord[] sTableColWords = page.getWordsInside(sTableColBox);
-							if (sTableColWords.length == 0)
-								continue;
-							sTableColBox = ImLayoutObject.getAggregateBox(sTableColWords);
-							if (extTableColBoxes.add(sTableColBox.toString())) {
-								sTableCol = new ImRegion(page.getDocument(), page.pageId, sTableColBox, ImRegion.TABLE_COL_TYPE);
-								extTableColList.add((c + sc + 1), sTableCol);
-							}
-						}
-						extTableColList.remove(c);
-					}
-					
-					//	if we have considerably overlapping splits, prompt user to merge columns first
-					Collections.sort(extTableRowList, ImUtils.leftRightOrder);
-					for (int c = 1; c < extTableColList.size(); c++) {
-						ImRegion lExtTableCol = ((ImRegion) extTableColList.get(c-1));
-						ImRegion rExtTableCol = ((ImRegion) extTableColList.get(c));
-						int overlap = lExtTableCol.bounds.right - rExtTableCol.bounds.left;
-						if ((overlap * 2) > Math.min((lExtTableCol.bounds.right - lExtTableCol.bounds.left), (rExtTableCol.bounds.right - rExtTableCol.bounds.left))) {
-							DialogFactory.alert(("The table cannot be extended because the extension would merge existing table columns.\r\nTo extend the table, merge the affected columns first:\r\n" + lExtTableCol.bounds + " and " + rExtTableCol.bounds), "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
-							return false;
-						}
-					}
-					
-					//	keep existing columns together
-					for (int c = 0; c < selTableCols.length; c++) {
-						ArrayList tableColList = new ArrayList(1);
-						for (int cc = 0; cc < extTableColList.size(); cc++) {
-							ImRegion extTableCol = ((ImRegion) extTableColList.get(cc));
-							if (selTableCols[c].bounds.overlaps(extTableCol.bounds))
-								tableColList.add(extTableCol);
-						}
-						if (tableColList.size() < 2)
-							continue;
-						BoundingBox mTableColBox = ImLayoutObject.getAggregateBox((ImRegion[]) tableColList.toArray(new ImRegion[tableColList.size()]));
-						ImWord[] mTableColWords = page.getWordsInside(mTableColBox);
-						if (mTableColWords.length == 0)
-							continue;
-						ImRegion mExtTableCol = new ImRegion(page.getDocument(), page.pageId, ImLayoutObject.getAggregateBox(mTableColWords), ImRegion.TABLE_COL_TYPE);
-						for (int mc = 0; mc < extTableColList.size(); mc++) {
-							ImRegion extTableCol = ((ImRegion) extTableColList.get(mc));
-							if (selTableCols[c].bounds.overlaps(extTableCol.bounds)) {
-								if (mExtTableCol == null)
-									extTableColList.remove(mc--);
-								else {
-									extTableColList.set(mc, mExtTableCol);
-									mExtTableCol = null;
-								}
-							}
-						}
-					}
-					
-					//	remove original table rows and columns
-					for (int r = 0; r < selTableRows.length; r++)
-						page.removeRegion(selTableRows[r]);
-					for (int c = 0; c < selTableCols.length; c++)
-						page.removeRegion(selTableCols[c]);
-					
-					//	remove old table (no need for cleaning up words, as they all are in new table
-					selTables[0].setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
-					page.removeRegion(selTables[0]);
-					
-					//	add rows and columns to page
-					for (int r = 0; r < extTableRowList.size(); r++)
-						page.addRegion((ImRegion) extTableRowList.get(r));
-					for (int c = 0; c < extTableColList.size(); c++)
-						page.addRegion((ImRegion) extTableColList.get(c));
-					
-					//	mark table (will use existing rows and columns)
-					markTable(page, page.getWordsInside(extTableBox), extTableBox, idmp);
-					
-					//	finally ...
-					return true;
+					return extendTable(page, selTables[0], selNonTableWords, idmp);
 				}
 			});
 		
 		//	update table structure after manual modifications
 		actions.add(new SelectionAction("tableUpdate", "Update Table", "Update table to reflect manual modifications.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				ImRegion[][] tableCells = markTableCells(page, selTables[0]);
-				ImUtils.orderTableWords(tableCells);
+				ImUtils.orderTableWords(markTableCells(page, selTables[0]));
 				cleanupTableAnnotations(page.getDocument(), selTables[0]);
 				return true;
 			}
@@ -1140,7 +981,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				}
 			});
 		
-		//	offer exporting tables as CSV
+		//	offer exporting tables as CSV or TSV
 		actions.add(new SelectionAction("tableCopySingle", "Copy Table Data", "Copy the data in the table to the clipboard.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
 				return false;
@@ -1169,11 +1010,18 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 					}
 				});
 				pm.add(mi);
+				mi = new JMenuItem("- XHTML");
+				mi.addActionListener(new ActionListener() {
+					public void actionPerformed(ActionEvent ae) {
+						copyTableDataXml(selTables[0]);
+					}
+				});
+				pm.add(mi);
 				return pm;
 			}
 		});
 		
-		//	offer exporting grid of connected tables as CSV
+		//	offer exporting grid of connected tables as CSV or TSV
 		if (selTables[0].hasAttribute("rowsContinueIn") || selTables[0].hasAttribute("rowsContinueFrom") || selTables[0].hasAttribute("colsContinueIn") || selTables[0].hasAttribute("colsContinueFrom"))
 			actions.add(new SelectionAction("tableCopyGrid", "Copy Table Grid Data", "Copy the data in the table and all connected tables to the clipboard.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
@@ -1203,22 +1051,33 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 						}
 					});
 					pm.add(mi);
+					mi = new JMenuItem("- XHTML");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							copyTableGridDataXml(selTables[0]);
+						}
+					});
+					pm.add(mi);
 					return pm;
 				}
 			});
-		
-		//	TODO_once_example_available if multiple table cell regions selected, offer merging them, setting colspan and rowspan
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
-	private boolean mergeTableRows(ImRegion table, ImRegion[] mergeRows) {
+	/**
+	 * Merge up a bunch of table rows.
+	 * @param table the table the rows belong to
+	 * @param mergeRows the rows to merge
+	 * @return true if the table was modified
+	 */
+	boolean mergeTableRows(ImRegion table, ImRegion[] mergeRows) {
 		ImRegion[] tables = ImUtils.getRowConnectedTables(table);
 		
 		//	cut effort short in basic case
 		if (tables.length == 1) {
-			this.doMergeTableRows(table, mergeRows);
+			this.doMergeTableRows(table.getPage(), table, mergeRows);
 			return true;
 		}
 		
@@ -1262,23 +1121,97 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	perform actual merge
 		for (int t = 0; t < tables.length; t++)
-			this.doMergeTableRows(tables[t], mergeTableRows[t]);
+			this.doMergeTableRows(tables[t].getPage(), tables[t], mergeTableRows[t]);
 		return true;
 	}
 	
-	private void doMergeTableRows(ImRegion table, ImRegion[] mergeRows) {
+	private void doMergeTableRows(ImPage page, ImRegion table, ImRegion[] mergeRows) {
+		
+		//	mark merged row
 		Arrays.sort(mergeRows, ImUtils.topDownOrder);
-		new ImRegion(table.getPage(), ImLayoutObject.getAggregateBox(mergeRows), ImRegion.TABLE_ROW_TYPE);
+		ImRegion mRow = new ImRegion(page, ImLayoutObject.getAggregateBox(mergeRows), ImRegion.TABLE_ROW_TYPE);
+		
+		//	collect cells in merged rows
+		ImRegion[] mRowCols = getRegionsOverlapping(page, mRow.bounds, ImRegion.TABLE_COL_TYPE);
+		Arrays.sort(mRowCols, ImUtils.leftRightOrder);
+		ImRegion[] mRowCells = getRegionsOverlapping(page, mRow.bounds, ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(mRowCells, ImUtils.leftRightOrder);
+		ImRegion[][] mergeColCells = new ImRegion[mergeRows.length][mRowCols.length];
 		for (int r = 0; r < mergeRows.length; r++)
-			table.getPage().removeRegion(mergeRows[r]);
-		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
+			for (int c = 0; c < mRowCols.length; c++) {
+				for (int l = 0; l < mRowCells.length; l++)
+					if (mRowCells[l].bounds.overlaps(mergeRows[r].bounds) && mRowCells[l].bounds.overlaps(mRowCols[c].bounds)) {
+						mergeColCells[r][c] = mRowCells[l];
+						break;
+					}
+				//	TODO make this nested loop join faster, somehow
+			}
+		
+		//	create merged cells column-wise
+		for (int c = 0; c < mRowCols.length; c++) {
+			int lc = c;
+			
+			//	find column with straight right edge
+			while ((lc+1) < mRowCols.length) {
+				boolean colClosed = true;
+				for (int r = 0; r < mergeRows.length; r++)
+					if (mergeColCells[r][lc].bounds.overlaps(mRowCols[lc+1].bounds)) {
+						colClosed = false;
+						break;
+					}
+				if (colClosed)
+					break;
+				else lc++;
+			}
+			
+			//	aggregate merged cell bounds
+			int mCellTop = mRow.bounds.top;
+			int mCellBottom = mRow.bounds.bottom;
+			for (int ac = c; ac <= lc; ac++)
+				for (int r = 0; r < mergeRows.length; r++) {
+					mCellTop = Math.min(mCellTop, mergeColCells[r][ac].bounds.top);
+					mCellBottom = Math.max(mCellBottom, mergeColCells[r][ac].bounds.bottom);
+				}
+			BoundingBox mCellBounds = new BoundingBox(mRowCols[c].bounds.left, mRowCols[lc].bounds.right, mCellTop, mCellBottom);
+			
+			//	remove merged cells
+			ImRegion[] mCellCells = getRegionsOverlapping(page, mCellBounds, ImRegion.TABLE_CELL_TYPE);
+			for (int l = 0; l < mCellCells.length; l++)
+				page.removeRegion(mCellCells[l]);
+			
+			//	add merged cell
+			this.markTableCell(page, mCellBounds, true, false);
+			
+			//	jump to last column (loop increment will switch one further)
+			c = lc;
+		}
+		
+		//	remove merged rows
+		for (int r = 0; r < mergeRows.length; r++)
+			page.removeRegion(mergeRows[r]);
+		
+		//	update cells (whichever we might have cut apart in rows above or below merger)
+		ImRegion[][] tableCells = this.markTableCells(page, table);
+		
+		//	clean up table structure
 		ImUtils.orderTableWords(tableCells);
 		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
-	private boolean splitTableRow(ImRegion table, ImRegion toSplitRow, BoundingBox splitBox) {
+	/**
+	 * Split a table row. Depending on the splitting box, the argument table
+	 * row is split into two (splitting off top or bottom) or three (splitting
+	 * across the middle) new rows.
+	 * @param table the table the row belongs to
+	 * @param toSplitRow the table row to split
+	 * @param splitBox the box defining where to split
+	 * @return true if the table was modified
+	 */
+	boolean splitTableRow(ImRegion table, ImRegion toSplitRow, BoundingBox splitBox) {
 		ImRegion[] tables = ImUtils.getRowConnectedTables(table);
-		ImWord[] toSplitRowWords = toSplitRow.getWords();
+		ImRegion[] toSplitRowCells = getRegionsOverlapping(table.getPage(), toSplitRow.bounds, ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(toSplitRowCells, ImUtils.leftRightOrder);
+		WordBlock[] toSplitRowWords = this.getWordBlocksForRowSplit(table.getPage(), toSplitRowCells, toSplitRow.bounds, splitBox);
 		
 		//	compute relative split bounds
 		int relAboveSplitBottom = 0;
@@ -1308,9 +1241,52 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (emptySplitRows >= 2)
 			return false;
 		
+		//	check if we have words obstructing the split
+		HashSet multiRowWords = null;
+		if ((relSplitTop < relAboveSplitBottom) || (relBelowSplitTop < relSplitBottom)) {
+			
+			//	determine bottom edge of all words _completely_ above of selection ...
+			//	... and top edge of all words _completely_ below of selection ...
+			int aboveSplitBottom = toSplitRow.bounds.top;
+			int belowSplitTop = toSplitRow.bounds.bottom;
+			ArrayList insideSplitWords = new ArrayList();
+			for (int w = 0; w < toSplitRowWords.length; w++) {
+				if (toSplitRowWords[w].bounds.bottom <= splitBox.top)
+					aboveSplitBottom = Math.max(aboveSplitBottom, toSplitRowWords[w].bounds.bottom);
+				else if (splitBox.bottom <= toSplitRowWords[w].bounds.top)
+					belowSplitTop = Math.min(belowSplitTop, toSplitRowWords[w].bounds.top);
+				else insideSplitWords.add(toSplitRowWords[w]);
+			}
+			
+			//	mark all remaining words that protrude beyond (or even only close to ???) either of these edges as multi-row
+			//	... and determine boundaries of middle row from the rest
+			//	TODO depending on average row gap, be even more sensitive about multi-row cells ...
+			//	... as they might end up failing to completely reach edge of neighbor row and only get close
+			int splitTop = splitBox.bottom;
+			int splitBottom = splitBox.top;
+			multiRowWords = new HashSet();
+			for ( int w = 0; w < insideSplitWords.size(); w++) {
+				WordBlock isWord = ((WordBlock) insideSplitWords.get(w));
+				if ((toSplitRow.bounds.top < aboveSplitBottom) && (isWord.bounds.top <= aboveSplitBottom))
+					multiRowWords.add(isWord);
+				else if ((belowSplitTop < toSplitRow.bounds.bottom) && (belowSplitTop <= isWord.bounds.bottom))
+					multiRowWords.add(isWord);
+				else {
+					splitTop = Math.min(splitTop, isWord.bounds.top);
+					splitBottom = Math.max(splitBottom, isWord.bounds.bottom);
+				}
+			}
+			
+			//	re-compute relative split bounds
+			relAboveSplitBottom = (aboveSplitBottom - toSplitRow.bounds.top);
+			relSplitTop = (splitTop - toSplitRow.bounds.top);
+			relSplitBottom = (splitBottom - toSplitRow.bounds.top);
+			relBelowSplitTop = (belowSplitTop - toSplitRow.bounds.top);
+		}
+		
 		//	cut effort short in basic case
 		if (tables.length == 1) {
-			this.doSplitTableRow(table, toSplitRow, relAboveSplitBottom, relSplitTop, relSplitBottom, relBelowSplitTop);
+			this.doSplitTableRow(table.getPage(), table, toSplitRow, toSplitRowWords, multiRowWords, relAboveSplitBottom, relSplitTop, relSplitBottom, relBelowSplitTop);
 			return true;
 		}
 		
@@ -1356,7 +1332,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		float relMiddleBottomSplit = (((float) (relSplitBottom + relBelowSplitTop)) / (2 * (toSplitRow.bounds.bottom - toSplitRow.bounds.top)));
 		for (int t = 0; t < tables.length; t++) {
 			if (tables[t] == table)
-				this.doSplitTableRow(tables[t], toSplitTableRows[t], relAboveSplitBottom, relSplitTop, relSplitBottom, relBelowSplitTop);
+				this.doSplitTableRow(tables[t].getPage(), tables[t], toSplitTableRows[t], toSplitRowWords, multiRowWords, relAboveSplitBottom, relSplitTop, relSplitBottom, relBelowSplitTop);
 			else this.doSplitTableRow(tables[t], toSplitTableRows[t], relTopMiddleSplit, relMiddleBottomSplit);
 		}
 		return true;
@@ -1375,7 +1351,9 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		int relBelowSplitTop = (toSplitRow.bounds.bottom - toSplitRow.bounds.top);
 		
 		//	order words above, inside, and below selection
-		ImWord[] toSplitRowWords = toSplitRow.getWords();
+		ImRegion[] toSplitRowCells = getRegionsOverlapping(table.getPage(), toSplitRow.bounds, ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(toSplitRowCells, ImUtils.leftRightOrder);
+		WordBlock[] toSplitRowWords = this.getWordBlocksForRowSplit(table.getPage(), toSplitRowCells, toSplitRow.bounds, new BoundingBox(table.bounds.left, table.bounds.right, splitBoxTop, splitBoxBottom));
 		for (int w = 0; w < toSplitRowWords.length; w++) {
 			if (toSplitRowWords[w].centerY < splitBoxTop)
 				relAboveSplitBottom = Math.max(relAboveSplitBottom, (toSplitRowWords[w].bounds.bottom - toSplitRow.bounds.top));
@@ -1386,36 +1364,137 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			else relBelowSplitTop = Math.min(relBelowSplitTop, (toSplitRowWords[w].bounds.top - toSplitRow.bounds.top));
 		}
 		
+		//	check if we have words obstructing the split
+		HashSet multiRowWords = null;
+		if ((relSplitTop < relAboveSplitBottom) || (relBelowSplitTop < relSplitBottom)) {
+			
+			//	determine bottom edge of all words _completely_ above of selection ...
+			//	... and top edge of all words _completely_ below of selection ...
+			int aboveSplitBottom = toSplitRow.bounds.top;
+			int belowSplitTop = toSplitRow.bounds.bottom;
+			ArrayList insideSplitWords = new ArrayList();
+			for (int w = 0; w < toSplitRowWords.length; w++) {
+				if (toSplitRowWords[w].bounds.bottom <= splitBoxTop)
+					aboveSplitBottom = Math.max(aboveSplitBottom, toSplitRowWords[w].bounds.bottom);
+				else if (splitBoxBottom <= toSplitRowWords[w].bounds.top)
+					belowSplitTop = Math.min(belowSplitTop, toSplitRowWords[w].bounds.top);
+				else insideSplitWords.add(toSplitRowWords[w]);
+			}
+			
+			//	mark all remaining words that protrude beyond (or even only close to ???) either of these edges as multi-row
+			//	... and determine boundaries of middle row from the rest
+			//	TODO depending on average row gap, be even more sensitive about multi-row cells ...
+			//	... as they might end up failing to completely reach edge of neighbor row and only get close
+			int splitTop = splitBoxBottom;
+			int splitBottom = splitBoxTop;
+			multiRowWords = new HashSet();
+			for ( int w = 0; w < insideSplitWords.size(); w++) {
+				WordBlock isWord = ((WordBlock) insideSplitWords.get(w));
+				if ((toSplitRow.bounds.top < aboveSplitBottom) && (isWord.bounds.top <= aboveSplitBottom))
+					multiRowWords.add(isWord);
+				else if ((belowSplitTop < toSplitRow.bounds.bottom) && (belowSplitTop <= isWord.bounds.bottom))
+					multiRowWords.add(isWord);
+				else {
+					splitTop = Math.min(splitTop, isWord.bounds.top);
+					splitBottom = Math.max(splitBottom, isWord.bounds.bottom);
+				}
+			}
+			
+			//	re-compute relative split bounds
+			relAboveSplitBottom = (aboveSplitBottom - toSplitRow.bounds.top);
+			relSplitTop = (splitTop - toSplitRow.bounds.top);
+			relSplitBottom = (splitBottom - toSplitRow.bounds.top);
+			relBelowSplitTop = (belowSplitTop - toSplitRow.bounds.top);
+		}
+		
 		//	do split with case adjusted absolute numbers
-		this.doSplitTableRow(table, toSplitRow, relAboveSplitBottom, relSplitTop, relSplitBottom, relBelowSplitTop);
+		this.doSplitTableRow(table.getPage(), table, toSplitRow, toSplitRowWords, multiRowWords, relAboveSplitBottom, relSplitTop, relSplitBottom, relBelowSplitTop);
 	}
 	
-	private void doSplitTableRow(ImRegion table, ImRegion toSplitRow, int relAboveSplitBottom, int relSplitTop, int relSplitBottom, int relBelowSplitTop) {
+	private void doSplitTableRow(ImPage page, ImRegion table, ImRegion toSplitRow, WordBlock[] toSplitRowWords, HashSet multiRowWords, int relAboveSplitBottom, int relSplitTop, int relSplitBottom, int relBelowSplitTop) {
 		
 		//	create two or three new rows
 		if (0 < relAboveSplitBottom) {
 			BoundingBox arBox = new BoundingBox(table.bounds.left, table.bounds.right, toSplitRow.bounds.top, (toSplitRow.bounds.top + relAboveSplitBottom));
-			new ImRegion(table.getPage(), arBox, ImRegion.TABLE_ROW_TYPE);
+			new ImRegion(page, arBox, ImRegion.TABLE_ROW_TYPE);
 		}
 		if (relSplitTop < relSplitBottom) {
 			BoundingBox irBox = new BoundingBox(table.bounds.left, table.bounds.right, (toSplitRow.bounds.top + relSplitTop), (toSplitRow.bounds.top + relSplitBottom));
-			new ImRegion(table.getPage(), irBox, ImRegion.TABLE_ROW_TYPE);
+			new ImRegion(page, irBox, ImRegion.TABLE_ROW_TYPE);
 		}
 		if (relBelowSplitTop < (toSplitRow.bounds.bottom - toSplitRow.bounds.top)) {
 			BoundingBox brBox = new BoundingBox(table.bounds.left, table.bounds.right, (toSplitRow.bounds.top + relBelowSplitTop), toSplitRow.bounds.bottom);
-			new ImRegion(table.getPage(), brBox, ImRegion.TABLE_ROW_TYPE);
+			new ImRegion(page, brBox, ImRegion.TABLE_ROW_TYPE);
 		}
 		
 		//	remove selected row
-		table.getPage().removeRegion(toSplitRow);
+		page.removeRegion(toSplitRow);
+		
+		//	get split rows and existing cells
+		ImRegion[] sRows = getRegionsInside(page, toSplitRow.bounds, ImRegion.TABLE_ROW_TYPE, false);
+		Arrays.sort(sRows, ImUtils.topDownOrder);
+		ImRegion[] toSplitRowCells = getRegionsOverlapping(page, toSplitRow.bounds, ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(toSplitRowCells, ImUtils.leftRightOrder);
+		
+		//	create new cells left to right
+		for (int l = 0; l < toSplitRowCells.length; l++) {
+			
+			//	handle base case, saving all the hassle below
+			if (multiRowWords == null) {
+				
+				//	create split cells
+				for (int r = 0; r < sRows.length; r++) {
+					int sCellTop = ((r == 0) ? toSplitRowCells[l].bounds.top : sRows[r].bounds.top);
+					int sCellBottom = (((r+1) == sRows.length) ? toSplitRowCells[l].bounds.bottom : sRows[r].bounds.bottom);
+					this.markTableCell(page, new BoundingBox(toSplitRowCells[l].bounds.left, toSplitRowCells[l].bounds.right, sCellTop, sCellBottom), true, false);
+				}
+				
+				//	clean up and we're done here
+				page.removeRegion(toSplitRowCells[l]);
+				continue;
+			}
+			
+			//	check for multi-row cells
+			boolean[] cellReachesIntoNextRow = new boolean[sRows.length - 1];
+			Arrays.fill(cellReachesIntoNextRow, false);
+			for (int r = 0; r < (sRows.length - 1); r++) {
+				WordBlock[] sCellWords = this.getWordBlocksOverlapping(toSplitRowWords, new BoundingBox(toSplitRowCells[l].bounds.left, toSplitRowCells[l].bounds.right, sRows[r].bounds.top, sRows[r+1].bounds.bottom));
+				if (sCellWords.length == 0)
+					continue;
+				Arrays.sort(sCellWords, ImUtils.topDownOrder);
+				for (int w = 0; w < sCellWords.length; w++) {
+					if (sRows[r+1].bounds.top < sCellWords[w].bounds.top)
+						break; // we're only interested in words overlapping with space between the current pair of rows
+					if (multiRowWords.contains(sCellWords[w])) {
+						cellReachesIntoNextRow[r] = true;
+						break; // one word overlapping both rows is enough
+					}
+				}
+			}
+			
+			//	create cells for split rows
+			int sCellTop = Math.min(toSplitRowCells[l].bounds.top, sRows[0].bounds.top);
+			for (int r = 0; r < sRows.length; r++) {
+				if ((r < cellReachesIntoNextRow.length) && cellReachesIntoNextRow[r])
+					continue;
+				if ((r+1) == sRows.length)
+					this.markTableCell(page, new BoundingBox(toSplitRowCells[l].bounds.left, toSplitRowCells[l].bounds.right, sCellTop, toSplitRowCells[l].bounds.bottom), true, false);
+				else {
+					this.markTableCell(page, new BoundingBox(toSplitRowCells[l].bounds.left, toSplitRowCells[l].bounds.right, sCellTop, sRows[r].bounds.bottom), true, false);
+					sCellTop = sRows[r+1].bounds.top;
+				}
+			}
+			
+			//	clean up
+			page.removeRegion(toSplitRowCells[l]);
+		}
 		
 		//	clean up table structure
-		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
-		ImUtils.orderTableWords(tableCells);
+		ImUtils.orderTableWords(this.markTableCells(page, table));
 		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
-	private boolean splitTableRowToLines(ImRegion table, ImRegion toSplitRow) {
+	private boolean splitTableRowToLines(ImPage page, ImRegion table, ImRegion toSplitRow) {
 		
 		//	get table row words
 		ImWord[] toSplitRowWords = toSplitRow.getWords();
@@ -1433,21 +1512,141 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	remove selected row
 		table.getPage().removeRegion(toSplitRow);
 		
+		//	get split rows and existing cells
+		ImRegion[] sRows = getRegionsInside(page, toSplitRow.bounds, ImRegion.TABLE_ROW_TYPE, false);
+		Arrays.sort(sRows, ImUtils.topDownOrder);
+		ImRegion[] toSplitRowCells = getRegionsOverlapping(page, toSplitRow.bounds, ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(toSplitRowCells, ImUtils.leftRightOrder);
+		
+		//	create new cells left to right
+		for (int c = 0; c < toSplitRowCells.length; c++) {
+			
+			//	create split cells
+			for (int r = 0; r < sRows.length; r++) {
+				int sCellTop = ((r == 0) ? toSplitRowCells[c].bounds.top : sRows[r].bounds.top);
+				int sCellBottom = (((r+1) == sRows.length) ? toSplitRowCells[c].bounds.bottom : sRows[r].bounds.bottom);
+				this.markTableCell(page, new BoundingBox(toSplitRowCells[c].bounds.left, toSplitRowCells[c].bounds.right, sCellTop, sCellBottom), true, false);
+			}
+			
+			//	clean up
+			page.removeRegion(toSplitRowCells[c]);
+		}
+		
 		//	clean up table structure
-		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
-		ImUtils.orderTableWords(tableCells);
+		ImUtils.orderTableWords(this.markTableCells(page, table));
 		this.cleanupTableAnnotations(table.getDocument(), table);
 		
 		//	finally ...
 		return true;
 	}
 	
-	private boolean mergeTableCols(ImRegion table, ImRegion[] mergeCols) {
+	private WordBlock[] getWordBlocksForRowSplit(ImPage page, ImRegion[] cells, BoundingBox bounds, BoundingBox splitBounds) {
+		
+		//	compute average row margin within and across split
+		int inCellRowGapSum = 0;
+		int inCellRowGapCount = 0;
+		int crossCellRowGapSum = 0;
+		int crossCellRowGapCount = 0;
+		int wordHeightSum = 0;
+		int wordHeightCount = 0;
+		for (int c = 0; c < cells.length; c++) {
+			ImWord[] cellWords = page.getWordsInside(cells[c].bounds);
+			ImUtils.sortLeftRightTopDown(cellWords);
+			for (int w = 0; w < cellWords.length; w++) {
+				wordHeightSum += cellWords[w].bounds.getHeight();
+				wordHeightCount++;
+				if ((w + 1) == cellWords.length)
+					break; // only need to count height from last word
+				if (cellWords[w].bounds.bottom > cellWords[w+1].centerY)
+					continue; // same line, no gap to analyze here
+				if (cellWords[w].bounds.right <= cellWords[w+1].bounds.left)
+					continue; // horizontal offset to right, unsafe
+				if (cellWords[w].centerY < splitBounds.top) {
+					if (cellWords[w+1].centerY < splitBounds.top) {
+						inCellRowGapSum += (cellWords[w+1].bounds.top - cellWords[w].bounds.bottom);
+						inCellRowGapCount++;
+					}
+					else {
+						crossCellRowGapSum += (cellWords[w+1].bounds.top - cellWords[w].bounds.bottom);
+						crossCellRowGapCount++;
+					}
+				}
+				else if (cellWords[w].centerY < splitBounds.bottom) {
+					if (cellWords[w+1].centerY < splitBounds.bottom) {
+						inCellRowGapSum += (cellWords[w+1].bounds.top - cellWords[w].bounds.bottom);
+						inCellRowGapCount++;
+					}
+					else {
+						crossCellRowGapSum += (cellWords[w+1].bounds.top - cellWords[w].bounds.bottom);
+						crossCellRowGapCount++;
+					}
+				}
+				else {
+					inCellRowGapSum += (cellWords[w+1].bounds.top - cellWords[w].bounds.bottom);
+					inCellRowGapCount++;
+				}
+			}
+		}
+		int inCellRowGap = ((inCellRowGapCount == 0) ? -1 : (inCellRowGapSum / inCellRowGapCount));
+		int crossCellRowGap = ((crossCellRowGapCount == 0) ? -1 : (crossCellRowGapSum / crossCellRowGapCount));
+		int wordHeight = ((wordHeightCount == 0) ? 0 : (wordHeightSum / wordHeightCount));
+//		System.out.println("In-cell row gap is " + inCellRowGap + ", cross-cell row gap is " + crossCellRowGap + ", word height is " + wordHeight);
+		
+		//	fall back to word height based estimates if gaps are 0
+		if (inCellRowGap == -1)
+			inCellRowGap = (wordHeight / 4);
+		if (crossCellRowGap == -1)
+			crossCellRowGap = (wordHeight / 2);
+		
+		//	aggregate words to blocks for individual cells
+		ArrayList wbs = new ArrayList();
+		for (int c = 0; c < cells.length; c++) {
+			ImWord[] cellWords = page.getWordsInside(cells[c].bounds);
+			ImUtils.sortLeftRightTopDown(cellWords);
+			int wbStart = 0;
+			for (int w = 1; w <= cellWords.length; w++) {
+				if ((w == cellWords.length) || this.isRowGap(cellWords[w-1], cellWords[w], inCellRowGap, crossCellRowGap)) {
+					ImWord[] wbWords = new ImWord[w - wbStart];
+					System.arraycopy(cellWords, wbStart, wbWords, 0, wbWords.length);
+					WordBlock wb = new WordBlock(page, wbWords, false);
+//					System.out.println("Word block: " + wb + " at " + wb.bounds);
+					wbs.add(wb);
+					wbStart = w;
+				}
+			}
+		}
+		
+		//	finally ...
+		return ((WordBlock[]) wbs.toArray(new WordBlock[wbs.size()]));
+	}
+	
+	private boolean isRowGap(ImWord word1, ImWord word2, int inCellRowGap, int crossCellRowGap) {
+		if (word1.bounds.bottom > word2.centerY)
+			return false; // presumably same line
+		if (word1.bounds.bottom > word2.bounds.top)
+			return false; // no gap at all
+		if (word1.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE)
+			return false; // explicit continuation marker
+		if (word1.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED)
+			return false; // explicit continuation marker
+		if ((inCellRowGap * 2) > crossCellRowGap)
+			return true; // too close to call, stay safe and avoid gluing words together
+		int wordGap = (word2.bounds.top - word1.bounds.bottom);
+		return ((crossCellRowGap - wordGap) < (wordGap - inCellRowGap)); // TODO make sure to measure sensibly
+	}
+	
+	/**
+	 * Merge up a bunch of table columns.
+	 * @param table the table the columns belong to
+	 * @param mergeCols the columns to merge
+	 * @return true if the table was modified
+	 */
+	boolean mergeTableCols(ImRegion table, ImRegion[] mergeCols) {
 		ImRegion[] tables = ImUtils.getColumnConnectedTables(table);
 		
 		//	cut effort short in basic case
 		if (tables.length == 1) {
-			this.doMergeTableCols(table, mergeCols);
+			this.doMergeTableCols(table.getPage(), table, mergeCols);
 			return true;
 		}
 		
@@ -1491,29 +1690,127 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	perform actual merge
 		for (int t = 0; t < tables.length; t++)
-			this.doMergeTableCols(tables[t], mergeTableCols[t]);
+			this.doMergeTableCols(tables[t].getPage(), tables[t], mergeTableCols[t]);
 		return true;
 	}
 	
-	private void doMergeTableCols(ImRegion table, ImRegion[] mergeCols) {
+	private void doMergeTableCols(ImPage page, ImRegion table, ImRegion[] mergeCols) {
+		
+		//	mark merged column
 		Arrays.sort(mergeCols, ImUtils.leftRightOrder);
-		new ImRegion(table.getPage(), ImLayoutObject.getAggregateBox(mergeCols), ImRegion.TABLE_COL_TYPE);
+		ImRegion mCol = new ImRegion(page, ImLayoutObject.getAggregateBox(mergeCols), ImRegion.TABLE_COL_TYPE);
+		
+		//	collect cells in merged columns
+		ImRegion[] mColRows = getRegionsOverlapping(page, mCol.bounds, ImRegion.TABLE_ROW_TYPE);
+		Arrays.sort(mColRows, ImUtils.topDownOrder);
+		ImRegion[] mColCells = getRegionsOverlapping(page, mCol.bounds, ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(mColCells, ImUtils.topDownOrder);
+		ImRegion[][] mergeColCells = new ImRegion[mColRows.length][mergeCols.length];
+		for (int r = 0; r < mColRows.length; r++)
+			for (int c = 0; c < mergeCols.length; c++) {
+				for (int l = 0; l < mColCells.length; l++)
+					if (mColCells[l].bounds.overlaps(mColRows[r].bounds) && mColCells[l].bounds.overlaps(mergeCols[c].bounds)) {
+						mergeColCells[r][c] = mColCells[l];
+						break;
+					}
+				//	TODO make this nested loop join faster, somehow
+			}
+		
+		//	create merged cells row-wise
+		for (int r = 0; r < mColRows.length; r++) {
+			int lr = r;
+			
+			//	find row with straight bottom
+			while ((lr+1) < mColRows.length) {
+				boolean rowClosed = true;
+				for (int c = 0; c < mergeCols.length; c++)
+					if ((mergeColCells[lr][c] != null) && mergeColCells[lr][c].bounds.overlaps(mColRows[lr+1].bounds)) {
+						rowClosed = false;
+						break;
+					}
+				if (rowClosed)
+					break;
+				else lr++;
+			}
+			
+			//	aggregate merged cell bounds
+			int mCellLeft = mCol.bounds.left;
+			int mCellRight = mCol.bounds.right;
+			for (int ar = r; ar <= lr; ar++) {
+				for (int c = 0; c < mergeCols.length; c++)
+					if (mergeColCells[ar][c] != null){
+						mCellLeft = Math.min(mCellLeft, mergeColCells[ar][c].bounds.left);
+						mCellRight = Math.max(mCellRight, mergeColCells[ar][c].bounds.right);
+					}
+			}
+			BoundingBox mCellBounds = new BoundingBox(mCellLeft, mCellRight, mColRows[r].bounds.top, mColRows[lr].bounds.bottom);
+			
+			//	remove merged cells
+			ImRegion[] mCellCells = getRegionsOverlapping(page, mCellBounds, ImRegion.TABLE_CELL_TYPE);
+			for (int c = 0; c < mCellCells.length; c++)
+				page.removeRegion(mCellCells[c]);
+			
+			//	add merged cell
+			this.markTableCell(page, mCellBounds, true, false);
+			
+			//	jump to last row (loop increment will switch one further)
+			r = lr;
+		}
+		
+		//	remove merged columns
 		for (int c = 0; c < mergeCols.length; c++)
-			table.getPage().removeRegion(mergeCols[c]);
-		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
+			page.removeRegion(mergeCols[c]);
+		
+		//	update cells (whichever we might have cut apart in columns to left or right of merger)
+		ImRegion[][] tableCells = this.markTableCells(page, table);
+		
+		//	clean up table structure
 		ImUtils.orderTableWords(tableCells);
 		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
-	private boolean splitTableCol(ImRegion table, ImRegion toSplitCol, BoundingBox splitBox) {
+	/**
+	 * Split a table column. Depending on the splitting box, the argument table
+	 * column is split into two (splitting off left or right) or three (splitting
+	 * down the middle) new columns.
+	 * @param page the page the table lies upon
+	 * @param table the table the column belongs to
+	 * @param toSplitCol the table column to split
+	 * @param splitBox the box defining where to split
+	 * @return true if the table was modified
+	 */
+	boolean splitTableCol(ImPage page, ImRegion table, ImRegion toSplitCol, BoundingBox splitBox) {
+		return this.splitTableCol(page, table, null, toSplitCol, splitBox);
+	}
+	
+	/**
+	 * Split a table column. Depending on the splitting box, the argument table
+	 * column is split into two (splitting off left or right) or three (splitting
+	 * down the middle) new columns.
+	 * @param page the page the table lies upon
+	 * @param table the table the column belongs to
+	 * @param tableStats statistics on the distribution of words in the argument
+	 *            table
+	 * @param toSplitCol the table column to split
+	 * @param splitBox the box defining where to split
+	 * @return true if the table was modified
+	 */
+	boolean splitTableCol(ImPage page, ImRegion table, TableAreaStatistics tableStats, ImRegion toSplitCol, BoundingBox splitBox) {
 		ImRegion[] tables = ImUtils.getColumnConnectedTables(table);
-		ImWord[] toSplitColWords = toSplitCol.getWords();
+		
+		//	compute table area statistics if not given
+		ImWord[] tableWords = table.getWords();
+		if (tableStats == null)
+			tableStats = TableAreaStatistics.getTableAreaStatistics(page, tableWords);
+		
+		//	aggregate words to blocks, bridging spaces to prevent mistaking them for column gaps
+		WordBlock[] toSplitColWords = this.getWordBlocksForColSplit(tableWords, toSplitCol.bounds, tableStats.normSpaceWidth);
 		
 		//	compute relative split bounds
 		int relLeftSplitRight = 0;
 		int relSplitLeft = (splitBox.right - toSplitCol.bounds.left);
 		int relSplitRight = (splitBox.left - toSplitCol.bounds.left);
-		int relRightSplitLeft = (toSplitCol.bounds.right - toSplitCol.bounds.left);
+		int relRightSplitLeft = toSplitCol.bounds.getWidth();
 		
 		//	order words left of, inside, and right of selection
 		for (int w = 0; w < toSplitColWords.length; w++) {
@@ -1532,14 +1829,65 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			emptySplitCols++;
 		if (relSplitRight <= relSplitLeft)
 			emptySplitCols++;
-		if (relRightSplitLeft == (toSplitCol.bounds.right - toSplitCol.bounds.left))
+		if (relRightSplitLeft == toSplitCol.bounds.getWidth())
 			emptySplitCols++;
 		if (emptySplitCols >= 2)
 			return false;
 		
+		//	check if we have words obstructing the split
+		HashSet multiColWords = null;
+		if ((relSplitLeft < relLeftSplitRight) || (relRightSplitLeft < relSplitRight)) {
+			
+			//	determine right edge of all words _completely_ to left of selection ...
+			//	... and left edge of all words _completely_ to right of selection ...
+			int leftSplitRight = toSplitCol.bounds.left;
+			int rightSplitLeft = toSplitCol.bounds.right;
+			ArrayList insideSplitWords = new ArrayList();
+			for (int w = 0; w < toSplitColWords.length; w++) {
+				if (toSplitColWords[w].bounds.right <= splitBox.left)
+					leftSplitRight = Math.max(leftSplitRight, toSplitColWords[w].bounds.right);
+				else if (splitBox.right <= toSplitColWords[w].bounds.left)
+					rightSplitLeft = Math.min(rightSplitLeft, toSplitColWords[w].bounds.left);
+				else insideSplitWords.add(toSplitColWords[w]);
+			}
+			
+			//	mark all remaining words that protrude beyond (or even only close to ???) either of these edges as multi-column
+			//	... and determine boundaries of middle column from the rest
+			//	TODO depending on average column gap, be even more sensitive about multi-column cells ...
+			//	... as they might end up failing to completely reach edge of neighbor column and only get close
+			int splitLeft = splitBox.right;
+			int splitRight = splitBox.left;
+			multiColWords = new HashSet();
+			for ( int w = 0; w < insideSplitWords.size(); w++) {
+				WordBlock isWord = ((WordBlock) insideSplitWords.get(w));
+				if ((toSplitCol.bounds.left < leftSplitRight) && (isWord.bounds.left <= leftSplitRight))
+					multiColWords.add(isWord);
+				else if ((rightSplitLeft < toSplitCol.bounds.right) && (rightSplitLeft <= isWord.bounds.right))
+					multiColWords.add(isWord);
+				else {
+					splitLeft = Math.min(splitLeft, isWord.bounds.left);
+					splitRight = Math.max(splitRight, isWord.bounds.right);
+				}
+			}
+			
+			//	re-compute relative split bounds
+			relLeftSplitRight = (leftSplitRight - toSplitCol.bounds.left);
+			relSplitLeft = (splitLeft - toSplitCol.bounds.left);
+			relSplitRight = (splitRight - toSplitCol.bounds.left);
+			relRightSplitLeft = (rightSplitLeft - toSplitCol.bounds.left);
+		}
+		
+		//	left side of split empty ==> move out left edge of middle
+		if (relLeftSplitRight == 0)
+			relSplitLeft = 0;
+		
+		//	right side of split empty ==> move out right edge of middle
+		if (relRightSplitLeft == toSplitCol.bounds.getWidth())
+			relSplitRight = toSplitCol.bounds.getWidth();
+		
 		//	cut effort short in basic case
 		if (tables.length == 1) {
-			this.doSplitTableCol(table, toSplitCol, relLeftSplitRight, relSplitLeft, relSplitRight, relRightSplitLeft);
+			this.doSplitTableCol(table.getPage(), table, toSplitCol, toSplitColWords, multiColWords, relLeftSplitRight, relSplitLeft, relSplitRight, relRightSplitLeft);
 			return true;
 		}
 		
@@ -1585,13 +1933,13 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		float relMiddleRightSplit = (((float) (relSplitRight + relRightSplitLeft)) / (2 * (toSplitCol.bounds.right - toSplitCol.bounds.left)));
 		for (int t = 0; t < tables.length; t++) {
 			if (tables[t] == table)
-				this.doSplitTableCol(tables[t], toSplitTableCols[t], relLeftSplitRight, relSplitLeft, relSplitRight, relRightSplitLeft);
-			else this.doSplitTableCol(tables[t], toSplitTableCols[t], relLeftMiddleSplit, relMiddleRightSplit);
+				this.doSplitTableCol(tables[t].getPage(), tables[t], toSplitTableCols[t], toSplitColWords, multiColWords, relLeftSplitRight, relSplitLeft, relSplitRight, relRightSplitLeft);
+			else this.doSplitTableCol(tables[t], toSplitTableCols[t], relLeftMiddleSplit, relMiddleRightSplit, tableStats.normSpaceWidth);
 		}
 		return true;
 	}
 	
-	private void doSplitTableCol(ImRegion table, ImRegion toSplitCol, float relLeftMiddleSplit, float relMiddleRightSplit) {
+	private void doSplitTableCol(ImRegion table, ImRegion toSplitCol, float relLeftMiddleSplit, float relMiddleRightSplit, float normSpaceWidth) {
 		
 		//	compute relative split box
 		int splitBoxLeft = (((int) (relLeftMiddleSplit * (toSplitCol.bounds.right - toSplitCol.bounds.left))) + toSplitCol.bounds.left);
@@ -1604,7 +1952,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		int relRightSplitLeft = (toSplitCol.bounds.right - toSplitCol.bounds.left);
 		
 		//	order words left of, inside, and right of selection
-		ImWord[] toSplitColWords = toSplitCol.getWords();
+		WordBlock[] toSplitColWords = this.getWordBlocksForColSplit(table.getWords(), toSplitCol.bounds, normSpaceWidth);
 		for (int w = 0; w < toSplitColWords.length; w++) {
 			if (toSplitColWords[w].centerX < splitBoxLeft)
 				relLeftSplitRight = Math.max(relLeftSplitRight, (toSplitColWords[w].bounds.right - toSplitCol.bounds.left));
@@ -1615,33 +1963,654 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			else relRightSplitLeft = Math.min(relRightSplitLeft, (toSplitColWords[w].bounds.left - toSplitCol.bounds.left));
 		}
 		
+		//	check if we have words obstructing the split
+		HashSet multiColWords = null;
+		if ((relSplitLeft < relLeftSplitRight) || (relRightSplitLeft < relSplitRight)) {
+			
+			//	determine right edge of all words _completely_ to left of selection ...
+			//	... and left edge of all words _completely_ to right of selection ...
+			int leftSplitRight = toSplitCol.bounds.left;
+			int rightSplitLeft = toSplitCol.bounds.right;
+			ArrayList insideSplitWords = new ArrayList();
+			for (int w = 0; w < toSplitColWords.length; w++) {
+				if (toSplitColWords[w].bounds.right <= splitBoxLeft)
+					leftSplitRight = Math.max(leftSplitRight, toSplitColWords[w].bounds.right);
+				else if (splitBoxRight <= toSplitColWords[w].bounds.left)
+					rightSplitLeft = Math.min(rightSplitLeft, toSplitColWords[w].bounds.left);
+				else insideSplitWords.add(toSplitColWords[w]);
+			}
+			
+			//	mark all remaining words that protrude beyond either of these edges as multi-column
+			//	... and determine boundaries of middle column from the rest
+			//	TODO depending on average column gap, be even more sensitive about multi-column cells ...
+			//	... as they might end up failing to completely reach edge of neighbor column and only get close
+			int splitLeft = splitBoxRight;
+			int splitRight = splitBoxLeft;
+			multiColWords = new HashSet();
+			for ( int w = 0; w < insideSplitWords.size(); w++) {
+				WordBlock isWord = ((WordBlock) insideSplitWords.get(w));
+				if ((toSplitCol.bounds.left < leftSplitRight) && (isWord.bounds.left <= leftSplitRight))
+					multiColWords.add(isWord);
+				else if ((rightSplitLeft < toSplitCol.bounds.right) && (rightSplitLeft <= isWord.bounds.right))
+					multiColWords.add(isWord);
+				else {
+					splitLeft = Math.min(splitLeft, isWord.bounds.left);
+					splitRight = Math.max(splitRight, isWord.bounds.right);
+				}
+			}
+			
+			//	re-compute relative split bounds
+			relLeftSplitRight = (leftSplitRight - toSplitCol.bounds.left);
+			relSplitLeft = (splitLeft - toSplitCol.bounds.left);
+			relSplitRight = (splitRight - toSplitCol.bounds.left);
+			relRightSplitLeft = (rightSplitLeft - toSplitCol.bounds.left);
+		}
+		
 		//	do split with case adjusted absolute numbers
-		this.doSplitTableCol(table, toSplitCol, relLeftSplitRight, relSplitLeft, relSplitRight, relRightSplitLeft);
+		this.doSplitTableCol(table.getPage(), table, toSplitCol, toSplitColWords, multiColWords, relLeftSplitRight, relSplitLeft, relSplitRight, relRightSplitLeft);
 	}
 	
-	private void doSplitTableCol(ImRegion table, ImRegion toSplitCol, int relLeftSplitRight, int relSplitLeft, int relSplitRight, int relRightSplitLeft) {
+	private void doSplitTableCol(ImPage page, ImRegion table, ImRegion toSplitCol, WordBlock[] toSplitColWords, HashSet multiColWords, int relLeftSplitRight, int relSplitLeft, int relSplitRight, int relRightSplitLeft) {
 		
 		//	create two or three new columns
 		if (0 < relLeftSplitRight) {
-			BoundingBox arBox = new BoundingBox(toSplitCol.bounds.left, (toSplitCol.bounds.left + relLeftSplitRight), table.bounds.top, table.bounds.bottom);
-			new ImRegion(table.getPage(), arBox, ImRegion.TABLE_COL_TYPE);
+			BoundingBox lcBox = new BoundingBox(toSplitCol.bounds.left, (toSplitCol.bounds.left + relLeftSplitRight), table.bounds.top, table.bounds.bottom);
+			new ImRegion(table.getPage(), lcBox, ImRegion.TABLE_COL_TYPE);
 		}
 		if (relSplitLeft < relSplitRight) {
-			BoundingBox irBox = new BoundingBox((toSplitCol.bounds.left + relSplitLeft), (toSplitCol.bounds.left + relSplitRight), table.bounds.top, table.bounds.bottom);
-			new ImRegion(table.getPage(), irBox, ImRegion.TABLE_COL_TYPE);
+			BoundingBox icBox = new BoundingBox((toSplitCol.bounds.left + relSplitLeft), (toSplitCol.bounds.left + relSplitRight), table.bounds.top, table.bounds.bottom);
+			new ImRegion(table.getPage(), icBox, ImRegion.TABLE_COL_TYPE);
 		}
 		if (relRightSplitLeft < (toSplitCol.bounds.right - toSplitCol.bounds.left)) {
-			BoundingBox brBox = new BoundingBox((toSplitCol.bounds.left + relRightSplitLeft), toSplitCol.bounds.right, table.bounds.top, table.bounds.bottom);
-			new ImRegion(table.getPage(), brBox, ImRegion.TABLE_COL_TYPE);
+			BoundingBox rcBox = new BoundingBox((toSplitCol.bounds.left + relRightSplitLeft), toSplitCol.bounds.right, table.bounds.top, table.bounds.bottom);
+			new ImRegion(table.getPage(), rcBox, ImRegion.TABLE_COL_TYPE);
 		}
 		
 		//	remove selected column
-		table.getPage().removeRegion(toSplitCol);
+		page.removeRegion(toSplitCol);
+		
+		//	get split columns and existing cells
+		ImRegion[] sCols = getRegionsInside(page, toSplitCol.bounds, ImRegion.TABLE_COL_TYPE, false);
+		Arrays.sort(sCols, ImUtils.leftRightOrder);
+		ImRegion[] toSplitColCells = getRegionsOverlapping(page, toSplitCol.bounds, ImRegion.TABLE_CELL_TYPE);
+		Arrays.sort(toSplitColCells, ImUtils.topDownOrder);
+		
+		//	create new cells left to right
+		for (int l = 0; l < toSplitColCells.length; l++) {
+			
+			//	handle base case, saving all the hassle below
+			if (multiColWords == null) {
+				
+				//	create split cells
+				for (int c = 0; c < sCols.length; c++) {
+					int sCellLeft = ((c == 0) ? toSplitColCells[l].bounds.left : sCols[c].bounds.left);
+					int sCellRight = (((c+1) == sCols.length) ? toSplitColCells[l].bounds.right : sCols[c].bounds.right);
+					this.markTableCell(page, new BoundingBox(sCellLeft, sCellRight, toSplitColCells[l].bounds.top, toSplitColCells[l].bounds.bottom), false, true);
+				}
+				
+				//	clean up and we're done here
+				page.removeRegion(toSplitColCells[l]);
+				continue;
+			}
+			
+			//	check for multi-column cells
+			boolean[] cellReachesIntoNextCol = new boolean[sCols.length - 1];
+			Arrays.fill(cellReachesIntoNextCol, false);
+			for (int c = 0; c < (sCols.length - 1); c++) {
+				WordBlock[] sCellWords = this.getWordBlocksOverlapping(toSplitColWords, new BoundingBox(sCols[c].bounds.left, sCols[c+1].bounds.right, toSplitColCells[l].bounds.top, toSplitColCells[l].bounds.bottom));
+				if (sCellWords.length == 0)
+					continue;
+				Arrays.sort(sCellWords, ImUtils.leftRightOrder);
+				for (int w = 0; w < sCellWords.length; w++) {
+					if (sCols[c+1].bounds.left < sCellWords[w].bounds.left)
+						break; // we're only interested in words overlapping with space between the current pair of columns
+					if (multiColWords.contains(sCellWords[w])) {
+						cellReachesIntoNextCol[c] = true;
+						break; // one word overlapping both columns is enough
+					}
+				}
+			}
+			
+			//	create cells for split columns
+			int sCellLeft = Math.min(toSplitColCells[l].bounds.left, sCols[0].bounds.left);
+			for (int c = 0; c < sCols.length; c++) {
+				if ((c < cellReachesIntoNextCol.length) && cellReachesIntoNextCol[c])
+					continue;
+				if ((c+1) == sCols.length)
+					this.markTableCell(page, new BoundingBox(sCellLeft, toSplitColCells[l].bounds.right, toSplitColCells[l].bounds.top, toSplitColCells[l].bounds.bottom), false, true);
+				else {
+					this.markTableCell(page, new BoundingBox(sCellLeft, sCols[c].bounds.right, toSplitColCells[l].bounds.top, toSplitColCells[l].bounds.bottom), false, true);
+					sCellLeft = sCols[c+1].bounds.left;
+				}
+			}
+			
+			//	clean up
+			page.removeRegion(toSplitColCells[l]);
+		}
 		
 		//	clean up table structure
-		ImRegion[][] tableCells = markTableCells(table.getPage(), table);
-		ImUtils.orderTableWords(tableCells);
+		ImUtils.orderTableWords(this.markTableCells(page, table));
 		this.cleanupTableAnnotations(table.getDocument(), table);
+	}
+	
+	private WordBlock[] getWordBlocksForColSplit(ImWord[] tableWords, BoundingBox bounds, float normSpaceWidth) {
+		
+		//	get and sort words
+		ImWord[] words = getWordsOverlapping(tableWords, bounds);
+		ImUtils.sortLeftRightTopDown(words);
+		
+		//	aggregate words to sequences
+		ArrayList wbs = new ArrayList();
+		int wbStart = 0;
+		for (int w = 1; w <= words.length; w++) {
+			if ((w == words.length) || this.isColumnGap(words[w-1], words[w], normSpaceWidth)) {
+				ImWord[] wbWords = new ImWord[w - wbStart];
+				System.arraycopy(words, wbStart, wbWords, 0, wbWords.length);
+				WordBlock wb = new WordBlock(wbWords[0].getPage(), wbWords, true);
+//				System.out.println("Word block: " + wb + " at " + wb.bounds);
+				wbs.add(wb);
+				wbStart = w;
+			}
+		}
+		
+		//	finally ...
+		return ((WordBlock[]) wbs.toArray(new WordBlock[wbs.size()]));
+	}
+	
+	private boolean isColumnGap(ImWord word1, ImWord word2, float normSpaceWidth) {
+		if (word1.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+			return true; // explicit end marker
+		if (word1.bounds.bottom < word2.centerY)
+			return true; // next line
+		if (word1.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE)
+			return false; // explicit continuation marker
+		if (word1.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED)
+			return false; // explicit continuation marker
+		int lineHeight = ((word1.bounds.getHeight() + word2.bounds.getHeight()) / 2);
+		int wordDist = (word2.bounds.left - word1.bounds.right);
+//		return ((wordDist * 3) > lineHeight);
+		return ((lineHeight * normSpaceWidth) < wordDist);
+	}
+	
+	private WordBlock[] getWordBlocksOverlapping(WordBlock[] words, BoundingBox box) {
+		ArrayList wbs = new ArrayList();
+		for (int w = 0; w < words.length; w++) {
+			if (words[w].bounds.overlaps(box))
+				wbs.add(words[w]);
+		}
+		return ((WordBlock[]) wbs.toArray(new WordBlock[wbs.size()]));
+	}
+	
+	private static class WordBlock extends ImRegion {
+		final int centerX;
+		final int centerY;
+		final ImWord[] words;
+		final boolean forColSplit;
+		WordBlock(ImPage page, ImWord[] words, boolean forColSplit) {
+			super(page.getDocument(), page.pageId, ImLayoutObject.getAggregateBox(words), "wordBlock");
+			this.centerX = ((this.bounds.left + this.bounds.right) / 2);
+			this.centerY = ((this.bounds.top + this.bounds.bottom) / 2);
+			this.words = words;
+			this.forColSplit = forColSplit;
+		}
+		public String toString() {
+			return ImUtils.getString(this.words[0], this.words[this.words.length-1], this.forColSplit);
+		}
+	}
+	
+	/**
+	 * Merge up a bunch of table cells.
+	 * @param table the table the cells belong to
+	 * @param mergeCells the cells to merge
+	 * @return true if the table was modified
+	 */
+	boolean mergeTableCells(ImRegion table, ImRegion[] mergeCells) {
+		ImPage page = table.getPage();
+		
+		//	get aggregate cell bounds (transitive hull, to keep cells rectangular)
+		BoundingBox mCellBounds = ImLayoutObject.getAggregateBox(mergeCells);
+		while (true) {
+			mergeCells = getRegionsOverlapping(page, mCellBounds, ImRegion.TABLE_CELL_TYPE);
+			BoundingBox eMergedBounds = ImLayoutObject.getAggregateBox(mergeCells);
+			if (mCellBounds.equals(eMergedBounds))
+				break;
+			else mCellBounds = eMergedBounds;
+		}
+		
+		//	clean up factually merged cells (not only originally selected ones, but all in transitive hull of merge result)
+		mergeCells = getRegionsInside(page, mCellBounds, ImRegion.TABLE_CELL_TYPE, false);
+		for (int c = 0; c < mergeCells.length; c++)
+			page.removeRegion(mergeCells[c]);
+		
+		//	mark aggregate cell
+		ImRegion mCell = new ImRegion(page, mCellBounds, ImRegion.TABLE_CELL_TYPE);
+		
+		//	shrink affected rows and remaining fully contained cells
+		ImRegion[] mCellRows = getRegionsOverlapping(page, mCell.bounds, ImRegion.TABLE_ROW_TYPE);
+		Arrays.sort(mCellRows, ImUtils.topDownOrder);
+		if (mCellRows.length > 1)
+			for (int r = 0; r < mCellRows.length; r++) {
+				
+				//	assess words contained in cells that do not reach beyond row
+				ImRegion[] mCellRowCells = getRegionsOverlapping(page, mCellRows[r].bounds, ImRegion.TABLE_CELL_TYPE);
+				int mCellRowTop = mCellRows[r].bounds.bottom;
+				int mCellRowBottom = mCellRows[r].bounds.top;
+				for (int l = 0; l < mCellRowCells.length; l++) {
+					if (mCell.bounds.overlaps(mCellRowCells[l].bounds))
+						continue; // no use considering merge result here
+					ImWord[] mCellRowCellWords = page.getWordsInside(mCellRowCells[l].bounds);
+					for (int w = 0; w < mCellRowCellWords.length; w++) {
+						if (mCellRows[r].bounds.top <= mCellRowCells[l].bounds.top)
+							mCellRowTop = Math.min(mCellRowTop, mCellRowCellWords[w].bounds.top);
+						if (mCellRowCells[l].bounds.bottom <= mCellRows[r].bounds.bottom)
+							mCellRowBottom = Math.max(mCellRowBottom, mCellRowCellWords[w].bounds.bottom);
+					}
+				}
+				if ((mCellRowTop <= mCellRows[r].bounds.top) && (mCellRows[r].bounds.bottom <= mCellRowBottom))
+					continue; // nothing to shrink here
+				
+				//	don't shrink outside edges of edge rows
+				if (r == 0)
+					mCellRowTop = Math.min(mCellRowTop, mCellRows[r].bounds.top);
+				if (r == (mCellRows.length - 1))
+					mCellRowBottom = Math.max(mCellRowBottom, mCellRows[r].bounds.bottom);
+				
+				//	compute reduced bounds
+				BoundingBox mCellRowBox = new BoundingBox(table.bounds.left, table.bounds.right, mCellRowTop, mCellRowBottom);
+				
+				//	shrink cells to reduced row height
+				for (int l = 0; l < mCellRowCells.length; l++) {
+					if (mCell.bounds.overlaps(mCellRowCells[l].bounds))
+						continue; // don't shrink merge result
+					page.removeRegion(mCellRowCells[l]);
+					BoundingBox mCellRowCellBox = new BoundingBox(
+							mCellRowCells[l].bounds.left,
+							mCellRowCells[l].bounds.right,
+							((mCellRows[r].bounds.top <= mCellRowCells[l].bounds.top) ? mCellRowTop : mCellRowCells[l].bounds.top),
+							((mCellRowCells[l].bounds.bottom <= mCellRows[r].bounds.bottom) ? mCellRowBottom : mCellRowCells[l].bounds.bottom)
+						);
+					mCellRowCells[l] = new ImRegion(page, mCellRowCellBox, ImRegion.TABLE_CELL_TYPE);
+ 				}
+				
+				//	shrink row proper
+				page.removeRegion(mCellRows[r]);
+				mCellRows[r] = new ImRegion(page, mCellRowBox, ImRegion.TABLE_ROW_TYPE);
+			}
+		
+		//	shrink affected columns to remaining fully contained cells
+		ImRegion[] mCellCols = getRegionsOverlapping(page, mCell.bounds, ImRegion.TABLE_COL_TYPE);
+		Arrays.sort(mCellCols, ImUtils.leftRightOrder);
+		if (mCellCols.length > 1)
+			for (int c = 0; c < mCellCols.length; c++) {
+				
+				//	assess words contained in cells that do not reach beyond column
+				ImRegion[] mCellColCells = getRegionsOverlapping(page, mCellCols[c].bounds, ImRegion.TABLE_CELL_TYPE);
+				int mCellColLeft = mCellCols[c].bounds.right;
+				int mCellColRight = mCellCols[c].bounds.left;
+				for (int l = 0; l < mCellColCells.length; l++) {
+					if (mCell.bounds.overlaps(mCellColCells[l].bounds))
+						continue; // no use considering merge result here
+					ImWord[] mCellRowCellWords = page.getWordsInside(mCellColCells[l].bounds);
+					for (int w = 0; w < mCellRowCellWords.length; w++) {
+						if (mCellCols[c].bounds.left <= mCellColCells[l].bounds.left)
+							mCellColLeft = Math.min(mCellColLeft, mCellRowCellWords[w].bounds.left);
+						if (mCellColCells[l].bounds.right <= mCellCols[c].bounds.right)
+							mCellColRight = Math.max(mCellColRight, mCellRowCellWords[w].bounds.right);
+					}
+				}
+				
+				//	don't shrink outside edges of edge columns
+				if (c == 0)
+					mCellColLeft = Math.min(mCellColLeft, mCellCols[c].bounds.left);
+				if (c == (mCellCols.length - 1))
+					mCellColRight = Math.max(mCellColRight, mCellCols[c].bounds.right);
+				
+				//	anything to shrink at all?
+				if ((mCellColLeft <= mCellCols[c].bounds.left) && (mCellCols[c].bounds.right <= mCellColRight))
+					continue;
+				
+				//	compute reduced bounds
+				BoundingBox mCellColBox = new BoundingBox(mCellColLeft, mCellColRight, table.bounds.top, table.bounds.bottom);
+				
+				//	shrink cells to reduced row height
+				for (int l = 0; l < mCellColCells.length; l++) {
+					if (mCell.bounds.overlaps(mCellColCells[l].bounds))
+						continue; // don't shrink merge result
+					page.removeRegion(mCellColCells[l]);
+					BoundingBox mCellColCellBox = new BoundingBox(
+							((mCellCols[c].bounds.left <= mCellColCells[l].bounds.left) ? mCellColLeft : mCellColCells[l].bounds.left),
+							((mCellColCells[l].bounds.right <= mCellCols[c].bounds.right) ? mCellColRight : mCellColCells[l].bounds.right),
+							mCellColCells[l].bounds.top,
+							mCellColCells[l].bounds.bottom
+						);
+					mCellColCells[l] = new ImRegion(page, mCellColCellBox, ImRegion.TABLE_CELL_TYPE);
+ 				}
+				
+				//	shrink column proper
+				page.removeRegion(mCellCols[c]);
+				mCellCols[c] = new ImRegion(page, mCellColBox, ImRegion.TABLE_COL_TYPE);
+			}
+		
+		//	update table
+		ImUtils.orderTableWords(this.markTableCells(page, table));
+		this.cleanupTableAnnotations(table.getDocument(), table);
+		
+		//	indicate change
+		return true;
+	}
+	
+	private boolean splitTableCellRows(ImRegion table, ImRegion toSplitCell, ImRegion[] toSplitCellRows, ImRegion[] toSplitCellCols, BoundingBox splitBox) {
+		Arrays.sort(toSplitCellRows, ImUtils.topDownOrder);
+		Arrays.sort(toSplitCellCols, ImUtils.leftRightOrder);
+		ImPage page = table.getPage();
+		
+		//	order words above, inside, and below selection
+		ArrayList aboveSplitRows = new ArrayList();
+		ArrayList splitRows = new ArrayList();
+		ArrayList belowSplitRows = new ArrayList();
+		for (int r = 0; r < toSplitCellRows.length; r++) {
+			int rowCenterY = ((toSplitCellRows[r].bounds.top + toSplitCellRows[r].bounds.bottom) / 2);
+			if (rowCenterY < splitBox.top)
+				aboveSplitRows.add(toSplitCellRows[r]);
+			else if (rowCenterY < splitBox.bottom)
+				splitRows.add(toSplitCellRows[r]);
+			else belowSplitRows.add(toSplitCellRows[r]);
+		}
+		
+		//	anything to split at all?
+		int emptySplitRows = 0;
+		if (aboveSplitRows.isEmpty())
+			emptySplitRows++;
+		if (splitRows.isEmpty())
+			emptySplitRows++;
+		if (belowSplitRows.isEmpty())
+			emptySplitRows++;
+		if (emptySplitRows >= 2)
+			return false;
+		
+		//	remove selected cell
+		page.removeRegion(toSplitCell);
+		
+		//	sort words in to-split cell
+		ImWord[] toSplitCellWords = page.getWordsInside(toSplitCell.bounds);
+		
+		//	perform split
+		if (aboveSplitRows.size() != 0) {
+			ImRegion aboveSplitBottomRow = ((ImRegion) aboveSplitRows.get(aboveSplitRows.size() - 1));
+			int aboveSplitCellTop = ((ImRegion) aboveSplitRows.get(0)).bounds.top;
+			int aboveSplitCellBottom = aboveSplitBottomRow.bounds.bottom;
+			for (int w = 0; w < toSplitCellWords.length; w++) {
+				if (toSplitCellWords[w].centerY < splitBox.top)
+					aboveSplitCellBottom = Math.max(aboveSplitCellBottom, toSplitCellWords[w].bounds.bottom);
+			}
+			
+			BoundingBox ascBox = new BoundingBox(toSplitCell.bounds.left, toSplitCell.bounds.right, aboveSplitCellTop, aboveSplitCellBottom);
+			this.markTableCell(page, ascBox, true, (aboveSplitRows.size() == 1));
+			
+			if (aboveSplitBottomRow.bounds.bottom < aboveSplitCellBottom) {
+				page.removeRegion(aboveSplitBottomRow);
+				aboveSplitBottomRow = new ImRegion(page, new BoundingBox(aboveSplitBottomRow.bounds.left, aboveSplitBottomRow.bounds.right, aboveSplitBottomRow.bounds.top, aboveSplitCellBottom), ImRegion.TABLE_ROW_TYPE);
+				
+				ImRegion[] aboveSplitBottomCells = getRegionsOverlapping(page, aboveSplitBottomRow.bounds, ImRegion.TABLE_CELL_TYPE);
+				for (int c = 0; c < aboveSplitBottomCells.length; c++) {
+					if (aboveSplitCellBottom <= aboveSplitBottomCells[c].bounds.bottom)
+						continue; // multi-row cell that reaches below split, no need for expanding
+					page.removeRegion(aboveSplitBottomCells[c]);
+					ascBox = new BoundingBox(aboveSplitBottomCells[c].bounds.left, aboveSplitBottomCells[c].bounds.right, aboveSplitBottomCells[c].bounds.top, aboveSplitCellBottom);
+					this.markTableCell(page, ascBox, true, (aboveSplitRows.size() == 1));
+				}
+			}
+		}
+		
+		if (splitRows.size() != 0) {
+			ImRegion splitTopRow = ((ImRegion) splitRows.get(0));
+			ImRegion splitBottomRow = ((ImRegion) splitRows.get(splitRows.size() - 1));
+			int splitCellTop = splitTopRow.bounds.top;
+			int splitCellBottom = splitBottomRow.bounds.bottom;
+			for (int w = 0; w < toSplitCellWords.length; w++)
+				if ((splitBox.top <= toSplitCellWords[w].centerY) && (toSplitCellWords[w].centerY < splitBox.bottom)) {
+					splitCellTop = Math.min(splitCellTop, toSplitCellWords[w].bounds.top);
+					splitCellBottom = Math.max(splitCellBottom, toSplitCellWords[w].bounds.bottom);
+				}
+			
+			BoundingBox iscBox = new BoundingBox(toSplitCell.bounds.left, toSplitCell.bounds.right, splitCellTop, splitCellBottom);
+			this.markTableCell(page, iscBox, true, (splitRows.size() == 1));
+			
+			if (splitTopRow == splitBottomRow) {
+				if ((splitCellTop < splitTopRow.bounds.top) || (splitTopRow.bounds.bottom < splitCellBottom)) {
+					page.removeRegion(splitTopRow);
+					splitTopRow = new ImRegion(page, new BoundingBox(splitTopRow.bounds.left, splitTopRow.bounds.right, Math.min(splitCellTop, splitTopRow.bounds.top), Math.max(splitCellBottom, splitTopRow.bounds.bottom)), ImRegion.TABLE_ROW_TYPE);
+					
+					ImRegion[] splitCells = getRegionsOverlapping(page, splitTopRow.bounds, ImRegion.TABLE_CELL_TYPE);
+					for (int c = 0; c < splitCells.length; c++) {
+						if ((splitCells[c].bounds.top <= splitCellTop) && (splitCellBottom <= splitCells[c].bounds.bottom))
+							continue; // multi-row cell that reaches above and below split, no need for expanding
+						page.removeRegion(splitCells[c]);
+						iscBox = new BoundingBox(splitCells[c].bounds.left, splitCells[c].bounds.right, Math.min(splitCellTop, splitCells[c].bounds.top), Math.max(splitCellBottom, splitCells[c].bounds.bottom));
+						this.markTableCell(page, iscBox, true, (splitRows.size() == 1));
+					}
+				}
+			}
+			else {
+				if (splitCellTop < splitTopRow.bounds.top) {
+					page.removeRegion(splitTopRow);
+					splitTopRow = new ImRegion(page, new BoundingBox(splitTopRow.bounds.left, splitTopRow.bounds.right, splitCellTop, splitTopRow.bounds.bottom), ImRegion.TABLE_ROW_TYPE);
+					
+					ImRegion[] splitTopCells = getRegionsOverlapping(page, splitTopRow.bounds, ImRegion.TABLE_CELL_TYPE);
+					for (int c = 0; c < splitTopCells.length; c++) {
+						if (splitTopCells[c].bounds.top <= splitCellTop)
+							continue; // multi-row cell that reaches above split, no need for expanding
+						page.removeRegion(splitTopCells[c]);
+						iscBox = new BoundingBox(splitTopCells[c].bounds.left, splitTopCells[c].bounds.right, splitCellTop, splitTopCells[c].bounds.bottom);
+						this.markTableCell(page, iscBox, true, (belowSplitRows.size() == 1));
+					}
+				}
+				if (splitBottomRow.bounds.bottom < splitCellBottom) {
+					page.removeRegion(splitBottomRow);
+					splitBottomRow = new ImRegion(page, new BoundingBox(splitBottomRow.bounds.left, splitBottomRow.bounds.right, splitBottomRow.bounds.top, splitCellBottom), ImRegion.TABLE_ROW_TYPE);
+					
+					ImRegion[] splitBottomCells = getRegionsOverlapping(page, splitBottomRow.bounds, ImRegion.TABLE_CELL_TYPE);
+					for (int c = 0; c < splitBottomCells.length; c++) {
+						if (splitCellBottom <= splitBottomCells[c].bounds.bottom)
+							continue; // multi-row cell that reaches below split, no need for expanding
+						page.removeRegion(splitBottomCells[c]);
+						iscBox = new BoundingBox(splitBottomCells[c].bounds.left, splitBottomCells[c].bounds.right, splitBottomCells[c].bounds.top, splitCellBottom);
+						this.markTableCell(page, iscBox, true, (aboveSplitRows.size() == 1));
+					}
+				}
+			}
+		}
+		
+		if (belowSplitRows.size() != 0) {
+			ImRegion belowSplitTopRow = ((ImRegion) belowSplitRows.get(0));
+			int belowSplitCellTop = belowSplitTopRow.bounds.top;
+			int belowSplitCellBottom = ((ImRegion) belowSplitRows.get(belowSplitRows.size() - 1)).bounds.bottom;
+			for (int w = 0; w < toSplitCellWords.length; w++) {
+				if (splitBox.bottom <= toSplitCellWords[w].centerY)
+					belowSplitCellTop = Math.min(belowSplitCellTop, toSplitCellWords[w].bounds.top);
+			}
+			
+			BoundingBox bscBox = new BoundingBox(toSplitCell.bounds.left, toSplitCell.bounds.right, belowSplitCellTop, belowSplitCellBottom);
+			this.markTableCell(page, bscBox, true, (belowSplitRows.size() == 1));
+			
+			if (belowSplitCellTop < belowSplitTopRow.bounds.top) {
+				page.removeRegion(belowSplitTopRow);
+				belowSplitTopRow = new ImRegion(page, new BoundingBox(belowSplitTopRow.bounds.left, belowSplitTopRow.bounds.right, belowSplitCellTop, belowSplitTopRow.bounds.bottom), ImRegion.TABLE_ROW_TYPE);
+				
+				ImRegion[] belowSplitTopCells = getRegionsOverlapping(page, belowSplitTopRow.bounds, ImRegion.TABLE_CELL_TYPE);
+				for (int c = 0; c < belowSplitTopCells.length; c++) {
+					if (belowSplitTopCells[c].bounds.top <= belowSplitCellTop)
+						continue; // multi-row cell that reaches above split, no need for expanding
+					page.removeRegion(belowSplitTopCells[c]);
+					bscBox = new BoundingBox(belowSplitTopCells[c].bounds.left, belowSplitTopCells[c].bounds.right, belowSplitCellTop, belowSplitTopCells[c].bounds.bottom);
+					this.markTableCell(page, bscBox, true, (belowSplitRows.size() == 1));
+				}
+			}
+		}
+		
+		//	clean up table structure
+		ImUtils.orderTableWords(this.markTableCells(page, table));
+		this.cleanupTableAnnotations(table.getDocument(), table);
+		
+		//	indicate we changed something
+		return true;
+	}
+	
+	private boolean splitTableCellCols(ImRegion table, ImRegion toSplitCell, ImRegion[] toSplitCellRows, ImRegion[] toSplitCellCols, BoundingBox splitBox) {
+		Arrays.sort(toSplitCellRows, ImUtils.topDownOrder);
+		Arrays.sort(toSplitCellCols, ImUtils.leftRightOrder);
+		ImPage page = table.getPage();
+		
+		//	order words above, inside, and below selection
+		ArrayList leftSplitCols = new ArrayList();
+		ArrayList splitCols = new ArrayList();
+		ArrayList rightSplitCols = new ArrayList();
+		for (int c = 0; c < toSplitCellCols.length; c++) {
+			int colCenterX = ((toSplitCellCols[c].bounds.left + toSplitCellCols[c].bounds.right) / 2);
+			if (colCenterX < splitBox.left)
+				leftSplitCols.add(toSplitCellCols[c]);
+			else if (colCenterX < splitBox.right)
+				splitCols.add(toSplitCellCols[c]);
+			else rightSplitCols.add(toSplitCellCols[c]);
+		}
+		
+		//	anything to split at all?
+		int emptySplitCols = 0;
+		if (leftSplitCols.isEmpty())
+			emptySplitCols++;
+		if (splitCols.isEmpty())
+			emptySplitCols++;
+		if (rightSplitCols.isEmpty())
+			emptySplitCols++;
+		if (emptySplitCols >= 2)
+			return false;
+		
+		//	remove selected cell
+		page.removeRegion(toSplitCell);
+		
+		//	sort words in to-split cell
+		ImWord[] toSplitCellWords = page.getWordsInside(toSplitCell.bounds);
+		
+		//	perform split
+		if (leftSplitCols.size() != 0) {
+			ImRegion leftSplitRightCol = ((ImRegion) leftSplitCols.get(leftSplitCols.size() - 1));
+			int leftSplitCellLeft = ((ImRegion) leftSplitCols.get(0)).bounds.left;
+			int leftSplitCellRight = leftSplitRightCol.bounds.right;
+			for (int w = 0; w < toSplitCellWords.length; w++) {
+				if (toSplitCellWords[w].centerX < splitBox.left)
+					leftSplitCellRight = Math.max(leftSplitCellRight, toSplitCellWords[w].bounds.right);
+			}
+			
+			BoundingBox lscBox = new BoundingBox(leftSplitCellLeft, leftSplitCellRight, toSplitCell.bounds.top, toSplitCell.bounds.bottom);
+			this.markTableCell(page, lscBox, (leftSplitCols.size() == 1), (toSplitCellRows.length == 1));
+			
+			if (leftSplitRightCol.bounds.right < leftSplitCellRight) {
+				page.removeRegion(leftSplitRightCol);
+				leftSplitRightCol = new ImRegion(page, new BoundingBox(leftSplitRightCol.bounds.left, leftSplitCellRight, leftSplitRightCol.bounds.top, leftSplitRightCol.bounds.bottom), ImRegion.TABLE_COL_TYPE);
+				
+				ImRegion[] leftSplitRightCells = getRegionsOverlapping(page, leftSplitRightCol.bounds, ImRegion.TABLE_CELL_TYPE);
+				for (int c = 0; c < leftSplitRightCells.length; c++) {
+					if (leftSplitCellRight <= leftSplitRightCells[c].bounds.right)
+						continue; // multi-column cell that reaches rightward of split, no need for expanding
+					page.removeRegion(leftSplitRightCells[c]);
+					lscBox = new BoundingBox(leftSplitRightCells[c].bounds.left, leftSplitCellRight, leftSplitRightCells[c].bounds.top, leftSplitRightCells[c].bounds.bottom);
+					this.markTableCell(page, lscBox, (leftSplitCols.size() == 1), (toSplitCellRows.length == 1));
+				}
+			}
+		}
+		
+		if (splitCols.size() != 0) {
+			ImRegion splitLeftCol = ((ImRegion) splitCols.get(0));
+			ImRegion splitRightCol = ((ImRegion) splitCols.get(splitCols.size() - 1));
+			int splitCellLeft = splitLeftCol.bounds.left;
+			int splitCellRight = splitRightCol.bounds.right;
+			for (int w = 0; w < toSplitCellWords.length; w++)
+				if ((splitBox.left <= toSplitCellWords[w].centerX) && (toSplitCellWords[w].centerX < splitBox.right)) {
+					splitCellLeft = Math.min(splitCellLeft, toSplitCellWords[w].bounds.left);
+					splitCellRight = Math.max(splitCellRight, toSplitCellWords[w].bounds.right);
+				}
+			
+			BoundingBox iscBox = new BoundingBox(splitCellLeft, splitCellRight, toSplitCell.bounds.top, toSplitCell.bounds.bottom);
+			this.markTableCell(page, iscBox, (splitCols.size() == 1), (toSplitCellRows.length == 1));
+			
+			if (splitLeftCol == splitRightCol) {
+				if ((splitCellLeft < splitLeftCol.bounds.left) || (splitLeftCol.bounds.right < splitCellRight)) {
+					page.removeRegion(splitLeftCol);
+					splitLeftCol = new ImRegion(page, new BoundingBox(Math.min(splitCellLeft, splitLeftCol.bounds.left), Math.max(splitCellRight, splitLeftCol.bounds.right), splitLeftCol.bounds.top, splitLeftCol.bounds.bottom), ImRegion.TABLE_COL_TYPE);
+					
+					ImRegion[] splitCells = getRegionsOverlapping(page, splitLeftCol.bounds, ImRegion.TABLE_CELL_TYPE);
+					for (int c = 0; c < splitCells.length; c++) {
+						if ((splitCells[c].bounds.left <= splitCellLeft) && (splitCellRight <= splitCells[c].bounds.right))
+							continue; // multi-row cell that reaches leftward and rightward of split, no need for expanding
+						page.removeRegion(splitCells[c]);
+						iscBox = new BoundingBox(Math.min(splitCellLeft, splitCells[c].bounds.left), Math.max(splitCellRight, splitCells[c].bounds.right), splitCells[c].bounds.top, splitCells[c].bounds.bottom);
+						this.markTableCell(page, iscBox, (rightSplitCols.size() == 1), (toSplitCellRows.length == 1));
+					}
+				}
+			}
+			else {
+				if (splitCellLeft < splitLeftCol.bounds.left) {
+					page.removeRegion(splitLeftCol);
+					splitLeftCol = new ImRegion(page, new BoundingBox(splitCellLeft, splitLeftCol.bounds.right, splitLeftCol.bounds.top, splitLeftCol.bounds.bottom), ImRegion.TABLE_COL_TYPE);
+					
+					ImRegion[] splitLeftCells = getRegionsOverlapping(page, splitLeftCol.bounds, ImRegion.TABLE_CELL_TYPE);
+					for (int c = 0; c < splitLeftCells.length; c++) {
+						if (splitLeftCells[c].bounds.left <= splitCellLeft)
+							continue; // multi-column cell that reaches leftward of split, no need for expanding
+						page.removeRegion(splitLeftCells[c]);
+						iscBox = new BoundingBox(splitCellLeft, splitLeftCells[c].bounds.right, splitLeftCells[c].bounds.top, splitLeftCells[c].bounds.bottom);
+						this.markTableCell(page, iscBox, (rightSplitCols.size() == 1), (toSplitCellRows.length == 1));
+					}
+				}
+				if (splitRightCol.bounds.right < splitCellRight) {
+					page.removeRegion(splitRightCol);
+					splitRightCol = new ImRegion(page, new BoundingBox(splitRightCol.bounds.left, splitCellRight, splitRightCol.bounds.top, splitRightCol.bounds.bottom), ImRegion.TABLE_COL_TYPE);
+					
+					ImRegion[] splitRightCells = getRegionsOverlapping(page, splitRightCol.bounds, ImRegion.TABLE_CELL_TYPE);
+					for (int c = 0; c < splitRightCells.length; c++) {
+						if (splitCellRight <= splitRightCells[c].bounds.right)
+							continue; // multi-column cell that reaches rightward of split, no need for expanding
+						page.removeRegion(splitRightCells[c]);
+						iscBox = new BoundingBox(splitRightCells[c].bounds.left, splitCellRight, splitRightCells[c].bounds.top, splitRightCells[c].bounds.bottom);
+						this.markTableCell(page, iscBox, (leftSplitCols.size() == 1), (toSplitCellRows.length == 1));
+					}
+				}
+			}
+		}
+		
+		if (rightSplitCols.size() != 0) {
+			ImRegion rightSplitLeftCol = ((ImRegion) rightSplitCols.get(0));
+			int rightSplitCellLeft = rightSplitLeftCol.bounds.left;
+			int rightSplitCellRight = ((ImRegion) rightSplitCols.get(rightSplitCols.size() - 1)).bounds.right;
+			for (int w = 0; w < toSplitCellWords.length; w++) {
+				if (splitBox.right <= toSplitCellWords[w].centerX)
+					rightSplitCellLeft = Math.min(rightSplitCellLeft, toSplitCellWords[w].bounds.left);
+			}
+			
+			BoundingBox rscBox = new BoundingBox(rightSplitCellLeft, rightSplitCellRight, toSplitCell.bounds.top, toSplitCell.bounds.bottom);
+			this.markTableCell(page, rscBox, (rightSplitCols.size() == 1), (toSplitCellRows.length == 1));
+			
+			if (rightSplitCellLeft < rightSplitLeftCol.bounds.left) {
+				page.removeRegion(rightSplitLeftCol);
+				rightSplitLeftCol = new ImRegion(page, new BoundingBox(rightSplitCellLeft, rightSplitLeftCol.bounds.right, rightSplitLeftCol.bounds.top, rightSplitLeftCol.bounds.bottom), ImRegion.TABLE_COL_TYPE);
+				
+				ImRegion[] rightSplitLeftCells = getRegionsOverlapping(page, rightSplitLeftCol.bounds, ImRegion.TABLE_CELL_TYPE);
+				for (int c = 0; c < rightSplitLeftCells.length; c++) {
+					if (rightSplitLeftCells[c].bounds.left <= rightSplitCellLeft)
+						continue; // multi-column cell that reaches leftward of split, no need for expanding
+					page.removeRegion(rightSplitLeftCells[c]);
+					rscBox = new BoundingBox(rightSplitCellLeft, rightSplitLeftCells[c].bounds.right, rightSplitLeftCells[c].bounds.top, rightSplitLeftCells[c].bounds.bottom);
+					this.markTableCell(page, rscBox, (rightSplitCols.size() == 1), (toSplitCellRows.length == 1));
+				}
+			}
+		}
+		
+		//	clean up table structure
+		ImUtils.orderTableWords(this.markTableCells(page, table));
+		this.cleanupTableAnnotations(table.getDocument(), table);
+		
+		//	indicate we changed something
+		return true;
 	}
 	
 	/**
@@ -1652,20 +2621,36 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	 * argument bounding box will be split.
 	 * @param page the page to mark the table in
 	 * @param tableBox the bounding box to use for the table
+	 * @param tableBoxStats statistics on the distribution of words in the
+	 *            argument table bounding box
 	 * @param idmp the markup panel the page is displaying in (if any)
 	 * @return true if a table was marked, false otherwise
 	 */
-	public boolean markTable(ImPage page, BoundingBox tableBox, ImDocumentMarkupPanel idmp) {
+	boolean markTable(ImPage page, BoundingBox tableBox, TableAreaStatistics tableBoxStats, ImDocumentMarkupPanel idmp) {
 		ImWord[] words = page.getWordsInside(tableBox);
 		if (words.length == 0)
 			return false;
-		return this.markTable(page, words, tableBox, idmp);
+		return this.markTable(page, words, tableBox, tableBoxStats, idmp);
 	}
 	
-	private boolean markTable(ImPage page, ImWord[] words, BoundingBox tableBox, ImDocumentMarkupPanel idmp) {
+	private boolean markTable(ImPage page, ImWord[] tableWords, BoundingBox tableBox, TableAreaStatistics tableBoxStats, ImDocumentMarkupPanel idmp) {
+		
+		//	compute stats if not given
+		if (tableBoxStats == null)
+			tableBoxStats = TableAreaStatistics.getTableAreaStatistics(page, tableWords);
+		
+		//	get table markup
+		TableAreaMarkup tableMarkup = this.getTableMarkup(page, tableWords, null, tableBox, tableBoxStats);
+		
+		//	finish markup
+		return this.finishMarkTable(page, tableBox, tableWords, tableMarkup, null, idmp);
+	}
+	
+	private boolean clearTableArea(ImPage page, BoundingBox tableBox, ImWord[] words) {
 		
 		//	get and split blocks overlapping with table
 		ImRegion[] blocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+		int blockSplitCount = 0;
 		for (int b = 0; b < blocks.length; b++) {
 			if (!tableBox.overlaps(blocks[b].bounds))
 				continue; // this one is not affected
@@ -1680,7 +2665,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				);
 			ImWord[] overlapWords = page.getWordsInside(overlapBox);
 			if (overlapWords.length == 0)
-				continue; // no words in overlap, selection just brushes this one, so no use splitting
+				continue; // no words in overlap, selection just brushes this one, so no need for splitting
 			
 			ImWord[] blockWords = page.getWordsInside(blocks[b].bounds);
 			HashSet remainingBlockWords = new HashSet();
@@ -1691,80 +2676,2347 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			if (remainingBlockWords.isEmpty())
 				continue; // all words of block covered, we'll take care of this one later
 			
-			this.regionActionProvider.splitBlock(page, blocks[b], overlapBox);
+			if (this.regionActionProvider.splitBlock(page, blocks[b], overlapBox))
+				blockSplitCount++;
 		}
+		
+		//	split anything?
+		return (blockSplitCount != 0);
+	}
+	
+	private boolean addTableMarkup(TableAreaMarkup tableMarkup) {
+		
+		//	get existing columns, rows, and cells
+		ImRegion[] exCols = getRegionsOverlapping(tableMarkup.page, tableMarkup.table.bounds, ImRegion.TABLE_COL_TYPE);
+		ImRegion[] exRows = getRegionsOverlapping(tableMarkup.page, tableMarkup.table.bounds, ImRegion.TABLE_ROW_TYPE);
+		ImRegion[] exCells = getRegionsOverlapping(tableMarkup.page, tableMarkup.table.bounds, ImRegion.TABLE_CELL_TYPE);
+		
+		//	index existing markup
+		HashSet exColSet = new HashSet();
+		for (int ec = 0; ec < exCols.length; ec++)
+			exColSet.add(exCols[ec]);
+		HashSet exRowSet = new HashSet();
+		for (int er = 0; er < exRows.length; er++)
+			exRowSet.add(exRows[er]);
+		HashSet exCellSet = new HashSet();
+		for (int ec = 0; ec < exCells.length; ec++)
+			exCellSet.add(exCells[ec]);
+		
+		//	mark columns and rows
+		for (int c = 0; c < tableMarkup.cols.length; c++) {
+			if (tableMarkup.cols[c].getPage() == null)
+				tableMarkup.page.addRegion(tableMarkup.cols[c]);
+			else exColSet.remove(tableMarkup.cols[c]);
+		}
+		for (int r = 0; r < tableMarkup.rows.length; r++) {
+			if (tableMarkup.rows[r].getPage() == null)
+				tableMarkup.page.addRegion(tableMarkup.rows[r]);
+			else exRowSet.remove(tableMarkup.rows[r]);
+		}
+		
+		//	mark cells (making sure to not add multi-cells twice)
+		for (int c = 0; c < tableMarkup.cols.length; c++)
+			for (int r = 0; r < tableMarkup.rows.length; r++) {
+				if (tableMarkup.cells[c][r].getPage() == null)
+					tableMarkup.page.addRegion(tableMarkup.cells[c][r]);
+				else exCellSet.remove(tableMarkup.cells[c][r]);
+			}
+		
+		//	clean up any non-retained existing regions
+		for (Iterator ecit = exColSet.iterator(); ecit.hasNext();)
+			tableMarkup.page.removeRegion((ImRegion) ecit.next());
+		for (Iterator erit = exRowSet.iterator(); erit.hasNext();)
+			tableMarkup.page.removeRegion((ImRegion) erit.next());
+		for (Iterator ecit = exCellSet.iterator(); ecit.hasNext();)
+			tableMarkup.page.removeRegion((ImRegion) ecit.next());
+		
+		//	add table proper to page
+		if (tableMarkup.table.getPage() == null)
+			tableMarkup.page.addRegion(tableMarkup.table);
+		
+		//	cut table out of main text
+		ImUtils.makeStream(tableMarkup.words, ImWord.TEXT_STREAM_TYPE_TABLE, null);
+		
+		//	flatten out table content
+		for (int w = 0; w < tableMarkup.words.length; w++) {
+			if (tableMarkup.words[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+				tableMarkup.words[w].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
+		}
+		
+		//	remove all regions not related to table
+		ImRegion[] tableRegions = tableMarkup.page.getRegionsInside(tableMarkup.table.bounds, false);
+		for (int r = 0; r < tableRegions.length; r++) {
+			if (ImRegion.LINE_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
+				tableMarkup.page.removeRegion(tableRegions[r]);
+			else if (ImRegion.PARAGRAPH_TYPE.equals(tableRegions[r].getType()))
+				tableMarkup.page.removeRegion(tableRegions[r]);
+			else if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
+				tableMarkup.page.removeRegion(tableRegions[r]);
+			else if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
+				tableMarkup.page.removeRegion(tableRegions[r]);
+			else if (ImRegion.REGION_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
+				tableMarkup.page.removeRegion(tableRegions[r]);
+		}
+		
+		//	order words from each cell as a text stream
+		ImUtils.orderTableWords(this.markTableCells(tableMarkup.page, tableMarkup.table));
+		this.cleanupTableAnnotations(tableMarkup.page.getDocument(), tableMarkup.table);
+		
+		//	finally ...
+		return true;
+	}
+	
+	private TableAreaMarkup diffTableMarkup(TableAreaMarkup tableMarkup, ImRegion exTable) {
+		
+		//	get existing columns and rows
+		ImRegion[] exCols = exTable.getRegions(ImRegion.TABLE_COL_TYPE);
+		Arrays.sort(exCols, ImUtils.leftRightOrder);
+		ImRegion[] exRows = exTable.getRegions(ImRegion.TABLE_ROW_TYPE);
+		Arrays.sort(exRows, ImUtils.topDownOrder);
+		
+		//	anything to adjust to?
+		if ((exCols.length + exRows.length) == 0)
+			return tableMarkup;
+		
+		//	get existing cells
+		ImRegion[][] exCells = ImUtils.getTableCells(exTable, null, exRows, exCols, false);
+		
+		//	adjust new markup to preserve cell mergers (columns and rows handled beforehand)
+		for (int ec = 0; ec < exCells.length; ec++) {
+			for (int er = 0; er < exCells[ec].length; er++) {
+				
+				//	check for merged cells staring at current point
+				boolean exMergedRight = (((ec + 1) < exCells.length) && (exCells[ec][er] == exCells[ec + 1][er]));
+				boolean exMergedDown = (((er + 1) < exCells[ec].length) && (exCells[ec][er] == exCells[ec][er + 1]));
+				
+				//	no mergers to preserve
+				if (!exMergedRight && !exMergedDown)
+					continue;
+				
+				//	check for incoming mergers
+				boolean exMergedLeft = ((ec != 0) && (exCells[ec][er] == exCells[ec - 1][er]));
+				boolean exMergedUp = ((er != 0) && (exCells[ec][er] == exCells[ec][er - 1]));
+				
+				//	handled before
+				if (exMergedLeft || exMergedUp)
+					continue;
+				
+				//	find corresponding cells in new markup, as well as dimensions
+				HashSet mergeCells = new HashSet();
+				int minMergeCellCol = tableMarkup.cells.length;
+				int maxMergeCellCol = 0;
+				int minMergeCellRow = tableMarkup.cells[0].length;
+				int maxMergeCellRow = 0;
+				int mergeCellLeft = tableMarkup.table.bounds.right;
+				int mergeCellRight = tableMarkup.table.bounds.left;
+				int mergeCellTop = tableMarkup.table.bounds.bottom;
+				int mergeCellBottom = tableMarkup.table.bounds.top;
+				for (int c = 0; c < tableMarkup.cells.length; c++) {
+					if (tableMarkup.cells[c][0].bounds.right < exCells[ec][er].bounds.left)
+						continue; // left of existing merged cell
+					if (exCells[ec][er].bounds.right < tableMarkup.cells[c][0].bounds.left)
+						break; // right of existing merged cell, we're done
+					for (int r = 0; r < tableMarkup.cells[c].length; r++) {
+						if (tableMarkup.cells[c][r].bounds.bottom < exCells[ec][er].bounds.top)
+							continue; // above existing merged cell
+						if (exCells[ec][er].bounds.bottom < tableMarkup.cells[c][r].bounds.top)
+							break; // below existing merged cell, we're done
+						
+						//	got to merge this one, and store coordinates and extent
+						if (tableMarkup.cells[c][r].bounds.overlaps(exCells[ec][er].bounds)) {
+							mergeCells.add(tableMarkup.cells[c][r]);
+							minMergeCellCol = Math.min(minMergeCellCol, c);
+							maxMergeCellCol = Math.max(maxMergeCellCol, c);
+							minMergeCellRow = Math.min(minMergeCellRow, r);
+							maxMergeCellRow = Math.max(maxMergeCellRow, r);
+							mergeCellLeft = Math.min(mergeCellLeft, tableMarkup.cells[c][r].bounds.left);
+							mergeCellRight = Math.max(mergeCellRight, tableMarkup.cells[c][r].bounds.right);
+							mergeCellTop = Math.min(mergeCellTop, tableMarkup.cells[c][r].bounds.top);
+							mergeCellBottom = Math.max(mergeCellBottom, tableMarkup.cells[c][r].bounds.bottom);
+						}
+					}
+				}
+				
+				//	anything to merge?
+				if (mergeCells.size() < 2)
+					continue;
+				
+				//	merge cells and replace them in markup
+				ImRegion mCell = new ImRegion(tableMarkup.page.getDocument(), tableMarkup.page.pageId, new BoundingBox(mergeCellLeft, mergeCellRight, mergeCellTop, mergeCellBottom), ImRegion.TABLE_CELL_TYPE);
+				for (int c = minMergeCellCol; c <= maxMergeCellCol; c++) {
+					for (int r = minMergeCellRow; r <= maxMergeCellRow; c++)
+						tableMarkup.cells[c][r] = mCell;
+				}
+			}
+		}
+		
+		//	index existing markup
+		HashMap exColsByBounds = new HashMap();
+		for (int ec = 0; ec < exCols.length; ec++)
+			exColsByBounds.put(exCols[ec].bounds, exCols[ec]);
+		HashMap exRowsByBounds = new HashMap();
+		for (int er = 0; er < exRows.length; er++)
+			exRowsByBounds.put(exRows[er].bounds, exRows[er]);
+		HashMap exCellsByBounds = new HashMap();
+		for (int ec = 0; ec < exCells.length; ec++) {
+			for (int er = 0; er < exCells[ec].length; er++)
+				exCellsByBounds.put(exCells[ec][er].bounds, exCells[ec][er]);
+		}
+		
+		//	diff new markup with existing, and replace detached regions in arrays with existing attached ones where possible
+		for (int c = 0; c < tableMarkup.cols.length; c++) {
+			if (exColsByBounds.containsKey(tableMarkup.cols[c].bounds))
+				tableMarkup.cols[c] = ((ImRegion) exColsByBounds.get(tableMarkup.cols[c].bounds));
+		}
+		for (int r = 0; r < tableMarkup.rows.length; r++) {
+			if (exRowsByBounds.containsKey(tableMarkup.rows[r].bounds))
+				tableMarkup.rows[r] = ((ImRegion) exRowsByBounds.get(tableMarkup.rows[r].bounds));
+		}
+		for (int c = 0; c < tableMarkup.cells.length; c++)
+			for (int r = 0; r < tableMarkup.cells[c].length; r++) {
+				if (exRowsByBounds.containsKey(tableMarkup.cells[c][r].bounds))
+					tableMarkup.cells[c][r] = ((ImRegion) exRowsByBounds.get(tableMarkup.cells[c][r].bounds));
+			}
+		
+		//	finally ...
+		return tableMarkup;
+	}
+	
+	private TableAreaMarkup getTableMarkup(ImPage page, ImWord[] words, ImRegion[] exTables, BoundingBox tableBox, TableAreaStatistics tableBoxStats) {
+		
+		//	get overall bounds of any existing tables
+		BoundingBox exTablesBox = (((exTables == null) || (exTables.length == 0)) ? null : ImLayoutObject.getAggregateBox(exTables));
+		
+		//	compute stats if not given
+		if (tableBoxStats == null)
+			tableBoxStats = TableAreaStatistics.getTableAreaStatistics(page, words);
+		
+		//	get column gaps
+		TreeSet colOccupationLows = new TreeSet(tableBoxStats.getBrgColOccupationLowsReduced());
+		System.out.println("Column occupation lows are " + colOccupationLows);
+		int colMarginSum = 0;
+		int minColMargin = Integer.MAX_VALUE;
+		int maxColMargin = 0;
+		CountingSet colOccupationLowWidths = new CountingSet(new TreeMap());
+		int blockedColMarginCount = 0;
+		int peakBlockedColMarginCount = 0;
+		int flankBlockedColMarginCount = 0;
+		for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+			ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+			colMarginSum += col.getWidth();
+			minColMargin = Math.min(minColMargin, col.getWidth());
+			maxColMargin = Math.max(maxColMargin, col.getWidth());
+			colOccupationLowWidths.add(new Integer(col.getWidth()));
+			if (col.isBlockedByPeak()) {
+				peakBlockedColMarginCount++;
+				System.out.println(" - peak in " + col);
+			}
+			if (col.isBlockedByFlank()) {
+				flankBlockedColMarginCount++;
+				System.out.println(" - flank in " + col);
+			}
+			if (col.isBlockedByGraphics()) {
+				blockedColMarginCount++;
+				col.enforced = true;
+				System.out.println(" - graphics separated column gap at " + col);
+			}
+		}
+		System.out.println(" - average word height is " + tableBoxStats.avgWordHeight);
+		System.out.println(" - got " + blockedColMarginCount + " graphics blocked column occupation lows (" + peakBlockedColMarginCount + " by peaks, " + flankBlockedColMarginCount + " by flanks)");
+		int avgColMargin = ((colMarginSum + (colOccupationLows.size() / 2)) / colOccupationLows.size());
+		System.out.println(" - average column occupation low width is " + avgColMargin + " (" + minColMargin + "/" + maxColMargin + "):");
+		for (Iterator cmit = colOccupationLowWidths.iterator(); cmit.hasNext();) {
+			Integer colMargin = ((Integer) cmit.next());
+			System.out.println("   - " + colMargin + ": " + colOccupationLowWidths.getCount(colMargin));
+		}
+		System.out.println(" ==> minimum column margin is " + minColMargin);
+		
+		//	if many column gaps have peaks or flanks, discard the ones that don't (we likely have a full vertical grid)
+		if (
+				//	require peaks in half of column gaps for this reduction
+				((2 < peakBlockedColMarginCount) && (colOccupationLows.size() < (peakBlockedColMarginCount * 2)) && (peakBlockedColMarginCount < colOccupationLows.size()))
+				||
+				//	require flanks only in one third of column gaps for this reduction, as vertical stripe grids are barely ever partial
+				((2 < flankBlockedColMarginCount) && (colOccupationLows.size() < (flankBlockedColMarginCount * 3)) && (flankBlockedColMarginCount < colOccupationLows.size()))
+			) {
+			
+			//	sort out non-blocked column gaps
+			for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+				ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+				if (!col.isBlockedByGraphics())
+					colit.remove();
+			}
+			
+			//	re-compute averages
+			System.out.println("Graphics reduced column occupation lows are " + colOccupationLows);
+			colMarginSum = 0;
+			minColMargin = Integer.MAX_VALUE;
+			maxColMargin = 0;
+			colOccupationLowWidths.clear();
+			for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+				ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+				colMarginSum += col.getWidth();
+				minColMargin = Math.min(minColMargin, col.getWidth());
+				maxColMargin = Math.max(maxColMargin, col.getWidth());
+				colOccupationLowWidths.add(new Integer(col.getWidth()));
+			}
+			avgColMargin = ((colMarginSum + (colOccupationLows.size() / 2)) / colOccupationLows.size());
+			System.out.println(" - average column occupation low width now is " + avgColMargin + " (" + minColMargin + "/" + maxColMargin + "):");
+			for (Iterator cmit = colOccupationLowWidths.iterator(); cmit.hasNext();) {
+				Integer colMargin = ((Integer) cmit.next());
+				System.out.println("   - " + colMargin + ": " + colOccupationLowWidths.getCount(colMargin));
+			}
+			System.out.println(" ==> minimum column margin now is " + minColMargin);
+		}
+		
+		//	assess fully open vs. partially obstructed column gaps
+		TreeSet openColOccupationLows = new TreeSet();
+		int minOpenColMargin = Integer.MAX_VALUE;
+		int maxOpenColMargin = 0;
+		TreeSet bridgedColOccupationLows = new TreeSet();
+		int minBridgedColMargin = Integer.MAX_VALUE;
+		int maxBridgedColMargin = 0;
+		for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+			ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+			if ((col.max == 0) || col.isBlockedByGraphics()) {
+				openColOccupationLows.add(col);
+				minOpenColMargin = Math.min(minOpenColMargin, col.getWidth());
+				maxOpenColMargin = Math.max(maxOpenColMargin, col.getWidth());
+			}
+			else {
+				bridgedColOccupationLows.add(col);
+				minBridgedColMargin = Math.min(minBridgedColMargin, col.getWidth());
+				maxBridgedColMargin = Math.max(maxBridgedColMargin, col.getWidth());
+			}
+		}
+		System.out.println("Got " + openColOccupationLows.size() + " open column gaps (" + minOpenColMargin + "/" + maxOpenColMargin + ") and " + bridgedColOccupationLows.size() + " bridged ones (" + minBridgedColMargin + "/" + maxBridgedColMargin + ")");
+		
+		//	filter all too narrow partially obstructed column gaps
+		if (minBridgedColMargin < minOpenColMargin) {
+			
+			//	do filtering
+			System.out.println(" - checking for all too narrow bridged gaps");
+			for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+				ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+				System.out.print("   - " + col);
+				if ((col.max == 0) || col.isBlockedByGraphics()) {
+					System.out.println(" ==> retained as open or blocked");
+					continue; // open gap, or graphically marked one
+				}
+				if (minOpenColMargin <= col.getWidth()) {
+					System.out.println(" ==> retained as wider than some open gap");
+					continue; // wider than some open gap(s)
+				}
+				if (tableBoxStats.avgWordHeight < (col.getWidth() * 2)) {
+					System.out.println(" ==> retained as wider than wide space");
+					continue; // wider than a 50% word height space
+				}
+				System.out.println(" ==> removed");
+				colit.remove();
+			}
+			
+			//	re-compute averages
+			System.out.println("Obstruction reduced column occupation lows are " + colOccupationLows);
+			colMarginSum = 0;
+			minColMargin = Integer.MAX_VALUE;
+			maxColMargin = 0;
+			colOccupationLowWidths.clear();
+			for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+				ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+				colMarginSum += col.getWidth();
+				minColMargin = Math.min(minColMargin, col.getWidth());
+				maxColMargin = Math.max(maxColMargin, col.getWidth());
+				colOccupationLowWidths.add(new Integer(col.getWidth()));
+			}
+			avgColMargin = ((colMarginSum + (colOccupationLows.size() / 2)) / colOccupationLows.size());
+			System.out.println(" - average column occupation low width now is " + avgColMargin + " (" + minColMargin + "/" + maxColMargin + "):");
+			for (Iterator cmit = colOccupationLowWidths.iterator(); cmit.hasNext();) {
+				Integer colMargin = ((Integer) cmit.next());
+				System.out.println("   - " + colMargin + ": " + colOccupationLowWidths.getCount(colMargin));
+			}
+			System.out.println(" ==> minimum column margin now is " + minColMargin);
+		}
+		
+		//	diff with any existing column gaps
+		if (exTablesBox != null) {
+			
+			//	prepare marking visited pixel columns
+			byte[] exColDiff = new byte[tableBox.getWidth()];
+			Arrays.fill(exColDiff, ((byte) -1));
+			
+			//	mark any existing column structures
+			for (int t = 0; t < exTables.length; t++) {
+				
+				//	mark pixel columns as covered
+				for (int x = exTables[t].bounds.left; x < exTables[t].bounds.right; x++) {
+					if (exColDiff[x - tableBox.left] == -1)
+						exColDiff[x - tableBox.left] = 0;
+				}
+				
+				//	mark any existing column gaps
+				ImRegion[] exCols = getRegionsInside(page, exTables[t].bounds, ImRegion.TABLE_COL_TYPE, false);
+				Arrays.sort(exCols, ImUtils.leftRightOrder);
+				for (int c = 1; c < exCols.length; c++) {
+					for (int x = exCols[c-1].bounds.right; x < exCols[c].bounds.left; x++)
+						exColDiff[x - tableBox.left]++;
+				}
+			}
+			
+			//	diff column gaps
+			for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+				ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+				
+				//	check for any support in existing tables
+				int minExColDiff = exTables.length;
+				int maxExColDiff = -1;
+				for (int x = col.left; x < col.right; x++) {
+					minExColDiff = Math.min(minExColDiff, exColDiff[x - tableBox.left]);
+					maxExColDiff = Math.max(maxExColDiff, exColDiff[x - tableBox.left]);
+				}
+				
+				//	this one lies outside existing tables, at least partially
+				if ((maxExColDiff == -1) || (minExColDiff == -1))
+					continue;
+				
+				//	this one has no counterpart in existing tables, remove it
+				if (maxExColDiff == 0) {
+					colit.remove();
+					continue;
+				}
+				
+				//	flatten out current gap, retaining observed gap
+				for (int x = col.left; x < col.right; x++) {
+					if (0 < exColDiff[x - exTablesBox.left])
+						exColDiff[x - tableBox.left] = 0;
+				}
+				for (int lx = col.right; lx < exTablesBox.right; lx++) {
+					if (exColDiff[lx - exTablesBox.left] <= 0)
+						break; // reached end of existing gap
+					else exColDiff[lx - tableBox.left] = 0;
+				}
+				for (int lx = (col.left - 1); lx >= exTablesBox.left; lx--) {
+					if (exColDiff[lx - exTablesBox.left] <= 0)
+						break; // reached end of existing gap
+					else exColDiff[lx - tableBox.left] = 0;
+				}
+				
+				//	set enforce flag of gap to prevent mergers across it
+				col.enforced = true;
+			}
+			
+			//	add any existing column gaps not matched to some counterpart
+			for (int x = tableBox.left; x < tableBox.right; x++) {
+				if (exColDiff[x - tableBox.left] <= 0)
+					continue; // no way of starting a gap here
+				for (int lx = (x + 1); lx < tableBox.right; lx++)
+					if (exColDiff[lx - tableBox.left] <= 0) {
+						colOccupationLows.add(new ColumnOccupationLow(tableBoxStats, x, lx, -1, -1, true));
+						x = lx; // no need to investigate this one again, so no need to compensate for loop increment
+						break; // we're done with this one
+					}
+			}
+			System.out.println("Adjusted column occupation lows are " + colOccupationLows);
+		}
+		
+		
+		//	get row gaps
+		//	TODO TEST table on page 5 of EJT/ejt-496_read_enghoff.pdf (all row gaps blocked by graphics, but row merges none the less)
+		TreeSet rowOccupationGaps = new TreeSet(tableBoxStats.getRowOccupationGaps());
+		System.out.println("Row occupation gaps are " + rowOccupationGaps);
+		int rowMarginSum = 0;
+		int minRowMargin = Integer.MAX_VALUE;
+		int maxRowMargin = 0;
+		int blockedRowMarginCount = 0;
+		int peakBlockedRowMarginCount = 0;
+		int flankBlockedRowMarginCount = 0;
+		CountingSet rowOccupationGapWidths = new CountingSet(new TreeMap());
+		for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+			RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+			rowMarginSum += rog.getHeight();
+			minRowMargin = Math.min(minRowMargin, rog.getHeight());
+			maxRowMargin = Math.max(maxRowMargin, rog.getHeight());
+			rowOccupationGapWidths.add(new Integer(rog.getHeight()));
+			System.out.println(" - row gap at " + rog);
+			GraphicsSlice gapGraphics = tableBoxStats.getRowGraphicsStats(rog.top, rog.bottom);
+			if (gapGraphics == null)
+				System.out.println("   no graphics at all");
+			else System.out.println("   graphics are " + Arrays.toString(gapGraphics.pixelOccupation));
+			GraphicsSlice extGapGraphics = tableBoxStats.getRowGraphicsStats(rog.top, rog.bottom);
+			if (extGapGraphics != null)
+				System.out.println("   extended " + Arrays.toString(tableBoxStats.getRowGraphicsStats((rog.top-3), (rog.bottom+3)).pixelOccupation));
+			if (rog.isBlockedByPeak()) {
+				peakBlockedRowMarginCount++;
+				System.out.println("   got peak");
+			}
+			if (rog.isBlockedByFlank()) {
+				flankBlockedRowMarginCount++;
+				System.out.println("   got flank");
+			}
+			if (rog.isBlockedByGraphics()) {
+				blockedRowMarginCount++;
+				rog.enforced = true;
+				System.out.println("   graphics separated row gap at " + rog);
+			}
+		}
+		System.out.println(" - got " + blockedRowMarginCount + " graphics blocked row occupation gaps (" + peakBlockedRowMarginCount + " by peaks, " + flankBlockedRowMarginCount + " by flanks)");
+		int avgRowMargin = ((rowMarginSum + (rowOccupationGaps.size() / 2)) / rowOccupationGaps.size());
+		System.out.println(" - average row occupation gap height is " + avgRowMargin + " (" + minRowMargin + "/" + maxRowMargin + "):");
+		for (Iterator rmit = rowOccupationGapWidths.iterator(); rmit.hasNext();) {
+			Integer rowMargin = ((Integer) rmit.next());
+			System.out.println("   - " + rowMargin + ": " + rowOccupationGapWidths.getCount(rowMargin));
+		}
+		System.out.println(" ==> minimum row margin is " + minRowMargin);
+		
+		//	if we have both peaks and flanks, check for mingled peaks (words grown into graphics)
+		boolean gotMingledPeaks = false;
+		int mingleCheckRadius = 0;
+		if ((peakBlockedRowMarginCount > 3) && (flankBlockedRowMarginCount != 0)) {
+			mingleCheckRadius = ((page.getImageDPI() + (50 / 2)) / 50); // some half millimeter
+			System.out.println("Checking for mingled-peak-blocked row occupation gaps with radius " + mingleCheckRadius);
+			for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+				RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+				if (rog.isBlockedByPeak())
+					continue;
+				if (!rog.isBlockedByFlank())
+					continue;
+				GraphicsSlice gs = tableBoxStats.getRowGraphicsStats((rog.top - mingleCheckRadius), (rog.bottom + mingleCheckRadius));
+				if ((gs != null) && gs.hasPeak()) {
+					gotMingledPeaks = true;
+					peakBlockedRowMarginCount++;
+					flankBlockedRowMarginCount--;
+					System.out.println(" - got mingled peak in row gap at " + rog);
+				}
+			}
+		}
+		
+		//	if many row gaps have peaks or flanks, discard the ones that don't (we likely have a full horizontal grid)
+		if (
+				//	require peaks in half of row gaps for this reduction (must not mess up partial horizontal line grids)
+				((2 < peakBlockedRowMarginCount) && (rowOccupationGaps.size() < (peakBlockedRowMarginCount * 2)) && (peakBlockedRowMarginCount < rowOccupationGaps.size()))
+				||
+				//	require flanks only in one third of row gaps for this reduction, as horizontal stripe grids are barely ever partial
+				((2 < flankBlockedRowMarginCount) && (rowOccupationGaps.size() < (flankBlockedRowMarginCount * 3)) && (flankBlockedRowMarginCount < rowOccupationGaps.size()))
+			) {
+			
+			//	sort out non-blocked column gaps
+			for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+				RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+				if (rog.isBlockedByGraphics())
+					continue;
+				if (gotMingledPeaks) {
+					GraphicsSlice gs = tableBoxStats.getRowGraphicsStats((rog.top - mingleCheckRadius), (rog.bottom + mingleCheckRadius));
+					if ((gs != null) && gs.hasPeak())
+						continue;
+				}
+				rogit.remove();
+			}
+			
+			//	re-compute averages
+			System.out.println("Graphics reduced row occupation gaps are " + rowOccupationGaps);
+			rowMarginSum = 0;
+			minRowMargin = Integer.MAX_VALUE;
+			maxRowMargin = 0;
+			rowOccupationGapWidths.clear();
+			for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+				RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+				rowMarginSum += rog.getHeight();
+				minRowMargin = Math.min(minRowMargin, rog.getHeight());
+				maxRowMargin = Math.max(maxRowMargin, rog.getHeight());
+				rowOccupationGapWidths.add(new Integer(rog.getHeight()));
+			}
+			avgRowMargin = ((rowMarginSum + (rowOccupationGaps.size() / 2)) / rowOccupationGaps.size());
+			System.out.println(" - average row occupation gap height now is " + avgRowMargin + " (" + minRowMargin + "/" + maxRowMargin + "):");
+			for (Iterator rmit = rowOccupationGapWidths.iterator(); rmit.hasNext();) {
+				Integer rowMargin = ((Integer) rmit.next());
+				System.out.println("   - " + rowMargin + ": " + rowOccupationGapWidths.getCount(rowMargin));
+			}
+			System.out.println(" ==> minimum row margin now is " + minRowMargin);
+			
+			//	in a full horizontal line grid, scan for lines not included in a gap to find partially obstructed row boundaries
+			if (peakBlockedRowMarginCount > flankBlockedRowMarginCount) {
+				System.out.println("Scanning for partially obstructed graphics backed row occupation gaps");
+				
+				//	scan space between row occupation gaps for further peaks
+				ArrayList rowOccupationGapList = new ArrayList(rowOccupationGaps);
+				for (int g = 0; g <= rowOccupationGapList.size(); g++) {
+					RowOccupationGap topRog = ((g == 0) ? null : ((RowOccupationGap) rowOccupationGapList.get(g-1)));
+					RowOccupationGap bottomRog = ((g == rowOccupationGapList.size()) ? null : ((RowOccupationGap) rowOccupationGapList.get(g)));
+					int scanTop = ((topRog == null) ? tableBox.top : topRog.bottom);
+					int scanBottom = ((bottomRog == null) ? tableBox.bottom : bottomRog.top);
+					
+					//	get graphics stats for scan area
+					GraphicsSlice gs = tableBoxStats.getRowGraphicsStats(scanTop, scanBottom);
+					if ((gs == null) || ((gs.maxOccupiedPixels * 3) < (tableBox.getWidth() * 2)))
+						continue; // no peaks in this one
+					
+					//	scan for peaks
+					int peakTop = -1;
+					for (int y = 0; y < gs.pixelOccupation.length; y++) {
+						
+						//	pixel row has 67% peak
+						if ((gs.pixelOccupation[y] * 3) > (tableBox.getWidth() * 2)) {
+							if (peakTop == -1)
+								peakTop = y;
+						}
+						
+						//	peak ends here, store it and reset (adding a quite narrow artificial gap is unproblematic, as we're in a full grid anyway, and thus don't need to care about row merging thresholds)
+						else if (peakTop != -1) {
+							RowOccupationGap rog = new RowOccupationGap(tableBoxStats, (scanTop + peakTop - 1), (scanTop + y + 1), true);
+							rowOccupationGaps.add(rog);
+							peakTop = -1;
+							System.out.println(" --> found additional graphics separated row gap at " + rog);
+						}
+					}
+				}
+				
+				//	if we have added gaps, we need to re-compute averages again
+				if (rowOccupationGapList.size() < rowOccupationGaps.size()) {
+					System.out.println("Graphics augmented row occupation gaps are " + rowOccupationGaps);
+					rowMarginSum = 0;
+					minRowMargin = Integer.MAX_VALUE;
+					maxRowMargin = 0;
+					rowOccupationGapWidths.clear();
+					for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+						RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+						rowMarginSum += rog.getHeight();
+						minRowMargin = Math.min(minRowMargin, rog.getHeight());
+						maxRowMargin = Math.max(maxRowMargin, rog.getHeight());
+						rowOccupationGapWidths.add(new Integer(rog.getHeight()));
+					}
+					avgRowMargin = ((rowMarginSum + (rowOccupationGaps.size() / 2)) / rowOccupationGaps.size());
+					System.out.println(" - average row occupation gap height now is " + avgRowMargin + " (" + minRowMargin + "/" + maxRowMargin + "):");
+					for (Iterator rmit = rowOccupationGapWidths.iterator(); rmit.hasNext();) {
+						Integer rowMargin = ((Integer) rmit.next());
+						System.out.println("   - " + rowMargin + ": " + rowOccupationGapWidths.getCount(rowMargin));
+					}
+					System.out.println(" ==> minimum row margin now is " + minRowMargin);
+				}
+			}
+		}
+		
+		//	diff with any existing row gaps
+		if (exTablesBox != null) {
+			
+			//	prepare marking visited pixel rows
+			byte[] exRowDiff = new byte[tableBox.getHeight()];
+			Arrays.fill(exRowDiff, ((byte) -1));
+			
+			//	mark any existing row structures
+			for (int t = 0; t < exTables.length; t++) {
+				
+				//	mark pixel rows as covered
+				for (int y = exTables[t].bounds.top; y < exTables[t].bounds.bottom; y++) {
+					if (exRowDiff[y - tableBox.top] == -1)
+						exRowDiff[y - tableBox.top] = 0;
+				}
+				
+				//	mark any existing row gaps
+				ImRegion[] exRows = getRegionsInside(page, exTables[t].bounds, ImRegion.TABLE_ROW_TYPE, false);
+				Arrays.sort(exRows, ImUtils.topDownOrder);
+				for (int r = 1; r < exRows.length; r++) {
+					for (int y = exRows[r-1].bounds.bottom; y < exRows[r].bounds.top; y++)
+						exRowDiff[y - tableBox.top]++;
+				}
+			}
+			
+			//	diff row gaps
+			for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+				RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+				
+				//	check for any support in existing tables
+				int minExRowDiff = exTables.length;
+				int maxExRowDiff = -1;
+				for (int y = rog.top; y < rog.bottom; y++) {
+					minExRowDiff = Math.min(minExRowDiff, exRowDiff[y - tableBox.top]);
+					maxExRowDiff = Math.max(maxExRowDiff, exRowDiff[y - tableBox.top]);
+				}
+				
+				//	this one lies outside existing tables, at least partially
+				if ((maxExRowDiff == -1) || (minExRowDiff == -1))
+					continue;
+				
+				//	this one has no counterpart in existing tables, remove it
+				if (maxExRowDiff == 0) {
+					rogit.remove();
+					continue;
+				}
+				
+				//	flatten out current gap, retaining observed gap
+				for (int y = rog.top; y < rog.bottom; y++) {
+					if (0 < exRowDiff[y - exTablesBox.top])
+						exRowDiff[y - tableBox.top] = 0;
+				}
+				for (int ly = rog.bottom; ly < exTablesBox.bottom; ly++) {
+					if (exRowDiff[ly - exTablesBox.top] <= 0)
+						break; // reached end of existing gap
+					else exRowDiff[ly - tableBox.top] = 0;
+				}
+				for (int ly = (rog.top - 1); ly >= exTablesBox.top; ly--) {
+					if (exRowDiff[ly - exTablesBox.top] <= 0)
+						break; // reached end of existing gap
+					else exRowDiff[ly - tableBox.top] = 0;
+				}
+				
+				//	set enforce flag of gap to prevent mergers across it
+				rog.enforced = true;
+			}
+			
+			//	add any existing row gaps not matched to some counterpart
+			for (int y = tableBox.top; y < tableBox.bottom; y++) {
+				if (exRowDiff[y - tableBox.top] <= 0)
+					continue; // no way of starting a gap here
+				for (int ly = (y + 1); ly < tableBox.bottom; ly++)
+					if (exRowDiff[ly - tableBox.top] <= 0) {
+						rowOccupationGaps.add(new RowOccupationGap(tableBoxStats, y, ly, true));
+						y = ly; // no need to investigate this one again, so no need to compensate for loop increment
+						break; // we're done with this one
+					}
+			}
+			System.out.println("Adjusted row occupation gaps are " + rowOccupationGaps);
+		}
+		
+		//	create markup
+		return this.getTableMarkup(page, words, tableBox, tableBoxStats, minColMargin, minRowMargin, colOccupationLows, rowOccupationGaps);
+	}
+	
+	private TableAreaMarkup getTableMarkup(ImPage page, ImWord[] words, BoundingBox tableBox, TableAreaStatistics tableBoxStats, int minColMargin, int minRowMargin, TreeSet colOccupationLows, TreeSet rowOccupationGaps) {
 		
 		//	wrap region around words
 		ImRegion tableRegion = new ImRegion(page.getDocument(), page.pageId, tableBox, ImRegion.TABLE_TYPE);
 		
-		//	get rows and columns
-		ImRegion[] tableRows = ImUtils.getTableRows(tableRegion);
-		if (tableRows == null)
-			return false;
-		ImRegion[] tableCols = ImUtils.getTableColumns(tableRegion);
-		if (tableCols == null)
-			return false;
-		
-		//	mark cells as intersection of columns and rows
-		ImRegion[][] tableCells = ImUtils.getTableCells(tableRegion, tableRows, tableCols);
-		if (tableCells == null)
-			return false;
-		
-		//	add regions to page
-		page.addRegion(tableRegion);
-		for (int r = 0; r < tableRows.length; r++) {
-			if (tableRows[r].getPage() == null)
-				page.addRegion(tableRows[r]);
+		//	create columns based on reduced column gaps from statistics
+		ColumnOccupationLow[] areaColGaps = ((ColumnOccupationLow[]) colOccupationLows.toArray(new ColumnOccupationLow[colOccupationLows.size()]));
+		TableAreaColumn[] areaCols = new TableAreaColumn[(areaColGaps.length * 2) + 1];
+		for (int c = 0; c <= areaColGaps.length; c++) {
+			int cLeft = ((c == 0) ? tableBox.left : areaColGaps[c-1].right);
+			int cRight = ((c == areaColGaps.length) ? tableBox.right : areaColGaps[c].left);
+			areaCols[c * 2] = new TableAreaColumn(false, cLeft, cRight);
+			if (c < areaColGaps.length)
+				areaCols[(c * 2) + 1] = new TableAreaColumn(true, areaColGaps[c].left, areaColGaps[c].right, areaColGaps[c].enforced);
 		}
-		for (int c = 0; c < tableCols.length; c++) {
-			if (tableCols[c].getPage() == null)
-				page.addRegion(tableCols[c]);
+		
+		//	create rows based on row gaps from statistics
+		RowOccupationGap[] areaRowGaps = ((RowOccupationGap[]) rowOccupationGaps.toArray(new RowOccupationGap[rowOccupationGaps.size()]));
+		TableAreaRow[] areaRows = new TableAreaRow[(areaRowGaps.length * 2) + 1];
+		for (int r = 0; r <= areaRowGaps.length; r++) {
+			int rTop = ((r == 0) ? tableBox.top : areaRowGaps[r-1].bottom);
+			int rBottom = ((r == areaRowGaps.length) ? tableBox.bottom : areaRowGaps[r].top);
+			areaRows[r * 2] = new TableAreaRow(false, rTop, rBottom);
+			if (r < areaRowGaps.length)
+				areaRows[(r * 2) + 1] = new TableAreaRow(true, areaRowGaps[r].top, areaRowGaps[r].bottom, areaRowGaps[r].enforced);
 		}
-		//	TODO observe multi-column cells
-		for (int r = 0; r < tableCells.length; r++)
-			for (int c = 0; c < tableCells[r].length; c++) {
-				if (tableCells[r][c].getPage() == null)
-					page.addRegion(tableCells[r][c]);
+		
+		//	create raw cells from raw columns and rows
+		TableAreaCell[][] areaCells = new TableAreaCell[areaCols.length][areaRows.length];
+		for (int c = 0; c < areaCols.length; c++)
+			for (int r = 0; r < areaRows.length; r++) {
+				areaCells[c][r] = new TableAreaCell(areaCols[c], areaRows[r]);
+				areaCells[c][r].updateWords(words); // automatically flags any space cell as bridged if it contains words
 			}
 		
-		//	cut table out of main text
-		ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_TABLE, null);
 		
-		//	flatten out table content
-		for (int w = 0; w < words.length; w++) {
-			if (words[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
-				words[w].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
+		//	compute minimum row index safe to assume non-header
+		int minSureNonHeaderRowIndex = Math.min(((areaRows.length + 2) / 3) /* top third of rows */, (4 * 2 /* consider interspersed spacers */) /* assume at most four header rows */);
+		
+		//	widen columns in data part of table (about lower two thirds) to accommodate the occasional over-length string
+		//	TODO maybe detect row group label rows first (even though they will hardly pass spacing checks)
+		for (int c = 0; c < (areaCols.length - 1); c += 2) {
+			
+			//	check if left and right columns are left aligned
+			LinkedHashSet colOccupationFlanks = tableBoxStats.getBrgColOccupationFlanks();
+			boolean leftColIsLeftAligned = false;
+			boolean rightColIsLeftAligned = false;
+			for (Iterator cofit = colOccupationFlanks.iterator(); cofit.hasNext();) {
+				ColumnOccupationFlank cof = ((ColumnOccupationFlank) cofit.next());
+				if (!cof.isRise)
+					continue; // we need a rising flank for left alignment
+				if ((cof.height * 3) < (tableBoxStats.wordPixelRows * 2))
+					continue; // we need a well pronounced rise for left alignment
+				if (Math.abs(cof.center - areaCols[c].min) < 3)
+					leftColIsLeftAligned = true;
+				if (Math.abs(cof.center - areaCols[c+2].min) < 3)
+					rightColIsLeftAligned = true;
+			}
+			if (!leftColIsLeftAligned || !rightColIsLeftAligned)
+				continue; // we need two left aligned columns for widening gap
+			
+			//	find right edges of widened column
+			int[] wColRightMaxRow = new int[areaCols[c+1].getSpan()];
+			Arrays.fill(wColRightMaxRow, -1); // keep track of lowest (largest index) rows to reach into each pixel of extended width
+			for (int r = 0; r < areaRows.length; r += 2) {
+				if (areaCells[c+1][r].wordBounds == null)
+					continue; // no need to bother with empty spacer cell
+				if ((areaCols[c+1].max - areaCells[c+1][r].wordBounds.right) < (areaCells[c+1][r].wordBounds.left - areaCols[c+1].min))
+					continue; // right distance less than left distance, no way of attaching leftward
+				if (areaCols[c+1].max < (areaCells[c+1][r].wordBounds.right + (tableBoxStats.avgSpaceWidth / 2)))
+					continue; // spacer cell words reach too close (within half a norm space) to or even into right data column, no way of attaching leftward
+				if ((areaCols[c+1].min + tableBoxStats.avgSpaceWidth) < areaCells[c+1][r].wordBounds.left)
+					continue; // spacer cell words do not reach within a norm space of left data column, no way of attaching
+				for (int x = 0; x < (areaCells[c+1][r].wordBounds.right - areaCols[c+1].min); x++)
+					wColRightMaxRow[x] = r; // remember last row each extended width comes from (helps refuse those from likely headers)
+			}
+			
+			//	anything to widen at all?
+			if (wColRightMaxRow[0] == -1)
+				continue; // not a single cell to widen
+			if (wColRightMaxRow[0] < minSureNonHeaderRowIndex)
+				continue; // only header cell to widen
+			
+			//	find right edge of widened column
+			int wColRight = areaCols[c].max;
+			for (int x = 0; x < wColRightMaxRow.length; x++)
+				if (wColRightMaxRow[x] < minSureNonHeaderRowIndex) {
+					wColRight = (areaCols[c].max + x);
+					break;
+				}
+			if (wColRight == areaCols[c].max)
+				continue;
+			
+			//	widen left column and update cell words
+			areaCols[c].max = wColRight;
+			areaCols[c+1].min = wColRight;
+			for (int r = 0; r < areaRows.length; r++) {
+				areaCells[c][r].updateWords(words);
+				areaCells[c+1][r].isBridged = false; // reset bridged flag
+				areaCells[c+1][r].updateWords(words); // automatically re-flags space cell as bridged if it still contains words
+			}
 		}
 		
-		//	remove all regions not related to table
-		ImRegion[] tableRegions = page.getRegionsInside(tableBox, false);
-		for (int r = 0; r < tableRegions.length; r++) {
-			if (ImRegion.LINE_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
-				page.removeRegion(tableRegions[r]);
-			else if (ImRegion.PARAGRAPH_TYPE.equals(tableRegions[r].getType()))
-				page.removeRegion(tableRegions[r]);
-			else if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
-				page.removeRegion(tableRegions[r]);
-			else if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
-				page.removeRegion(tableRegions[r]);
-			else if (ImRegion.REGION_ANNOTATION_TYPE.equals(tableRegions[r].getType()))
-				page.removeRegion(tableRegions[r]);
+		//	un-bridge spacer cells that have wide gap in middle, and widen adjacent columns accordingly
+		for (int c = 1; c < areaCols.length; c += 2) {
+			
+			//	this one is already too narrow to yield further space to content of adjacent columns
+			if (areaCols[c].getSpan() < tableBoxStats.avgWordHeight)
+				continue;
+			
+			//	get bridging word boundaries
+			int maxLeftWordRight = areaCols[c].min;
+			int minRightWordLeft = areaCols[c].max;
+			for (int r = 0; r < areaRows.length; r += 2) {
+				if (areaCells[c][r].wordBounds == null)
+					continue; // nothing to work with in this one
+				
+				//	compute word distribution in bridging cell
+				int[] cellColOccupations = new int[areaCols[c].getSpan()];
+				Arrays.fill(cellColOccupations, 0);
+				for (int w = 0; w < areaCells[c][r].words.length; w++) {
+					for (int x = Math.max(areaCols[c].min, areaCells[c][r].words[w].bounds.left); x < Math.min(areaCols[c].max, areaCells[c][r].words[w].bounds.right); x++)
+						cellColOccupations[x - areaCols[c].min]++;
+				}
+				
+				//	check for gap in middle
+				int leftNonZeroX = (areaCols[c].getSpan() / 2);
+				while ((leftNonZeroX > 0) && (cellColOccupations[leftNonZeroX-1] == 0))
+					leftNonZeroX--;
+				int rightNonZeroX = (areaCols[c].getSpan() / 2);
+				while ((rightNonZeroX < cellColOccupations.length) && (cellColOccupations[rightNonZeroX] == 0))
+					rightNonZeroX++;
+				
+				//	do we have wide enough a gap?
+				if ((rightNonZeroX - leftNonZeroX) < tableBoxStats.avgWordHeight)
+					continue;
+				
+				//	remember word boundaries
+				maxLeftWordRight = Math.max(maxLeftWordRight, (leftNonZeroX + areaCols[c].min));
+				minRightWordLeft = Math.min(minRightWordLeft, (rightNonZeroX + areaCols[c].min));
+			}
+			
+			//	do we have wide enough a gap overall?
+			if ((minRightWordLeft - maxLeftWordRight) < tableBoxStats.avgWordHeight)
+				continue;
+			
+			//	widen adjacent columns and update cell words
+			areaCols[c-1].max = maxLeftWordRight;
+			areaCols[c].min = maxLeftWordRight;
+			areaCols[c].max = minRightWordLeft;
+			areaCols[c+1].min = minRightWordLeft;
+			for (int r = 0; r < areaRows.length; r++) {
+				areaCells[c][r].isBridged = false; // reset bridged flag
+				areaCells[c][r].updateWords(words); // automatically re-flags space cell as bridged if it still contains words
+				areaCells[c-1][r].updateWords(words);
+				areaCells[c+1][r].updateWords(words);
+			}
 		}
 		
-		//	order words from each cell as a text stream
-		ImUtils.orderTableWords(tableCells);
-		this.cleanupTableAnnotations(page.getDocument(), tableRegion);
 		
-		//	show regions in invoker
-		if (idmp != null) {
-			idmp.setRegionsPainted(ImRegion.TABLE_TYPE, true);
-			idmp.setRegionsPainted(ImRegion.TABLE_ROW_TYPE, true);
-			idmp.setRegionsPainted(ImRegion.TABLE_COL_TYPE, true);
-			idmp.setRegionsPainted(ImRegion.TABLE_CELL_TYPE, true);
+//		//	TODO for test purposes, visualize table area graphics and checkerboard cells
+//		BufferedImage bi = new BufferedImage(tableBoxStats.grImage.getWidth(), tableBoxStats.grImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
+//		Graphics2D gr = bi.createGraphics();
+//		gr.setColor(Color.WHITE);
+//		gr.fillRect(0, 0, bi.getWidth(), bi.getHeight());
+//		gr.drawImage(tableBoxStats.grImage, 0, 0, null);
+//		gr.translate(-Math.min(tableBoxStats.bounds.left, tableBoxStats.grBounds.left), -Math.min(tableBoxStats.bounds.top, tableBoxStats.grBounds.top));
+//		for (int c = 0; c < areaCells.length; c++)
+//			for (int r = 0; r < areaCells[c].length; r++) {
+//				BoundingBox cellBox = new BoundingBox(areaCols[c].min, areaCols[c].max, areaRows[r].min, areaRows[r].max);
+//				if ((cellBox.getWidth() <= 0) || (cellBox.getHeight() <= 0))
+//					continue;
+//				if (((c % 2) == 0) && ((r % 2) == 0)) {
+//					gr.setColor(Color.GREEN);
+//					gr.drawRect(cellBox.left, cellBox.top, cellBox.getWidth(), cellBox.getHeight());
+//					continue;
+//				}
+//				GraphicsAreaBrightness gab = tableBoxStats.getGrBrightness(cellBox);
+//				if (gab.minBrightness < Byte.MAX_VALUE) {
+//					gr.setColor(new Color(255, 0, 0, 64));
+//					gr.fillRect(cellBox.left, cellBox.top, cellBox.getWidth(), cellBox.getHeight());
+//				}
+//				if (areaCells[c][r].isBridged) {
+//					gr.setColor(new Color(0, 255, 0, 64));
+//					gr.fillRect(cellBox.left, cellBox.top, cellBox.getWidth(), cellBox.getHeight());
+//				}
+//			}
+//		ImageDisplayDialog grIdd = new ImageDisplayDialog("Table Area Graphics in Page " + page.pageId + " at " + tableBox);
+//		grIdd.addImage(bi, "");
+//		grIdd.setSize(600, 800);
+//		grIdd.setLocationRelativeTo(null);
+//		grIdd.setVisible(true);
+//		
+		/* There are three categories of rows:
+		 * - regular data rows (no action to take)
+		 *   - multiple non-bridged occupied cells
+		 *   - (about) average gaps above and below them
+		 * 
+		 * - row group labels (to merge through all columns)
+		 *   - average or above gaps above and below them
+		 *   - single (streak of) occupied cell(s), starting at very left
+		 *   - possibly prominent font (bold or larger-than-average)
+		 * 
+		 * - overflow rows (to merge with row above or below them)
+		 *   - narrower-than-average gap towards data row they belong to
+		 *   - at most the same cells occupied as data row they belong to
+		 *   - not bridging any column gaps open in data row they belong to
+		 */
+		
+		
+		/* TODO maybe detect header/data split first, and compute row mergers separately:
+		 * - there tends to be a line between headers and actual data ==> get them from page
+		 * - headers are quite often bold ==> check font style breaks (we compute that stuff already)
+		 * - even numeric or symbolic columns tend to have text headers ==> do check data types
+		 */
+		
+		//	assess row properties (margins, font properties, bridging adjacent spacers, occupied cells, ...)
+		assessAreaRowProperties(areaCols, areaRows, areaCells);
+		
+		//	compute average row margin (ignore peak blocked row gaps, as they tend to add some space around lines)
+		int rowMarginSum = 0;
+		int nonPeakRowMarginCount = 0;
+		int nonPeakRowMarginSum = 0;
+		for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+			RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+			rowMarginSum += rog.getHeight();
+			if (!rog.isBlockedByPeak()) {
+				nonPeakRowMarginCount++;
+				nonPeakRowMarginSum += rog.getHeight();
+			}
+		}
+		int avgRowMargin = ((rowMarginSum + (rowOccupationGaps.size() / 2)) / rowOccupationGaps.size());
+		int avgNonPeakRowMargin = ((nonPeakRowMarginCount == 0) ? avgRowMargin : ((nonPeakRowMarginSum + (nonPeakRowMarginCount / 2)) / nonPeakRowMarginCount));
+		
+		//	we have some graphics blocked row gaps ==> take column header row gaps out of average
+		if (nonPeakRowMarginCount < rowOccupationGaps.size()) {
+			int rowMarginCount = rowOccupationGaps.size();
+			for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+				RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+				if (rog.isBlockedByPeak())
+					break; // stop at first graphically marked row gap (conservatively regarding it as marking end of column header area)
+				rowMarginCount--;
+				rowMarginSum -= rog.getHeight();
+				nonPeakRowMarginCount--;
+				nonPeakRowMarginSum -= rog.getHeight();
+			}
+			avgRowMargin = ((rowMarginSum + (rowMarginCount / 2)) / rowMarginCount);
+			avgNonPeakRowMargin = ((nonPeakRowMarginCount == 0) ? avgRowMargin : ((nonPeakRowMarginSum + (nonPeakRowMarginCount / 2)) / nonPeakRowMarginCount));
+		}
+		
+		//	we have no graphically marked row gaps at all ==> take topmost (column header) row gap out of average
+		else if (rowOccupationGaps.size() != 0) {
+			int rowMarginCount = rowOccupationGaps.size();
+			RowOccupationGap topRog = ((RowOccupationGap) rowOccupationGaps.iterator().next());
+			rowMarginCount--;
+			rowMarginSum -= topRog.getHeight();
+			nonPeakRowMarginCount--;
+			nonPeakRowMarginSum -= topRog.getHeight();
+			avgRowMargin = ((rowMarginSum + (rowMarginCount / 2)) / rowMarginCount);
+			avgNonPeakRowMargin = ((nonPeakRowMarginCount == 0) ? avgRowMargin : ((nonPeakRowMarginSum + (nonPeakRowMarginCount / 2)) / nonPeakRowMarginCount));
+		}
+		
+		for (int r = 0; r < areaRows.length; r += 2) {
+			System.out.println("Row " + (r / 2) + ": " + areaRows[r].occupiedCellCount + " cells occupied, space below is " + areaRows[r].belowRowGap);
+		}
+		
+		//	determine row gap margin threshold that will leave us with sensible number of rows
+		//	TODO try accumulation point analysis
+		int minNonMergeRowMargin = avgNonPeakRowMargin;
+		do {
+			
+			//	check what current merging threshold would leave us with
+			int nonMergeRowCount = 1; // we have one row more than gaps separating them
+			int maxMergeRowMargin = 0;
+			for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+				RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+				if (rog.isBlockedByGraphics())
+					nonMergeRowCount++; // cannot merge across blocking graphics ==> will always yield one more row
+				else if (minNonMergeRowMargin <= rog.getHeight())
+					nonMergeRowCount++; // would not merge this one under current margin ==> would yield one more row
+				else maxMergeRowMargin = Math.max(maxMergeRowMargin, rog.getHeight());
+			}
+			
+			//	nothing merged at all, no need for any (further) reduction
+			if (nonMergeRowCount == ((areaRows.length + 1) / 2))
+				break;
+			
+			//	check if current threshold makes sense
+			if (nonMergeRowCount < 3) { /* just too few rows */ }
+			else if ((nonMergeRowCount * 7) < ((areaRows.length + 1) / 2)) { /* still too few rows for such a large table, we rarely have more than 6 lines per cell */ }
+			else if ((maxMergeRowMargin + 1) == minNonMergeRowMargin) { /* threshold lies inside larger group of observed margins, too insecure */ }
+			else break; // current margin leaves sensible number of rows, let's work with that
+			
+			//	let's try where smaller threshold would take us
+			minNonMergeRowMargin--;
+		} while (true); // loop body knows when to stop, and keeps that knowledge scoped in
+		System.out.println(" ==> minimum non-mergeable row margin is " + minNonMergeRowMargin);
+		
+		//	determine row mergers
+		char[] areaRowMergeDirections = getAreaRowMergers(areaRows, areaCells, minNonMergeRowMargin);
+		
+		//	check for saw blade row occupation pattern if no rows mergeable at all (only with minimum row gaps below (DPI/25), though)
+		if ((minNonMergeRowMargin <= minRowMargin) && (minRowMargin <= ((page.getImageDPI() + 13) / 25)))
+			handleCellOccupationSawBladePatterns(((areaCols.length + 1) / 2), areaRows, areaCells, areaRowMergeDirections);
+		
+		//	count unambiguous mergers in both directions to decide ambiguous ones
+		int areaRowMergeCount = 0;
+		int areaRowUpwardMergeCount = 0;
+		int areaRowDownwardMergeCount = 0;
+		for (int r = 0; r < areaRows.length; r += 2) {
+			if (areaRowMergeDirections[r] != 'N')
+				areaRowMergeCount++;
+			if (areaRowMergeDirections[r] == 'U')
+				areaRowUpwardMergeCount++;
+			else if (areaRowMergeDirections[r] == 'D')
+				areaRowDownwardMergeCount++;
+		}
+		
+		//	decide ambiguous mergers (with a little bias towards merging upwards, as that is more frequent)
+		for (int r = 0; r < areaRows.length; r += 2) {
+			if (areaRowMergeDirections[r] == 'A')
+				areaRowMergeDirections[r] = ((areaRowUpwardMergeCount < areaRowDownwardMergeCount) ? 'D' : 'U');
+		}
+		
+		//	perform row mergers (if any)
+		if (areaRowMergeCount != 0) {
+			
+			//	merge rows proper
+			ArrayList mAreaRowList = new ArrayList();
+			int rTop = tableBox.top;
+			for (int r = 0; r <= areaRows.length; r += 2) {
+				if (areaRowMergeDirections[r] == 'D')
+					continue;
+				if ((r + 1) == areaRows.length)
+					mAreaRowList.add(new TableAreaRow(false, rTop, tableBox.bottom));
+				else if (areaRowMergeDirections[r + 2] != 'U') {
+					mAreaRowList.add(new TableAreaRow(false, rTop, areaRows[r].max));
+					mAreaRowList.add(new TableAreaRow(true, areaRows[r + 1].min, areaRows[r + 1].max));
+					rTop = areaRows[r + 2].min;
+				}
+			}
+			TableAreaRow[] mAreaRows = ((TableAreaRow[]) mAreaRowList.toArray(new TableAreaRow[mAreaRowList.size()]));
+			
+			//	merge cells
+			TableAreaCell[][] mAreaCells = new TableAreaCell[areaCols.length][mAreaRows.length];
+			for (int c = 0; c < areaCols.length; c++)
+				for (int r = 0; r < mAreaRows.length; r++) {
+					mAreaCells[c][r] = new TableAreaCell(areaCols[c], mAreaRows[r]);
+					mAreaCells[c][r].updateWords(words); // automatically flags any space cell as bridged if it contains words
+					
+					//	transfer any bridged property from raw cells (for spacer rows only)
+					if ((r % 2) == 1) {
+						for (int lr = 0; lr < areaRows.length; lr++)
+							if ((areaRows[lr].min == mAreaRows[r].min) && (areaRows[lr].max == mAreaRows[r].max) && areaCells[c][lr].isBridged) {
+								mAreaCells[c][r].isBridged = true;
+								break;
+							}
+					}
+					
+					//	transfer any bridged property from raw cells (for data rows in spacer columns only)
+					else if ((c % 2) == 1) {
+						for (int lr = 0; lr < areaRows.length; lr++)
+							if ((mAreaRows[r].min <= areaRows[lr].min) && (areaRows[lr].max <= mAreaRows[r].max) && areaCells[c][lr].isBridged) {
+								mAreaCells[c][r].isBridged = true;
+								break;
+							}
+					}
+				}
+			
+			//	assess row properties (margins, font properties, bridging adjacent spacers, occupied cells, ...)
+			assessAreaRowProperties(areaCols, mAreaRows, mAreaCells);
+			
+			//	switch to merged rows
+			areaRows = mAreaRows;
+			areaCells = mAreaCells;
+		}
+		
+		//	detect fully bridged left anchored and centered (streaks of connected) cells (row group labels)
+		mergeRowGroupLabels(tableBox, areaCols, areaRows, avgNonPeakRowMargin, areaCells);
+		
+		//	assess column properties (margins, font properties, bridging adjacent spacers, occupied cells, ...)
+		assessAreaColumnProperties(areaCols, areaRows, areaCells);
+		
+		//	determine column mergers
+		char[] areaColMergeDirections = getAreaColumnMergers(areaCols, areaRows, areaCells, tableBoxStats.avgWordHeight);
+		
+		//	count unambiguous mergers in both directions to decide ambiguous ones
+		int areaColMergeCount = 0;
+		for (int c = 0; c < areaCols.length; c += 2) {
+			if (areaColMergeDirections[c] != 'N')
+				areaColMergeCount++;
+		}
+		
+		//	perform column mergers (if any)
+		if (areaColMergeCount != 0) {
+			
+			//	merge rows proper
+			ArrayList mAreaColList = new ArrayList();
+			int cLeft = tableBox.left;
+			for (int c = 0; c <= areaCols.length; c += 2) {
+				if (areaColMergeDirections[c] == 'R')
+					continue;
+				if ((c + 1) == areaCols.length)
+					mAreaColList.add(new TableAreaColumn(false, cLeft, tableBox.right));
+				else if (areaColMergeDirections[c] == 'X') {
+					((TableAreaColumn) mAreaColList.get(mAreaColList.size() - 1)).max = areaCols[c + 1].max;
+					cLeft = areaCols[c + 2].min;
+				}
+				else if (areaColMergeDirections[c + 2] != 'L') {
+					mAreaColList.add(new TableAreaColumn(false, cLeft, areaCols[c].max));
+					mAreaColList.add(new TableAreaColumn(true, areaCols[c + 1].min, areaCols[c + 1].max));
+					cLeft = areaCols[c + 2].min;
+				}
+			}
+			TableAreaColumn[] mAreaCols = ((TableAreaColumn[]) mAreaColList.toArray(new TableAreaColumn[mAreaColList.size()]));
+			
+			//	merge cells
+			TableAreaCell[][] mAreaCells = new TableAreaCell[mAreaCols.length][areaRows.length];
+			for (int c = 0; c < mAreaCols.length; c++)
+				for (int r = 0; r < areaRows.length; r++) {
+					mAreaCells[c][r] = new TableAreaCell(mAreaCols[c], areaRows[r]);
+					mAreaCells[c][r].updateWords(words); // automatically flags any space cell as bridged if it contains words
+					
+					//	transfer any bridged property from raw cells (for spacer columns only)
+					if ((c % 2) == 1) {
+						for (int lc = 0; lc < areaCols.length; lc++)
+							if ((areaCols[lc].min == mAreaCols[c].min) && (areaCols[lc].max == mAreaCols[c].max) && areaCells[lc][r].isBridged) {
+								mAreaCells[c][r].isBridged = true;
+								break;
+							}
+					}
+					
+					//	transfer any bridged property from raw cells (for data columns in spacer rows only)
+					else if ((r % 2) == 1) {
+						for (int lc = 0; lc < areaCols.length; lc++)
+							if ((mAreaCols[c].min <= areaCols[lc].min) && (areaCols[lc].max <= mAreaCols[c].max) && areaCells[lc][r].isBridged) {
+								mAreaCells[c][r].isBridged = true;
+								break;
+							}
+					}
+				}
+			
+			//	assess column properties (margins, font properties, bridging adjacent spacers, occupied cells, ...)
+			assessAreaColumnProperties(mAreaCols, areaRows, mAreaCells);
+			
+			//	switch to merged columns
+			areaCols = mAreaCols;
+			areaCells = mAreaCells;
+		}
+		
+		//	pull columns snug around cells not bridging out
+		for (int c = 0; c < areaCols.length; c += 2) {
+			
+			//	compute extent of words not bridging out
+			int minWordLeft = areaCols[c].max;
+			int maxWordRight = areaCols[c].min;
+			for (int r = 0; r < areaRows.length; r +=2) {
+				if (areaCells[c][r].wordBounds == null)
+					continue;
+				if ((c == 0) || !areaCells[c-1][r].isBridged)
+					minWordLeft = Math.min(minWordLeft, areaCells[c][r].wordBounds.left);
+				if (((c+1) == areaCols.length) || !areaCells[c+1][r].isBridged)
+					maxWordRight = Math.max(maxWordRight, areaCells[c][r].wordBounds.right);
+			}
+			
+			//	anything to work with?
+			if (minWordLeft < maxWordRight) {
+				areaCols[c].min = minWordLeft;
+				if (c != 0)
+					areaCols[c-1].max = minWordLeft;
+				areaCols[c].max = maxWordRight;
+				if ((c+1) != areaCols.length)
+					areaCols[c+1].min = maxWordRight;
+			}
+		}
+		
+		//	pull rows snug around cells not bridging out
+		for (int r = 0; r < areaRows.length; r +=2) {
+			
+			//	compute extent of words not bridging out
+			int minWordTop = areaRows[r].max;
+			int maxWordBottom = areaRows[r].min;
+			for (int c = 0; c < areaCols.length; c += 2) {
+				if (areaCells[c][r].wordBounds == null)
+					continue;
+				if ((r == 0) || !areaCells[c][r-1].isBridged)
+					minWordTop = Math.min(minWordTop, areaCells[c][r].wordBounds.top);
+				if (((r+1) == areaRows.length) || !areaCells[c][r+1].isBridged)
+					maxWordBottom = Math.max(maxWordBottom, areaCells[c][r].wordBounds.bottom);
+			}
+			
+			//	anything to work with?
+			if (minWordTop < maxWordBottom) {
+				areaRows[r].min = minWordTop;
+				if (r != 0)
+					areaRows[r-1].max = minWordTop;
+				areaRows[r].max = maxWordBottom;
+				if ((r+1) != areaRows.length)
+					areaRows[r+1].min = maxWordBottom;
+			}
+		}
+		
+		//	if we have a full grid, merge cells to correspond to those given graphically
+		if (isFullGrid(colOccupationLows, rowOccupationGaps)) {
+			
+			//	copy graphics image, and subtract edge pixels to prevent any flow-around in a grid without the framing box
+			BufferedImage bi = new BufferedImage((tableBoxStats.grImage.getWidth() - 4), (tableBoxStats.grImage.getHeight() - 4), BufferedImage.TYPE_BYTE_GRAY);
+//			BufferedImage bi = new BufferedImage((tableBoxStats.grImage.getWidth() - 4), (tableBoxStats.grImage.getHeight() - 4), BufferedImage.TYPE_INT_ARGB);
+			Graphics2D gr = bi.createGraphics();
+			gr.setColor(Color.WHITE);
+			gr.fillRect(0, 0, bi.getWidth(), bi.getHeight());
+			gr.drawImage(tableBoxStats.grImage, -2, -2, null);
+			
+			//	wrap graphic image
+			AnalysisImage ai = Imaging.wrapImage(bi, null);
+			
+			//	obtain region coloring (negative threshold to color light regions)
+			int[][] abiRegionColors = Imaging.getRegionColoring(ai, ((byte) -96), false);
+			int maxRegionColor = 0;
+			for (int x = 0; x < bi.getWidth(); x++) {
+				for (int y = 0; y < bi.getHeight(); y++)
+					maxRegionColor = Math.max(maxRegionColor, abiRegionColors[x][y]);
+			}
+			int[] regionColorMinX = new int[maxRegionColor];
+			Arrays.fill(regionColorMinX, Integer.MAX_VALUE);
+			int[] regionColorMaxX = new int[maxRegionColor];
+			Arrays.fill(regionColorMaxX, Integer.MIN_VALUE);
+			int[] regionColorMinY = new int[maxRegionColor];
+			Arrays.fill(regionColorMinY, Integer.MAX_VALUE);
+			int[] regionColorMaxY = new int[maxRegionColor];
+			Arrays.fill(regionColorMaxY, Integer.MIN_VALUE);
+			for (int x = 0; x < bi.getWidth(); x++)
+				for (int y = 0; y < bi.getHeight(); y++) {
+					if (abiRegionColors[x][y] == 0)
+						continue;
+					int rci = (abiRegionColors[x][y] - 1);
+					regionColorMinX[rci] = Math.min(regionColorMinX[rci], x);
+					regionColorMaxX[rci] = Math.max(regionColorMaxX[rci], x);
+					regionColorMinY[rci] = Math.min(regionColorMinY[rci], x);
+					regionColorMaxY[rci] = Math.max(regionColorMaxY[rci], x);
+				}
+			
+			//	fix offsets of region color array against page coordinates
+			int leftOffset = (tableBoxStats.grBounds.left + 2);
+			int topOffset = (tableBoxStats.grBounds.top + 2);
+			
+			//	horizontally merge cells of same region color
+			for (int c = 1; c < areaCells.length; c += 2)
+				for (int r = 0; r < areaCells[c].length; r += 2) {
+					if (areaCells[c][r].isBridged)
+						continue; // no need to bother with this one
+					
+					//	compute region colors of cells to left and right
+					int leftCenterX = ((areaCols[c - 1].min + areaCols[c - 1].max) / 2);
+					int rightCenterX = ((areaCols[c + 1].min + areaCols[c + 1].max) / 2);
+					int centerY = ((areaRows[r].min + areaRows[r].max) / 2);
+					int leftRci = (abiRegionColors[leftCenterX - leftOffset][centerY - topOffset] - 1);
+					int rightRci = (abiRegionColors[rightCenterX - leftOffset][centerY - topOffset] - 1);
+					if (leftRci != rightRci)
+						continue; // different colors
+					
+					//	check region extent
+					if (tableBoxStats.grBounds.getWidth() < ((regionColorMaxX[leftRci] - regionColorMinX[leftRci]) * 2))
+						continue; // over half of table width
+					if (tableBoxStats.grBounds.getHeight() < ((regionColorMaxY[leftRci] - regionColorMinY[leftRci]) * 2))
+						continue; // over half of table height
+					if (tableBoxStats.grBounds.getWidth() < ((regionColorMaxX[rightRci] - regionColorMinX[rightRci]) * 2))
+						continue; // over half of table width
+					if (tableBoxStats.grBounds.getHeight() < ((regionColorMaxY[rightRci] - regionColorMinY[rightRci]) * 2))
+						continue; // over half of table height
+					
+					//	merge cells
+					areaCells[c][r].isBridged = true;
+				}
+			
+			//	vertically merge cells of same region color
+			for (int c = 0; c < areaCells.length; c += 2)
+				for (int r = 1; r < areaCells[c].length; r += 2) {
+					if (areaCells[c][r].isBridged)
+						continue; // no need to bother with this one
+					
+					//	compute region colors of cells above and below
+					int centerX = ((areaCols[c].min + areaCols[c].max) / 2);
+					int topCenterY = ((areaRows[r - 1].min + areaRows[r - 1].max) / 2);
+					int bottomCenterY = ((areaRows[r + 1].min + areaRows[r + 1].max) / 2);
+					int topRci = (abiRegionColors[centerX - leftOffset][topCenterY - topOffset] - 1);
+					int bottomRci = (abiRegionColors[centerX - leftOffset][bottomCenterY - topOffset] - 1);
+					if (topRci != bottomRci)
+						continue; // different colors
+					
+					//	check region extent
+					if (tableBoxStats.grBounds.getWidth() < ((regionColorMaxX[topRci] - regionColorMinX[topRci]) * 2))
+						continue; // over half of table width
+					if (tableBoxStats.grBounds.getHeight() < ((regionColorMaxY[topRci] - regionColorMinY[topRci]) * 2))
+						continue; // over half of table height
+					if (tableBoxStats.grBounds.getWidth() < ((regionColorMaxX[bottomRci] - regionColorMinX[bottomRci]) * 2))
+						continue; // over half of table width
+					if (tableBoxStats.grBounds.getHeight() < ((regionColorMaxY[bottomRci] - regionColorMinY[bottomRci]) * 2))
+						continue; // over half of table height
+					
+					//	merge cells
+					areaCells[c][r].isBridged = true;
+				}
+//			
+//			//	TODO use this visualization for trouble shooting (switch to ARGB image above)
+//			HashMap regionColors = new HashMap();
+//			for (int x = 0; x < bi.getWidth(); x++) {
+//				for (int y = 0; y < bi.getHeight(); y++) {
+//					if (abiRegionColors[x][y] == 0)
+//						continue;
+//					Color c = ((Color) (regionColors.get(Integer.valueOf(abiRegionColors[x][y]))));
+//					if (c == null) {
+//						c = new Color(Color.HSBtoRGB(((float) Math.random()), 1f, 1f));
+//						regionColors.put(Integer.valueOf(abiRegionColors[x][y]), c);
+//					}
+//					bi.setRGB(x, y, c.getRGB());
+//				}
+//			}
+//			ImageDisplayDialog grIdd = new ImageDisplayDialog("Table Area Graphics in Page " + page.pageId + " at " + tableBox);
+//			grIdd.addImage(bi, "");
+//			grIdd.setSize(600, 800);
+//			grIdd.setLocationRelativeTo(null);
+//			grIdd.setVisible(true);
+		}
+		
+		//	mark final columns and rows
+		ImRegion[] tableCols = new ImRegion[(areaCols.length + 1) / 2];
+		for (int c = 0; c < tableCols.length; c++)
+			tableCols[c] = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(areaCols[c * 2].min, areaCols[c * 2].max, tableBox.top, tableBox.bottom), ImRegion.TABLE_COL_TYPE);
+		ImRegion[] tableRows = new ImRegion[(areaRows.length + 1) / 2];
+		for (int r = 0; r < tableRows.length; r++)
+			tableRows[r] = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(tableBox.left, tableBox.right, areaRows[r * 2].min, areaRows[r * 2].max), ImRegion.TABLE_ROW_TYPE);
+		
+		//	mark final cells, observing merger flags
+		ImRegion[][] tableCells = new ImRegion[tableCols.length][tableRows.length];
+		for (int c = 0; c < tableCols.length; c++) {
+			for (int r = 0; r < tableRows.length; r++) {
+				if (tableCells[c][r] != null)
+					continue; // covered previously by merged cell
+				
+				//	find range of cell
+				int lc = c;
+				for (; lc < tableCols.length; lc++) {
+					if (((lc+1) == tableCols.length) || !areaCells[(lc * 2) + 1][r * 2].isBridged)
+						break;
+				}
+				int lr = r;
+				for (; lr < tableRows.length; lr++) {
+					if (((lr+1) == tableRows.length) || !areaCells[c * 2][(lr * 2) + 1].isBridged)
+						break;
+				}
+				
+				//	create and store cell
+				ImRegion cell = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(areaCols[c * 2].min, areaCols[lc * 2].max, areaRows[r * 2].min, areaRows[lr * 2].max), ImRegion.TABLE_CELL_TYPE);
+				for (int sc = c; sc <= lc; sc++) {
+					for (int sr = r; sr <= lr; sr++)
+						tableCells[sc][sr] = cell;
+				}
+			}
+		}
+		
+		//	return resulting markup
+		return new TableAreaMarkup(page, words, tableRegion, tableCols, tableRows, tableCells);
+	}
+	
+	private static class TableAreaMarkup {
+		final ImPage page;
+		final ImWord[] words;
+		final ImRegion table;
+		final ImRegion[] cols;
+		final ImRegion[] rows;
+		final ImRegion[][] cells;
+		
+		TableAreaMarkup(ImPage page, ImWord[] words, ImRegion table, ImRegion[] cols, ImRegion[] rows, ImRegion[][] cells) {
+			this.page = page;
+			this.words = words;
+			this.table = table;
+			this.cols = cols;
+			this.rows = rows;
+			this.cells = cells;
+		}
+	}
+	
+	private static class TableAreaSlice {
+		final boolean isSpace;
+		final boolean isEnforced;
+		
+		int min;
+		int max;
+		
+		int wordCount = 0;
+		int boldWordCount = 0;
+		int italicsWordCount = 0;
+		
+		int wordFontSizeCount = 0;
+		int wordFontSizeSum = 0;
+		int wordFontSizeMin = 72;
+		int wordFontSizeMax = 0;
+		
+		TableAreaSlice(boolean isSpace, int min, int max) {
+			this(isSpace, min, max, false);
+		}
+		TableAreaSlice(boolean isSpace, int min, int max, boolean isEnforced) {
+			this.isSpace = isSpace;
+			this.min = min;
+			this.max = max;
+			this.isEnforced = isEnforced;
+		}
+
+		int getSpan() {
+			return (this.max - this.min);
+		}
+		
+		boolean isBold() {
+			return ((this.boldWordCount * 10) > (this.wordCount * 9)); // >90% of words in bold
+		}
+		boolean isItalics() {
+			return ((this.italicsWordCount * 10) > (this.wordCount * 9)); // >90% of words in italics
+		}
+		int getFontSize() {
+			return ((this.wordFontSizeCount == 0) ? 0 : ((this.wordFontSizeSum + (this.wordFontSizeCount / 2)) / this.wordFontSizeCount));
+		}
+	}
+	
+	private static class TableAreaColumn extends TableAreaSlice {
+		int leftColGap = -1;
+		int rightColGap = -1;
+//		
+//		int bridgedLeftCount = 0;
+//		int bridgedRightCount = 0;
+		
+		int occupiedCellCount = 0;
+		int disjointOccupiedCellCount = 0;
+		int minOccupiedCellRow = Integer.MAX_VALUE;
+		int maxOccupiedCellRow = Integer.MIN_VALUE;
+		
+		TableAreaColumn(boolean isSpace, int min, int max) {
+			super(isSpace, min, max);
+		}
+		TableAreaColumn(boolean isSpace, int min, int max, boolean isEnforced) {
+			super(isSpace, min, max, isEnforced);
+		}
+	}
+	
+	private static char[] getAreaRowMergers(TableAreaRow[] areaRows, TableAreaCell[][] areaCells, int minNonMergeRowMargin) {
+		char[] areaRowMergeDirections = new char[areaRows.length];
+		Arrays.fill(areaRowMergeDirections, 'N'); // initialize to 'N' for 'none'
+		for (int r = 0; r < areaRows.length; r += 2) {
+			
+			//	merge upward ignoring all other criteria if every populated cell is bridged to from top
+			if ((r != 0) && !areaRows[r - 1].isEnforced && isRowGapFullyBridged(areaCells, r, (r - 2))) {
+				areaRowMergeDirections[r] = 'U';
+				continue;
+			}
+			
+			//	merge downward ignoring all other criteria if every populated cell is bridged to from below
+			if (((r+2) < areaRows.length) && !areaRows[r + 1].isEnforced && isRowGapFullyBridged(areaCells, r, (r + 2))) {
+				areaRowMergeDirections[r] = 'D';
+				continue;
+			}
+			
+			//	test for upward merger (gap has to be not enforced, less than 90% the average, and more than 1 less than average to exclude rounding errors)
+//			boolean mergeableUpward = ((r != 0) && !areaRows[r - 1].isEnforced && ((areaRows[r].aboveRowGap * 10) < (minNonMergeRowMargin * 9)) && ((areaRows[r].aboveRowGap + 1) < minNonMergeRowMargin));
+			boolean mergeableUpward = ((r != 0) && isRowGapMergeable((r - 1), areaRows, areaCells, minNonMergeRowMargin));
+			
+			//	test for downward merger (gap has to be not enforced, less than 90% the average, and more than 1 less than average to exclude rounding errors)
+//			boolean mergeableDownward = (((r+2) < areaRows.length) && !areaRows[r + 1].isEnforced && ((areaRows[r].belowRowGap * 10) < (minNonMergeRowMargin * 9)) && ((areaRows[r].belowRowGap + 1) < minNonMergeRowMargin));
+			boolean mergeableDownward = (((r+2) < areaRows.length) && isRowGapMergeable((r + 1), areaRows, areaCells, minNonMergeRowMargin));
+			
+			//	no mergers for this row
+			if (!mergeableUpward && !mergeableDownward)
+				continue;
+			
+			//	check in-cell word length only if row is merely overflow in either direction
+			boolean checkInCellWords = (mergeableUpward && mergeableDownward && (areaRows[r].occupiedCellCount < areaRows[r-2].occupiedCellCount) && (areaRows[r].occupiedCellCount < areaRows[r+2].occupiedCellCount));
+			
+			//	check cell compatibility
+			mergeableUpward = (mergeableUpward && areRowCellsOverflowCompatibleWith(areaCells, r, (r - 2), checkInCellWords));
+			mergeableDownward = (mergeableDownward && areRowCellsOverflowCompatibleWith(areaCells, r, (r + 2), checkInCellWords));
+			
+			//	no mergers for this row after considering cells
+			if (!mergeableUpward && !mergeableDownward)
+				continue;
+			
+			//	this one is unambiguous
+			if (mergeableUpward != mergeableDownward) {
+				if (mergeableUpward)
+					areaRowMergeDirections[r] = 'U';
+				else if (mergeableDownward)
+					areaRowMergeDirections[r] = 'D';
+				continue;
+			}
+//			
+//			//	we have a clear spacial tendency (even with tolerance of 1 accounting for rounding errors)
+//			if (1 < Math.abs(areaRows[r].aboveRowGap - areaRows[r].belowRowGap)) {
+//				areaRowMergeDirections[r] = ((areaRows[r].aboveRowGap < areaRows[r].belowRowGap) ? 'U' : 'D');
+//				continue;
+//			}
+			
+			//	measure distance between individual cells
+			int maxCellWordGapAbove = getMaxRowCellWordGap(areaCells, r, (r - 2));
+			int maxCellWordGapBelow = getMaxRowCellWordGap(areaCells, r, (r + 2));
+			
+			//	we have a clear spacial tendency (even with tolerance of 1 accounting for rounding errors)
+			if (1 < Math.abs(maxCellWordGapAbove - maxCellWordGapBelow)) {
+				areaRowMergeDirections[r] = ((maxCellWordGapAbove < maxCellWordGapBelow) ? 'U' : 'D');
+				continue;
+			}
+			
+			//	prefer merging into more occupied row (higher likelihood of overflow)
+			if (areaRows[r-2].occupiedCellCount != areaRows[r+2].occupiedCellCount) {
+				areaRowMergeDirections[r] = ((areaRows[r-2].occupiedCellCount < areaRows[r].occupiedCellCount) ? 'D' : 'U');
+				continue;
+			}
+			
+			//	row above merging upward, follow suite
+			if ((r != 0) && (areaRowMergeDirections[r-2] == 'U'))
+				areaRowMergeDirections[r] = 'U';
+			
+			//	row above merging downward, follow suite
+			else if ((r != 0) && (areaRowMergeDirections[r-2] == 'D'))
+				areaRowMergeDirections[r] = 'D';
+			
+			//	this one is ambiguous by all means, decide later
+			else areaRowMergeDirections[r] = 'A';
+		}
+		
+		//	finally
+		return areaRowMergeDirections;
+	}
+	
+	private static void mergeRowGroupLabels(BoundingBox tableBox, TableAreaColumn[] areaCols, TableAreaRow[] areaRows, int avgNonPeakRowMargin, TableAreaCell[][] areaCells) {
+		for (int r = 0; r < areaRows.length; r += 2) {
+			if (areaRows[r].disjointOccupiedCellCount > 1)
+				continue; // not fully bridged
+			
+			//	check if we have a bold row, and cut some 10% slack in minimum gaps if we do (bold also pronounces the row, after all)
+			boolean rowIsBold = areaRows[r].isBold();
+			
+			//	check upward and downward row gaps, as well as graphics blocking them (blocked gap is always large enough)
+			if (((areaRows[r].aboveRowGap * 10) < (avgNonPeakRowMargin * (rowIsBold ? 9 : 10))) && (r != 0) && !areaRows[r-1].isEnforced)
+				continue; // too close to be distinguished row group label
+			if (((areaRows[r].belowRowGap * 10) < (avgNonPeakRowMargin * (rowIsBold ? 9 : 10))) && ((r+1) != areaRows.length) && !areaRows[r+1].isEnforced)
+				continue; // too close to be distinguished row group label
+			
+			//	check for cells above and below bridging in (row group labels will not include any multi-row cells)
+			boolean rowBridgedTo = false;
+			for (int c = 0; c < areaCols.length; c += 2) {
+				if ((r != 0) && areaCells[c][r-1].isBridged) {
+					rowBridgedTo = true;
+					break;
+				}
+				if (((r+1) != areaRows.length) && areaCells[c][r+1].isBridged) {
+					rowBridgedTo = true;
+					break;
+				}
+			}
+			if (rowBridgedTo)
+				continue;
+			
+			//	measure left and right distances from respective table edges, as well as left distance from left edge of second column
+			int leftDist = -1;
+			int leftDistAfterRowLabelCol = -1;
+			int rightDist = -1;
+			for (int c = 0; c < areaCols.length; c += 2)
+				if (areaCells[c][r].wordBounds != null) {
+					if (leftDist == -1)
+						leftDist = (areaCells[c][r].wordBounds.left - tableBox.left);
+					rightDist = (tableBox.right - areaCells[c][r].wordBounds.right);
+					if (leftDistAfterRowLabelCol == -1) {
+						if (2 <= c)
+							leftDistAfterRowLabelCol = (areaCells[c][r].wordBounds.left - areaCols[2].min);
+						else leftDistAfterRowLabelCol = Short.MAX_VALUE; // leaving enough room for multiplication without overflow
+					}
+				}
+			
+			//	test for left alignment: Table 2 on Page 15 in Zootaxa/zootaxa.4375.3.5.pdf.imf
+			//	test for center alignment: Table 1 on Page 11 of EJT/ejt-402 (D03EFF9FFFC5D43CFFDCFFD0FE0FFFBE) (EJT-testbed/174)
+			
+			//	left distance has to be very small (< 2% of table width) for left alignment
+			boolean isLeftAlignedOnTableEdge = ((areaRows[r].minOccupiedCellCol == 0) && ((leftDist * 50) < tableBox.getWidth()));
+			
+			//	left distance after row label column has to be very small (< 2% of table width) for left alignment
+			boolean isLeftAlignedAfterRowLabelCol = ((areaRows[r].minOccupiedCellCol == 2) && ((leftDistAfterRowLabelCol * 50) < tableBox.getWidth()));
+			
+			//	left and right distances have to be within 2% of table width from one another for center alignment
+			boolean isCenterAlignedOnTableEdge = ((Math.abs(leftDist - rightDist) * 50) < tableBox.getWidth());
+			
+			//	left and right distances (left after row label column) have to be within 2% of table width from one another for center alignment
+			boolean isCenterAlignedAfterRowLabelCol = ((Math.abs(leftDistAfterRowLabelCol - rightDist) * 50) < tableBox.getWidth());
+			
+			//	aggregate alignments
+			boolean isLeftAligned = (isLeftAlignedOnTableEdge || isLeftAlignedAfterRowLabelCol);
+			boolean isCenterAligned = (isCenterAlignedOnTableEdge || isCenterAlignedAfterRowLabelCol);
+			
+			//	neither left aligned nor centered, not a row group label
+			if (!isLeftAligned && !isCenterAligned)
+				continue;
+			
+			//	row has ample space up and down, and only a single (streak of) populated cell(s) in the middle ==> bridge row label
+			for (int c = 1; c < areaCols.length; c += 2)
+				areaCells[c][r].isBridged = true;
+		}
+	}
+	
+	private static void handleCellOccupationSawBladePatterns(int areaColCount, TableAreaRow[] areaRows, TableAreaCell[][] areaCells, char[] areaRowMergeDirections) {
+		System.out.println("Checking for cell occupation saw blade patterns ...");
+		
+		//	TODO check against other usual test tables
+		
+		//	TODO TEST: zootaxa.4420.2.5.pdf (goldengate-imagine/issues/466) Pages 7 and 10+11
+		
+		//	count full occupation rows and rows occupied in row label column, as well as graphics enforced row gaps
+		int fullCellOccupationCount = 0;
+		int firstCellOccupationCount = 0;
+		int graphicsRowGapCount = 0;
+		for (int r = 0; r < areaRows.length; r+= 2) {
+			if (areaColCount <= areaRows[r].occupiedCellCount)
+				fullCellOccupationCount++;
+			if ((areaCells[0][r].wordBounds != null))
+				firstCellOccupationCount++;
+			if ((r != 0) && areaRows[r-1].isEnforced)
+				graphicsRowGapCount++;
+		}
+		System.out.println("Full cell occupation count is " + fullCellOccupationCount);
+		System.out.println("First cell occupation count is " + firstCellOccupationCount);
+		System.out.println("Graphics enforced row gap count is " + graphicsRowGapCount);
+		
+		//	check for downward-reducing saw blade pattern
+		boolean isDownwardSawBladeRowTable = true;
+		int downwardCellOccupationReductionCount = 0;
+		int downwardCellOccupationReductionSum = 0;
+		int downwardCellOccupationReductionEndCount = 0;
+		int downwardCellOccupationReductionEndSpaceSum = 0;
+		int downwardCellOccupationReductionEndSpaceDiffSum = 0;
+		int downwardCellOccupationReductionEndGraphicsCount = 0;
+		System.out.println("Checking for downward saw blade pattern in row occupation");
+		for (int r = 1; r < areaRows.length; r+= 2) {
+			
+			//	at most as many cells occupied as in row above, we're in a descent
+			if (areaRows[r+1].occupiedCellCount <= areaRows[r-1].occupiedCellCount) {
+				if (areaRows[r+1].occupiedCellCount < areaRows[r-1].occupiedCellCount) {
+					downwardCellOccupationReductionCount++;
+					downwardCellOccupationReductionSum += (areaRows[r-1].occupiedCellCount - areaRows[r+1].occupiedCellCount);
+				}
+				continue;
+			}
+			
+			//	count row spacing and row spacing difference at rise in cell occupation
+			else {
+				downwardCellOccupationReductionEndCount++;
+				downwardCellOccupationReductionEndSpaceSum += areaRows[r+1].aboveRowGap;
+				int prevRowGapDiff = ((0 < (r-2)) ? (areaRows[r-1].belowRowGap - areaRows[r-1].aboveRowGap) : 0);
+				int nextRowGapDiff = (((r+2) < areaRows.length) ? (areaRows[r+1].aboveRowGap - areaRows[r+1].belowRowGap) : 0);
+				downwardCellOccupationReductionEndSpaceDiffSum += Math.max(prevRowGapDiff, nextRowGapDiff);
+				if (areaRows[r].isEnforced)
+					downwardCellOccupationReductionEndGraphicsCount++;
+			}
+			
+			//	increase in cell occupation without returning to full column count ==> not a saw blade
+			if (areaRows[r+1].occupiedCellCount < areaColCount) {
+				isDownwardSawBladeRowTable = false;
+				System.out.println(" ==> rise row " + ((r+1)/2) + " has fewer cell occupied than there are columns");
+				break; 
+			}
+			
+			//	smaller gap above return to full cell occupation than below it, even accounting for rounding error ==> not a saw blade
+			if (((r+2) < areaRows.length) && (areaRows[r+1].aboveRowGap + 1) < areaRows[r+1].belowRowGap) {
+				isDownwardSawBladeRowTable = false;
+				System.out.println(" ==> rise row " + ((r+1)/2) + " has less space above than below it");
+				break; 
+			}
+			
+			//	smaller gap on far side of return to full cell occupation than right at it, even accounting for rounding error ==> not a saw blade
+			if ((0 < (r-2)) && ((areaRows[r-1].belowRowGap + 1) < areaRows[r-1].aboveRowGap)) {
+				isDownwardSawBladeRowTable = false;
+				System.out.println(" ==> before-rise row " + ((r-1)/2) + " has less space below than above it");
+				break;
+			}
+		}
+		
+		//	make DAMN sure this does NOT kick in in fully occupied tables with NO or FEW multi-line cells (they are the normal ones, after all ...)
+		if ((fullCellOccupationCount * 4) < (downwardCellOccupationReductionEndCount * 5)) {} // we have at least 80% of fully occupied rows at actual tooth-tips
+		else if (downwardCellOccupationReductionEndCount < 3) {
+			isDownwardSawBladeRowTable = false;
+			System.out.println(" ==> too few rises");
+		}
+		else if (downwardCellOccupationReductionEndCount == downwardCellOccupationReductionEndGraphicsCount) {} // all tooth-tips marked with graphics
+		else {
+			isDownwardSawBladeRowTable = false;
+			System.out.println(" ==> too few fully occupied cells are actual rises, and too few rises are graphics enforced");
+		}
+		
+		//	if we have any graphics enforced gaps (with one tolerance for header/body split), they have to correspond to tooth-tips
+		if ((downwardCellOccupationReductionEndGraphicsCount + 1) < graphicsRowGapCount) {
+			isDownwardSawBladeRowTable = false;
+			System.out.println(" ==> only " + downwardCellOccupationReductionEndGraphicsCount + " of " + graphicsRowGapCount + " graphics row gaps correspond with tooth-tips");
+		}
+		
+		//	what do we have?
+		System.out.println("Downward saw blade is " + isDownwardSawBladeRowTable);
+		System.out.println("Downward saw blade cell occupation drop count is " + downwardCellOccupationReductionCount);
+		System.out.println("Downward saw blade cell occupation drop sum is " + downwardCellOccupationReductionSum);
+		System.out.println("Downward saw blade tooth-tip count is " + downwardCellOccupationReductionEndCount);
+		System.out.println("Downward saw blade pre-tooth-tip gap sum is " + downwardCellOccupationReductionEndSpaceSum);
+		System.out.println("Downward saw blade pre-tooth-tip gap difference sum is " + downwardCellOccupationReductionEndSpaceDiffSum);
+		System.out.println("Downward saw blade pre-tooth-tip graphics count is " + downwardCellOccupationReductionEndGraphicsCount);
+		
+		//	check of upward-reducing saw blade pattern
+		boolean isUpwardSawBladeRowTable = true;
+		int upwardCellOccupationReductionCount = 0;
+		int upwardCellOccupationReductionSum = 0;
+		int upwardCellOccupationReductionEndCount = 0;
+		int upwardCellOccupationReductionEndSpaceSum = 0;
+		int upwardCellOccupationReductionEndSpaceDiffSum = 0;
+		int upwardCellOccupationReductionEndGraphicsCount = 0;
+		System.out.println("Checking for upward saw blade pattern in row occupation");
+		for (int r = 1; r < areaRows.length; r+= 2) {
+			
+			//	at least as many cells occupied as in row above, we're in an ascent
+			if (areaRows[r-1].occupiedCellCount <= areaRows[r+1].occupiedCellCount) {
+				if (areaRows[r-1].occupiedCellCount < areaRows[r+1].occupiedCellCount) {
+					upwardCellOccupationReductionCount++;
+					upwardCellOccupationReductionSum += (areaRows[r+1].occupiedCellCount - areaRows[r-1].occupiedCellCount);
+				}
+				continue;
+			}
+			
+			//	count row spacing and row spacing difference at drop in cell occupation
+			else {
+				upwardCellOccupationReductionEndCount++;
+				upwardCellOccupationReductionEndSpaceSum += areaRows[r].aboveRowGap;
+				int prevRowGapDiff = ((0 < (r-2)) ? (areaRows[r-1].belowRowGap - areaRows[r-1].aboveRowGap) : 0);
+				int nextRowGapDiff = (((r+2) < areaRows.length) ? (areaRows[r+1].aboveRowGap - areaRows[r+1].belowRowGap) : 0);
+				upwardCellOccupationReductionEndSpaceDiffSum += Math.max(prevRowGapDiff, nextRowGapDiff);
+				if (areaRows[r-1].isEnforced)
+					upwardCellOccupationReductionEndGraphicsCount++;
+			}
+			
+			//	decrease in cell occupation without coming from full column count ==> not a saw blade
+			if (areaRows[r-1].occupiedCellCount < areaColCount) {
+				isUpwardSawBladeRowTable = false;
+				System.out.println(" ==> before-drop row " + ((r-1)/2) + " has fewer cell occupied than there are columns");
+				break;
+			}
+			
+			//	smaller gap above drop from full cell occupation than below it, even accounting for rounding error ==> not a saw blade
+			if (((r+2) < areaRows.length) && ((areaRows[r+1].aboveRowGap + 1) < areaRows[r+1].belowRowGap)) {
+				isUpwardSawBladeRowTable = false;
+				System.out.println(" ==> drop row " + ((r+1)/2) + " has less space above than below it");
+				break;
+			}
+			
+			//	smaller gap on far side of drop from full cell occupation than right at it, even accounting for rounding error ==> not a saw blade
+			if ((0 < (r-2)) && (areaRows[r-1].belowRowGap + 1) < areaRows[r-1].aboveRowGap) {
+				isUpwardSawBladeRowTable = false;
+				System.out.println(" ==> before-drop row " + ((r-1)/2) + " has less space below than above it");
+				break;
+			}
+		}
+		
+		//	make DAMN sure this does NOT kick in in fully occupied tables with NO or FEW multi-line cells (they are the normal ones, after all ...)
+		if ((fullCellOccupationCount * 4) < (upwardCellOccupationReductionEndCount * 5)) {} // we have at least 80% of fully occupied rows at actual tooth-tips
+		else if (upwardCellOccupationReductionEndCount < 3) {
+			isUpwardSawBladeRowTable = false;
+			System.out.println(" ==> too few rises");
+		}
+		else if (upwardCellOccupationReductionEndCount == upwardCellOccupationReductionEndGraphicsCount) {} // all tooth-tips marked with graphics
+		else {
+			isUpwardSawBladeRowTable = false;
+			System.out.println(" ==> too few fully occupied cells are actual rises, and too few rises are graphics enforced");
+		}
+		
+		//	if we have any graphics enforced gaps (with one tolerance for header/body split), they have to correspond to tooth-tips
+		if ((upwardCellOccupationReductionEndGraphicsCount + 1) < graphicsRowGapCount) {
+			isUpwardSawBladeRowTable = false;
+			System.out.println(" ==> only " + upwardCellOccupationReductionEndGraphicsCount + " of " + graphicsRowGapCount + " graphics row gaps correspond with tooth-tips");
+		}
+		
+		//	one tooth-tip doesn't make for a saw blade ...
+		if ((upwardCellOccupationReductionEndSpaceSum + 1) < graphicsRowGapCount) {
+			isUpwardSawBladeRowTable = false;
+			System.out.println(" ==> only " + upwardCellOccupationReductionEndGraphicsCount + " of " + graphicsRowGapCount + " graphics row gaps correspond with tooth-tips");
+		}
+		
+		//	what do we have?
+		//	TODOne TEST avoid false positive in multi-page table at end of TableTest/zt03652p155.pdf.clean.imf
+		System.out.println("Upward saw blade is " + isUpwardSawBladeRowTable);
+		System.out.println("Upward saw blade cell occupation drop count is " + upwardCellOccupationReductionCount);
+		System.out.println("Upward saw blade cell occupation drop sum is " + upwardCellOccupationReductionSum);
+		System.out.println("Upward saw blade tooth-tip count is " + upwardCellOccupationReductionEndCount);
+		System.out.println("Upward saw blade pre-tooth-tip gap sum is " + upwardCellOccupationReductionEndSpaceSum);
+		System.out.println("Upward saw blade pre-tooth-tip gap difference sum is " + upwardCellOccupationReductionEndSpaceDiffSum);
+		System.out.println("Upward saw blade pre-tooth-tip graphics count is " + upwardCellOccupationReductionEndGraphicsCount);
+		
+		//	anything to actually do?
+		if (!isDownwardSawBladeRowTable && !isUpwardSawBladeRowTable)
+			return;
+		
+		//	we have a saw blade both ways, check relative row distances
+		if (isDownwardSawBladeRowTable && isUpwardSawBladeRowTable) {
+			System.out.println("Breaking tie of saw blade patterns in row occupation");
+			if (Math.max(upwardCellOccupationReductionEndSpaceDiffSum, 0) < downwardCellOccupationReductionEndSpaceDiffSum) {
+				isUpwardSawBladeRowTable = false;
+				System.out.println(" ==> downward saw blade has higher row gap gain of " + downwardCellOccupationReductionEndSpaceDiffSum + " vs. " + upwardCellOccupationReductionEndSpaceDiffSum);
+			}
+			else if (Math.max(downwardCellOccupationReductionEndSpaceDiffSum, 0) < upwardCellOccupationReductionEndSpaceDiffSum) {
+				isDownwardSawBladeRowTable = false;
+				System.out.println(" ==> upward saw blade has higher row gap gain of " + upwardCellOccupationReductionEndSpaceDiffSum + " vs. " + downwardCellOccupationReductionEndSpaceDiffSum);
+			}
+			else if (Math.max(upwardCellOccupationReductionEndSpaceSum, 0) < downwardCellOccupationReductionEndSpaceSum) {
+				isUpwardSawBladeRowTable = false;
+				System.out.println(" ==> downward saw blade has larger overall row gap of " + downwardCellOccupationReductionEndSpaceSum + " vs. " + upwardCellOccupationReductionEndSpaceSum);
+			}
+			else if (Math.max(downwardCellOccupationReductionEndSpaceSum, 0) < upwardCellOccupationReductionEndSpaceSum) {
+				isDownwardSawBladeRowTable = false;
+				System.out.println(" ==> upward saw blade has larger overall row gap of " + upwardCellOccupationReductionEndSpaceSum + " vs. " + downwardCellOccupationReductionEndSpaceSum);
+			}
+			else {
+				isUpwardSawBladeRowTable = false;
+				System.out.println(" ==> downward saw blade is more likely than upward saw blade");
+			}
+		}
+		
+		//	merge upward in downward saw blade pattern
+		if (isDownwardSawBladeRowTable) {
+			System.out.println("Applying downward saw blade pattern");
+			for (int r = 1; r < areaRows.length; r += 2) {
+				if (!areaRows[r].isEnforced && (areaRows[r+1].occupiedCellCount <= areaRows[r-1].occupiedCellCount))
+					areaRowMergeDirections[r+1] = 'U';
+			}
+		}
+		
+		//	merge downward in upward saw blade pattern
+		else if (isUpwardSawBladeRowTable) {
+			System.out.println("Applying upward saw blade pattern");
+			for (int r = 1; r < areaRows.length; r += 2) {
+				if (!areaRows[r].isEnforced && (areaRows[r-1].occupiedCellCount <= areaRows[r+1].occupiedCellCount))
+					areaRowMergeDirections[r-1] = 'D';
+			}
+		}
+	}
+	
+	private static char[] getAreaColumnMergers(TableAreaColumn[] areaCols, TableAreaRow[] areaRows, TableAreaCell[][] areaCells, int avgWordHeight) {
+		char[] areaColMergeDirections = new char[areaCols.length];
+		Arrays.fill(areaColMergeDirections, 'N'); // initialize to 'N' for 'none'
+		
+		//	assess individual columns
+		for (int c = 0; c < areaCols.length; c += 2) {
+			
+			//	merge left ignoring all other criteria if every populated cell is bridged to from left
+			if ((c != 0) && !areaCols[c - 1].isEnforced && isColumnFullyBridgedTo(areaCells, c, (c - 2))) {
+				areaColMergeDirections[c] = 'L';
+				continue;
+			}
+			
+			//	merge right ignoring all other criteria if every populated cell is bridged to from right
+			if (((c+2) < areaCols.length) && !areaCols[c + 1].isEnforced && isColumnFullyBridgedTo(areaCells, c, (c + 2))) {
+				areaColMergeDirections[c] = 'R';
+				continue;
+			}
+			
+			//	merge left ignoring all other criteria if every cell populated on either side is either bridged to or has an empty counterpart
+			if ((c != 0) && !areaCols[c - 1].isEnforced && isColumnGapFullyBridged(areaCells, (c - 2), c)) {
+				areaColMergeDirections[c] = 'L';
+				continue;
+			}
+			
+			//	merge right ignoring all other criteria if every cell populated on either side is either bridged to or has an empty counterpart
+			if (((c+2) < areaCols.length) && !areaCols[c + 1].isEnforced && isColumnGapFullyBridged(areaCells, c, (c + 2))) {
+				areaColMergeDirections[c] = 'R';
+				continue;
+			}
+			
+			//	merge to both sides if (a) column below completely empty and (b) _both_ adjacent cells empty
+			if ((areaCols[c].occupiedCellCount == 1) && (areaCols[c].minOccupiedCellRow <= 2)
+					&& (c != 0) && !areaCols[c - 1].isEnforced && (areaCells[c - 2][areaCols[c].minOccupiedCellRow].wordBounds == null)
+					&& ((c + 2) < areaCols.length) && !areaCols[c + 1].isEnforced && (areaCells[c + 2][areaCols[c].minOccupiedCellRow].wordBounds == null)) {
+				areaColMergeDirections[c] = 'X';
+				continue;
+			}
+			
+			//	do we have a sparse column TODO test thresholds, as well as separating 10
+			if (((areaRows.length < 10) ? 1 : 2) < areaCols[c].occupiedCellCount)
+				continue;
+			
+			//	test for leftward merger (gap has to be not enforced and less than average word height, as the latter is the absolute limit for the width of a regular space)
+			boolean mergeableLeftwrad = ((c != 0) && !areaCols[c - 1].isEnforced && (areaCols[c].leftColGap < avgWordHeight));
+			
+			//	test for rightward merger (gap has to be not enforced and less than average word height, as the latter is the absolute limit for the width of a regular space)
+			boolean mergeableRightward = (((c+2) < areaCols.length) && !areaCols[c + 1].isEnforced && (areaCols[c].rightColGap < avgWordHeight));
+			
+			//	no mergers for this column
+			if (!mergeableLeftwrad && !mergeableRightward)
+				continue;
+			
+			//	we can only merge leftward if (a) column on left is less sparse or (b) will merge leftward itself
+			mergeableLeftwrad = (mergeableLeftwrad && (
+					(areaCols[c].occupiedCellCount < areaCols[c-2].occupiedCellCount)
+					||
+					((areaCols[c].occupiedCellCount == areaCols[c-2].occupiedCellCount) && (areaColMergeDirections[c - 2] == 'L'))
+				));
+			
+			//	we can only merge rightward if (a) column on right is less sparse
+			mergeableRightward = (mergeableRightward &&
+					(areaCols[c].occupiedCellCount <= areaCols[c+2].occupiedCellCount)
+				);
+			
+			//	no mergers for this column after considering sparseness
+			if (!mergeableLeftwrad && !mergeableRightward)
+				continue;
+			
+			//	check cell compatibility
+			mergeableLeftwrad = (mergeableLeftwrad && areColumnCellsExtensionCompatibleWith(areaCells, c, (c - 2), avgWordHeight));
+			mergeableRightward = (mergeableRightward && areColumnCellsExtensionCompatibleWith(areaCells, c, (c + 2), avgWordHeight));
+			
+			//	no mergers for this column after considering cells
+			if (!mergeableLeftwrad && !mergeableRightward)
+				continue;
+			
+			//	this one is unambiguous
+			if (mergeableLeftwrad != mergeableRightward) {
+				if (mergeableLeftwrad)
+					areaColMergeDirections[c] = 'L';
+				else if (mergeableRightward)
+					areaColMergeDirections[c] = 'R';
+				continue;
+			}
+//			
+//			//	we have a clear spacial tendency (even with tolerance of 1 accounting for rounding errors)
+//			if (1 < Math.abs(areaCols[c].leftColGap - areaCols[c].rightColGap)) {
+//				areaColMergeDirections[c] = ((areaCols[c].leftColGap < areaCols[c].rightColGap) ? 'L' : 'R');
+//				continue;
+//			}
+			
+			//	measure distance between individual cells
+			int maxCellWordGapLeft = getMaxColumnCellWordGap(areaCells, c, (c - 2));
+			int maxCellWordGapRight = getMaxColumnCellWordGap(areaCells, c, (c + 2));
+			
+			//	we have a clear spacial tendency (even with tolerance of 1 accounting for rounding errors)
+			if (1 < Math.abs(maxCellWordGapLeft - maxCellWordGapRight)) {
+				areaColMergeDirections[c] = ((maxCellWordGapLeft < maxCellWordGapRight) ? 'L' : 'R');
+				continue;
+			}
+			
+			//	prefer merging left into left-merging column (longish leftward extensions that require merging rightward are rare)
+			if ((c != 0) && areaColMergeDirections[c-2] == 'L') {
+				areaColMergeDirections[c] = 'L';
+				continue;
+			}
+			
+			//	prefer merging left (longish leftward extensions that require merging rightward are rare)
+			areaColMergeDirections[c] = 'L';
 		}
 		
 		//	finally ...
+		return areaColMergeDirections;
+	}
+	
+	private static void assessAreaColumnProperties(TableAreaColumn[] areaCols, TableAreaRow[] areaRows, TableAreaCell[][] areaCells) {
+		for (int c = 0; c < areaCols.length; c += 2) {
+			
+			//	check upward and downward row gaps
+			areaCols[c].leftColGap = ((c == 0) ? Integer.MAX_VALUE : areaCols[c-1].getSpan());
+			areaCols[c].rightColGap = (((c+1) == areaCols.length) ? Integer.MAX_VALUE : areaCols[c+1].getSpan());
+			
+			//	count populated cells per row, as well as their column positions, and in-bridging 
+			for (int r = 0; r < areaRows.length; r += 2) {
+				
+				//	assess font properties
+				for (int w = 0; w < areaCells[c][r].words.length; w++) {
+					areaCols[c].wordCount++;
+					if (areaCells[c][r].words[w].hasAttribute(ImWord.BOLD_ATTRIBUTE))
+						areaCols[c].boldWordCount++;
+					if (areaCells[c][r].words[w].hasAttribute(ImWord.ITALICS_ATTRIBUTE))
+						areaCols[c].italicsWordCount++;
+					try {
+						int fontSize = areaCells[c][r].words[w].getFontSize();
+						areaCols[c].wordFontSizeCount++;
+						areaCols[c].wordFontSizeSum += fontSize;
+						areaCols[c].wordFontSizeMin = Math.min(areaCols[c].wordFontSizeMin, fontSize);
+						areaCols[c].wordFontSizeMax = Math.max(areaCols[c].wordFontSizeMax, fontSize);
+					} catch (Exception e) {}
+				}
+//				
+//				//	check for incoming bridging spacer cells
+//				if ((c != 0) && areaCells[c-1][r].isBridged)
+//					areaCols[c].bridgedLeftCount++;
+//				if (((c+1) != areaCols.length) && areaCells[c+1][r].isBridged)
+//					areaCols[c].bridgedRightCount++;
+				
+				//	check cell occupation
+				if (areaCells[c][r].wordBounds != null) { /* cell has content */ }
+				else if ((c != 0) && areaCells[c-1][r].isBridged) { /* bridged to from left */ }
+				else if (((c+1) != areaCols.length) && areaCells[c+1][r].isBridged) { /* bridged to from right */ }
+				else if ((r != 0) && areaCells[c][r-1].isBridged) { /* bridged to from above */ }
+				else if (((r+1) != areaRows.length) && areaCells[c][r+1].isBridged) { /* bridged to from below */ }
+				else continue; // empty cell with no bridging neighbors at all, no use counting
+				
+				//	count occupied (or bridged to) cell
+				areaCols[c].occupiedCellCount++;
+				areaCols[c].minOccupiedCellRow = Math.min(areaCols[c].minOccupiedCellRow, r);
+				areaCols[c].maxOccupiedCellRow = Math.max(areaCols[c].maxOccupiedCellRow, r);
+				if ((r == 0) || !areaCells[c][r-1].isBridged)
+					areaCols[c].disjointOccupiedCellCount++; // not bridged to from above, count (starting streak of) disjoint populated cell(s)
+			}
+		}
+	}
+	
+	private static class TableAreaRow extends TableAreaSlice {
+		int aboveRowGap = -1;
+		int belowRowGap = -1;
+//		
+//		int bridgedAboveCount = 0;
+//		int bridgedBelowCount = 0;
+		
+		int occupiedCellCount = 0;
+		int disjointOccupiedCellCount = 0;
+		int minOccupiedCellCol = Integer.MAX_VALUE;
+		int maxOccupiedCellCol = Integer.MIN_VALUE;
+		
+		TableAreaRow(boolean isSpace, int min, int max) {
+			super(isSpace, min, max);
+		}
+		TableAreaRow(boolean isSpace, int min, int max, boolean isEnforced) {
+			super(isSpace, min, max, isEnforced);
+		}
+	}
+	
+	private static void assessAreaRowProperties(TableAreaColumn[] areaCols, TableAreaRow[] areaRows, TableAreaCell[][] areaCells) {
+		for (int r = 0; r < areaRows.length; r += 2) {
+			
+			//	check upward and downward row gaps
+			areaRows[r].aboveRowGap = ((r == 0) ? Integer.MAX_VALUE : areaRows[r-1].getSpan());
+			areaRows[r].belowRowGap = (((r+1) == areaRows.length) ? Integer.MAX_VALUE : areaRows[r+1].getSpan());
+			
+			//	count populated cells per row, as well as their column positions, and in-bridging 
+			for (int c = 0; c < areaCols.length; c += 2) {
+				
+				//	assess font properties
+				for (int w = 0; w < areaCells[c][r].words.length; w++) {
+					areaRows[r].wordCount++;
+					if (areaCells[c][r].words[w].hasAttribute(ImWord.BOLD_ATTRIBUTE))
+						areaRows[r].boldWordCount++;
+					if (areaCells[c][r].words[w].hasAttribute(ImWord.ITALICS_ATTRIBUTE))
+						areaRows[r].italicsWordCount++;
+					try {
+						int fontSize = areaCells[c][r].words[w].getFontSize();
+						areaRows[r].wordFontSizeCount++;
+						areaRows[r].wordFontSizeSum += fontSize;
+						areaRows[r].wordFontSizeMin = Math.min(areaRows[r].wordFontSizeMin, fontSize);
+						areaRows[r].wordFontSizeMax = Math.max(areaRows[r].wordFontSizeMax, fontSize);
+					} catch (Exception e) {}
+				}
+//				
+//				//	check for incoming bridging spacer cells
+//				if ((r != 0) && areaCells[c][r-1].isBridged)
+//					areaRows[r].bridgedAboveCount++;
+//				if (((r+1) != areaRows.length) && areaCells[c][r+1].isBridged)
+//					areaRows[r].bridgedBelowCount++;
+				
+				//	check cell occupation
+				if (areaCells[c][r].wordBounds != null) { /* cell has content */ }
+				else if ((c != 0) && areaCells[c-1][r].isBridged) { /* bridged to from left */ }
+				else if (((c+1) != areaCols.length) && areaCells[c+1][r].isBridged) { /* bridged to from right */ }
+				else if ((r != 0) && areaCells[c][r-1].isBridged) { /* bridged to from above */ }
+				else if (((r+1) != areaRows.length) && areaCells[c][r+1].isBridged) { /* bridged to from below */ }
+				else continue; // empty cell with no bridging neighbors at all, no use counting
+				
+				//	count occupied (or bridged to) cell
+				areaRows[r].occupiedCellCount++;
+				areaRows[r].minOccupiedCellCol = Math.min(areaRows[r].minOccupiedCellCol, c);
+				areaRows[r].maxOccupiedCellCol = Math.max(areaRows[r].maxOccupiedCellCol, c);
+				if ((c == 0) || !areaCells[c-1][r].isBridged)
+					areaRows[r].disjointOccupiedCellCount++; // not bridged to from left, count (starting streak of) disjoint populated cell(s)
+			}
+		}
+	}
+	
+	//	factor in vertical distance between words in individual cells populated in both rows ...
+	//	... and refuse merger if _average_ distance larger than normal (to prevent erroneous row mergers due to a single line wrapped cell)
+	//	TEST: Table 2 (Pages 4-6) in Zootaxa/zootaxa.4372.2.6.pdf.imf
+	private static boolean isRowGapMergeable(int rg, TableAreaRow[] areaRows, TableAreaCell[][] areaCells, int minNonMergeRowMargin) {
+		
+		//	no need to investigate this one any further
+		if (areaRows[rg].isEnforced)
+			return false;
+		
+		//	more than 90% of non-merge threshold
+		if ((minNonMergeRowMargin * 9) <= (areaRows[rg].getSpan() * 10))
+			return false;
+		
+		//	within rounding error of non-merge threshold
+		if (minNonMergeRowMargin <= (areaRows[rg].getSpan() + 1))
+			return false;
+		
+		//	compute cell-by-cell average margin and cell-by-cell weighted mergin
+		int cellWordDistCount = 0;
+		int cellWordDistSum = 0;
+		int cellWordDistWidthSum = 0;
+		int cellWordDistAreaSum = 0;
+		for (int c = 0; c < areaCells.length; c += 2) {
+			if (areaCells[c][rg - 1].wordBounds == null)
+				continue;
+			if (areaCells[c][rg + 1].wordBounds == null)
+				continue;
+			int cellWordDist = (areaCells[c][rg + 1].wordBounds.top - areaCells[c][rg - 1].wordBounds.bottom);
+			cellWordDistCount++;
+			cellWordDistSum += cellWordDist;
+			int cellWordDistWidth = Math.max(areaCells[c][rg - 1].wordBounds.getWidth(), areaCells[c][rg + 1].wordBounds.getWidth());
+			cellWordDistWidthSum += cellWordDistWidth;
+			cellWordDistAreaSum += (cellWordDist * cellWordDistWidth);
+		}
+		int avgCellWordDist = ((cellWordDistCount == 0) ? 0 : ((cellWordDistSum + (cellWordDistCount / 2)) / cellWordDistCount));
+		int avgCellWordDistByWidth = ((cellWordDistWidthSum == 0) ? 0 : ((cellWordDistAreaSum + (cellWordDistWidthSum / 2)) / cellWordDistWidthSum));
+		
+		//	cell-by-cell average distance more than 90% of non-merge threshold
+		if ((minNonMergeRowMargin * 9) <= (avgCellWordDist * 10))
+			return false;
+		
+		//	cell-by-cell average distance within rounding error of non-merge threshold
+		if (minNonMergeRowMargin <= (avgCellWordDist + 1))
+			return false;
+		
+		//	weighted cell-by-cell average distance more than 90% of non-merge threshold
+		if ((minNonMergeRowMargin * 9) <= (avgCellWordDistByWidth * 10))
+			return false;
+		
+		//	weighted cell-by-cell average distance within rounding error of non-merge threshold
+		if (minNonMergeRowMargin <= (avgCellWordDistByWidth + 1))
+			return false;
+		
+		//	this gap looks good for merging over
 		return true;
+	}
+	
+	private static class TableAreaCell {
+		final boolean isSpace;
+		final TableAreaColumn col;
+		final TableAreaRow row;
+		
+		ImWord[] words;
+		BoundingBox wordBounds;
+		String mainTextDirection;
+		
+		boolean isBridged = false;
+		
+		TableAreaCell(TableAreaColumn col, TableAreaRow row) {
+			this.col = col;
+			this.row = row;
+			this.isSpace = (this.col.isSpace || this.row.isSpace);
+		}
+		
+		void updateWords(ImWord[] tableWords) {
+			ArrayList words = new ArrayList();
+			int lrWords = 0;
+			int buWords = 0;
+			int tdWords = 0;
+			for (int w = 0; w < tableWords.length; w++) {
+				if (tableWords[w].bounds.right <= this.col.min)
+					continue;
+				if (this.col.max <= tableWords[w].bounds.left)
+					continue;
+				if (tableWords[w].bounds.bottom <= this.row.min)
+					continue;
+				if (this.row.max <= tableWords[w].bounds.top)
+					continue;
+				
+				words.add(tableWords[w]);
+				
+				String wordDirection = ((String) (tableWords[w].getAttribute(ImWord.TEXT_DIRECTION_ATTRIBUTE, ImWord.TEXT_DIRECTION_LEFT_RIGHT)));
+				if (ImWord.TEXT_DIRECTION_BOTTOM_UP.equals(wordDirection))
+					buWords++;
+				else if (ImWord.TEXT_DIRECTION_TOP_DOWN.equals(wordDirection))
+					tdWords++;
+				else lrWords++;
+			}
+			this.words = ((ImWord[]) words.toArray(new ImWord[words.size()]));
+			this.wordBounds = ((this.words.length == 0) ? null : ImLayoutObject.getAggregateBox(this.words));
+			if (this.wordBounds == null)
+				this.mainTextDirection = ImWord.TEXT_DIRECTION_LEFT_RIGHT;
+			else if ((lrWords < buWords) && (tdWords < buWords))
+				this.mainTextDirection = ImWord.TEXT_DIRECTION_BOTTOM_UP;
+			else if ((lrWords < tdWords) && (buWords < tdWords))
+				this.mainTextDirection = ImWord.TEXT_DIRECTION_TOP_DOWN;
+			else this.mainTextDirection = ImWord.TEXT_DIRECTION_LEFT_RIGHT;
+			this.isBridged = (this.isBridged || (this.isSpace && (this.wordBounds != null)));
+		}
+	}
+	
+	private static boolean isColumnFullyBridgedTo(TableAreaCell[][] colCells, int extendColIndex, int mainColIndex) {
+		for (int r = 0; r < colCells[mainColIndex].length; r += 2) {
+			if (colCells[extendColIndex][r].wordBounds == null)
+				continue; // no use requiring bridge to empty cell
+			if (colCells[mainColIndex][r].wordBounds == null)
+				return false; // empty cells don't bridge
+			if (!colCells[(extendColIndex + mainColIndex) / 2][r].isBridged)
+				return false; // not bridged
+		}
+		return true; // no counter indications found here
+	}
+	
+	private static boolean isColumnGapFullyBridged(TableAreaCell[][] colCells, int leftColIndex, int rightColIndex) {
+		boolean gotBridgedCell = false;
+		for (int r = 0; r < colCells[leftColIndex].length; r += 2) {
+			if (colCells[leftColIndex][r].wordBounds == null)
+				continue; // no use requiring bridge to empty cell
+			if (colCells[rightColIndex][r].wordBounds == null)
+				continue; // no use requiring bridge to empty cell
+			if (colCells[(leftColIndex + rightColIndex) / 2][r].isBridged)
+				gotBridgedCell = true;
+			else return false; // not bridged
+		}
+		return gotBridgedCell; // no counter indications found here
+	}
+	
+	private static boolean areColumnCellsExtensionCompatibleWith(TableAreaCell[][] colCells, int extendColIndex, int mainColIndex, int avgWordHeight) {
+		for (int r = 0; r < colCells[mainColIndex].length; r += 2) {
+			if ((r != 0) && colCells[extendColIndex][r-1].isBridged && !colCells[mainColIndex][r-1].isBridged)
+				return false; // extension columns don't bridge row gaps open in columns they extend
+			if (colCells[extendColIndex][r].wordBounds == null)
+				continue; // no use investigating empty cell
+			if (colCells[mainColIndex][r].wordBounds == null)
+				return false; // empty cells don't extend
+			if (!colCells[extendColIndex][r].mainTextDirection.equals(colCells[mainColIndex][r].mainTextDirection))
+				return false; // predominant text orientation has to match
+			int cellWordGap = ((extendColIndex < mainColIndex) ? (colCells[mainColIndex][r].wordBounds.left - colCells[extendColIndex][r].wordBounds.right) : (colCells[extendColIndex][r].wordBounds.left - colCells[mainColIndex][r].wordBounds.right));
+			if (avgWordHeight <= cellWordGap)
+				return false; // extending cells have to be close to actual cells
+		}
+		return true; // no counter indications found here
+	}
+	
+	private static int getMaxColumnCellWordGap(TableAreaCell[][] colCells, int extendColIndex, int mainColIndex) {
+		int maxCellWordGap = -1;
+		for (int r = 0; r < colCells[mainColIndex].length; r += 2) {
+			if ((colCells[extendColIndex][r].wordBounds == null) || (colCells[mainColIndex][r].wordBounds == null))
+				continue; // we can only measure gap between two populated cells
+			int cellWordGap = ((extendColIndex < mainColIndex) ? (colCells[mainColIndex][r].wordBounds.left - colCells[extendColIndex][r].wordBounds.right) : (colCells[extendColIndex][r].wordBounds.left - colCells[mainColIndex][r].wordBounds.right));
+			maxCellWordGap = Math.max(maxCellWordGap, cellWordGap);
+		}
+		return maxCellWordGap;
+	}
+	
+	private static boolean isRowGapFullyBridged(TableAreaCell[][] rowCells, int overflowRowIndex, int dataRowIndex) {
+		for (int c = 0; c < rowCells.length; c += 2) {
+			if (rowCells[c][overflowRowIndex].wordBounds == null)
+				continue; // no use requiring bridge to empty cell
+			if (rowCells[c][dataRowIndex].wordBounds == null)
+				return false; // empty cells don't bridge
+			if (!rowCells[c][(overflowRowIndex + dataRowIndex) / 2].isBridged)
+				return false; // not bridged
+		}
+		return true; // no counter indications found here
+	}
+	
+	private static boolean areRowCellsOverflowCompatibleWith(TableAreaCell[][] rowCells, int overflowRowIndex, int dataRowIndex, boolean checkInCellWords) {
+		for (int c = 0; c < rowCells.length; c += 2) {
+			if ((c != 0) && rowCells[c-1][overflowRowIndex].isBridged && !rowCells[c-1][dataRowIndex].isBridged)
+				return false; // overflow rows don't bridge column gaps open in data rows they extend
+			if (rowCells[c][overflowRowIndex].wordBounds == null)
+				continue; // no use investigating empty cell
+			if (rowCells[c][dataRowIndex].wordBounds == null)
+				return false; // empty cells don't cause any overflow
+			if (!rowCells[c][overflowRowIndex].mainTextDirection.equals(rowCells[c][dataRowIndex].mainTextDirection))
+				return false; // predominant text orientation has to match
+			if (checkInCellWords) {
+				int topWordWidth = rowCells[c][Math.min(dataRowIndex, overflowRowIndex)].wordBounds.getWidth();
+				int bottomWordWidth = rowCells[c][Math.max(dataRowIndex, overflowRowIndex)].wordBounds.getWidth();
+				if ((topWordWidth * 3) < (bottomWordWidth * 2))
+					return false; // words in top cell far shorter than in bottom cell (we still read top-down ...)
+			}
+		}
+		return true; // no counter indications found here
+	}
+	
+	private static int getMaxRowCellWordGap(TableAreaCell[][] rowCells, int overflowRowIndex, int dataRowIndex) {
+		int maxCellWordGap = -1;
+		for (int c = 0; c < rowCells.length; c += 2) {
+			if ((rowCells[c][overflowRowIndex].wordBounds == null) || (rowCells[c][dataRowIndex].wordBounds == null))
+				continue; // we can only measure gap between two populated cells
+			int cellWordGap = ((overflowRowIndex < dataRowIndex) ? (rowCells[c][dataRowIndex].wordBounds.top - rowCells[c][overflowRowIndex].wordBounds.bottom) : (rowCells[c][overflowRowIndex].wordBounds.top - rowCells[c][dataRowIndex].wordBounds.bottom));
+			maxCellWordGap = Math.max(maxCellWordGap, cellWordGap);
+		}
+		return maxCellWordGap;
+	}
+	
+	private static boolean isFullGrid(TreeSet colOccupationLows, TreeSet rowOccupationGaps) {
+		
+		//	check column gaps
+		int blockedColCount = 0;
+		for (Iterator colit = colOccupationLows.iterator(); colit.hasNext();) {
+			ColumnOccupationLow col = ((ColumnOccupationLow) colit.next());
+			if (col.isBlockedByGraphics())
+				blockedColCount++;
+		}
+		
+		//	require two thirds of column gaps to be blocked by graphics, and more than 1
+		if (blockedColCount < 2)
+			return false;
+		if ((blockedColCount * 3) < (colOccupationLows.size() * 2))
+			return false;
+		
+		//	check row gaps
+		int blockedRogCount = 0;
+		for (Iterator rogit = rowOccupationGaps.iterator(); rogit.hasNext();) {
+			RowOccupationGap rog = ((RowOccupationGap) rogit.next());
+			if (rog.isBlockedByGraphics())
+				blockedRogCount++;
+		}
+		
+		//	require two thirds of row gaps to be blocked by graphics, and more than 1
+		if (blockedRogCount < 2)
+			return false;
+		if ((blockedRogCount * 3) < (rowOccupationGaps.size() * 2))
+			return false;
+		
+		//	this one looks good
+		return true;
+	}
+	
+	//	TODO remove this method, does nothing but call some constructor
+	private ImRegion markTableCell(ImPage page, BoundingBox bounds, boolean shrinkLeftRight, boolean shrinkTopBottom) {
+//		//	TODOne DO NOT SHRINK !!!
+//		//	TODOne TEST WITHOUT SHRINKING !!! ==> TODOne only need to shrink _columns_ before marking cells
+//		if (shrinkLeftRight || shrinkTopBottom) {
+//			ImWord[] tableCellWords = page.getWordsInside(bounds);
+//			if (tableCellWords.length != 0) {
+//				BoundingBox wordBounds = ImLayoutObject.getAggregateBox(tableCellWords);
+//				bounds = new BoundingBox(
+//					(shrinkLeftRight ? Math.max(bounds.left, wordBounds.left) : bounds.left),
+//					(shrinkLeftRight ? Math.min(bounds.right, wordBounds.right) : bounds.right),
+//					(shrinkTopBottom ? Math.max(bounds.top, wordBounds.top) : bounds.top),
+//					(shrinkTopBottom ? Math.min(bounds.bottom, wordBounds.bottom) : bounds.bottom)
+//				);
+//			}
+//		}
+		return new ImRegion(page, bounds, ImRegion.TABLE_CELL_TYPE);
 	}
 	
 	private ImRegion[][] markTableCells(ImPage page, ImRegion table) {
@@ -1783,60 +5035,274 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return cells;
 	}
 	
+	private boolean mergeTables(ImPage page, ImRegion[] selTables, ImDocumentMarkupPanel idmp) {
+		
+		//	get aggregate bounds
+		BoundingBox mTableBox = ImLayoutObject.getAggregateBox(selTables);
+		
+		//	get words
+		ImWord[] mTableWords = page.getWordsInside(mTableBox);
+		
+		//	compute statistics for merged table area
+		TableAreaStatistics mTableBoxStats = TableAreaStatistics.getTableAreaStatistics(page, mTableWords);
+		
+		//	compute merged table markup, considering existing gaps
+		TableAreaMarkup mTableMarkup = this.getTableMarkup(page, mTableWords, selTables, mTableBox, mTableBoxStats);
+		
+		//	check if merger makes sense
+		if (mTableMarkup.rows.length < 3) {
+			DialogFactory.alert("The selected tables cannot be merged because the result does not split into rows.", "Cannot Merge Tables", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		if (mTableMarkup.cols.length < 2) {
+			DialogFactory.alert("The selected tables cannot be merged because the result does not split into columns.", "Cannot Merge Tables", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		//	finish markup
+		return this.finishMarkTable(page, mTableBox, mTableWords, mTableMarkup, selTables, idmp);
+	}
+	
+	private boolean extendTable(ImPage page, ImRegion selTable, ImWord[] selNonTableWords, ImDocumentMarkupPanel idmp) {
+		
+		//	prepare marking table in convex hull of selected tables
+		BoundingBox extWordsBox = ImLayoutObject.getAggregateBox(selNonTableWords);
+		BoundingBox extTableBox = new BoundingBox(
+				Math.min(extWordsBox.left, selTable.bounds.left),
+				Math.max(extWordsBox.right, selTable.bounds.right),
+				Math.min(extWordsBox.top, selTable.bounds.top),
+				Math.max(extWordsBox.bottom, selTable.bounds.bottom)
+			);
+		
+		//	get words
+		ImWord[] extTableWords = page.getWordsInside(extTableBox);
+		
+		//	get statistics for extended table area
+		TableAreaStatistics extTableBoxStats = TableAreaStatistics.getTableAreaStatistics(page, extTableWords);
+		
+		//	compute merged table markup, considering existing gaps
+		ImRegion[] selTables = {selTable};
+		TableAreaMarkup extTableMarkup = this.getTableMarkup(page, extTableWords, selTables, extTableBox, extTableBoxStats);
+		
+		//	get rows and columns of extended table
+		if (extTableMarkup.rows.length < 3) {
+			DialogFactory.alert("The table cannot be extended because the extension does not split into rows.", "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		if (extTableMarkup.cols.length < 2) {
+			DialogFactory.alert("The table cannot be extended because the extension does not split into columns.", "Cannot Extend Table", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+		
+		//	finish markup
+		return this.finishMarkTable(page, extTableBox, extTableWords, extTableMarkup, selTables, idmp);
+	}
+	
+	private boolean finishMarkTable(ImPage page, BoundingBox tableBox, ImWord[] tableWords, TableAreaMarkup tableMarkup, ImRegion[] exTables, ImDocumentMarkupPanel idmp) {
+		
+		//	clear table area (there might be overlapping blocks)
+		this.clearTableArea(page, tableBox, tableWords);
+		
+		//	diff merged table markup
+		if (exTables != null) {
+			for (int t = 0; t < exTables.length; t++)
+				tableMarkup = this.diffTableMarkup(tableMarkup, exTables[t]);
+		}
+		
+		//	remove existing tables
+		if (exTables != null)
+			for (int t = 0; t < exTables.length; t++) {
+				ImRegion[] selTableCells = getRegionsInside(page, exTables[t].bounds, ImRegion.TABLE_CELL_TYPE, true);
+				for (int c = 0; c < selTableCells.length; c++)
+					page.removeRegion(selTableCells[c]);
+				ImRegion[] selTableRows = getRegionsInside(page, exTables[t].bounds, ImRegion.TABLE_ROW_TYPE, true);
+				for (int r = 0; r < selTableRows.length; r++)
+					page.removeRegion(selTableRows[r]);
+				ImRegion[] selTableCols = getRegionsInside(page, exTables[t].bounds, ImRegion.TABLE_COL_TYPE, true);
+				for (int c = 0; c < selTableCols.length; c++)
+					page.removeRegion(selTableCols[c]);
+				exTables[t].setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away
+				page.removeRegion(exTables[t]);
+			}
+		
+		//	add merged table markup
+		this.addTableMarkup(tableMarkup);
+		
+		//	put words in correct order
+		ImUtils.makeStream(tableWords, ImWord.TEXT_STREAM_TYPE_TABLE, null);
+		ImUtils.orderTableWords(this.markTableCells(page, tableMarkup.table));
+		this.cleanupTableAnnotations(page.getDocument(), tableMarkup.table);
+		
+		//	TODO test gap preservation (doesn't seen to work in all cases yet, especially for row gaps)
+		
+		//	show regions in invoker
+		if (idmp != null) {
+			idmp.setRegionsPainted(ImRegion.TABLE_TYPE, true);
+			idmp.setRegionsPainted(ImRegion.TABLE_ROW_TYPE, true);
+			idmp.setRegionsPainted(ImRegion.TABLE_COL_TYPE, true);
+			idmp.setRegionsPainted(ImRegion.TABLE_CELL_TYPE, true);
+		}
+		
+		//	indicate changes
+		return true;
+	}
+	
 	private boolean cutTable(ImPage page, ImRegion table, BoundingBox cutTableBox, BoundingBox cutOffTableBox, String cutOffTextStreamType, ImDocumentMarkupPanel idmp) {
 		
 		//	compute new table bounds
 		ImWord[] cTableWords = page.getWordsInside(cutTableBox);
 		BoundingBox cTableBox = ImLayoutObject.getAggregateBox(cTableWords);
 		
-		//	salvage rows and columns
-		ImRegion[] tableRows = getRegionsInside(page, cTableBox, ImRegion.TABLE_ROW_TYPE, true);
-		for (int r = 0; r < tableRows.length; r++)
-			page.removeRegion(tableRows[r]);
-		ImRegion[] tableCols = getRegionsInside(page, cTableBox, ImRegion.TABLE_COL_TYPE, true);
-		for (int c = 0; c < tableCols.length; c++)
-			page.removeRegion(tableCols[c]);
+		//	get existing columns and rows
+		ImRegion[] cols = getRegionsOverlapping(page, table.bounds, ImRegion.TABLE_COL_TYPE);
+		ImRegion[] rows = getRegionsOverlapping(page, table.bounds, ImRegion.TABLE_ROW_TYPE);
 		
-		//	remove old table, and clean up words
+		//	cut existing columns to new table bounds, and remove spurious ones
+		ArrayList cTableColList = new ArrayList();
+		for (int c = 0; c < cols.length; c++) {
+			if (cTableBox.overlaps(cols[c].bounds))
+				cTableColList.add(new ImRegion(page.getDocument(), page.pageId, new BoundingBox(
+					Math.max(cTableBox.left, cols[c].bounds.left),
+					Math.min(cTableBox.right, cols[c].bounds.right),
+					cTableBox.top,
+					cTableBox.bottom
+				), ImRegion.TABLE_COL_TYPE));
+			else page.removeRegion(cols[c]);
+		}
+		ImRegion[] cTableCols = ((ImRegion[]) cTableColList.toArray(new ImRegion[cTableColList.size()]));
+		
+		//	cut existing rows to new table bounds
+		ArrayList cTableRowList = new ArrayList();
+		for (int r = 0; r < rows.length; r++) {
+			if (cTableBox.overlaps(rows[r].bounds))
+				cTableRowList.add(new ImRegion(page.getDocument(), page.pageId, new BoundingBox(
+					cTableBox.left,
+					cTableBox.right,
+					Math.max(cTableBox.top, rows[r].bounds.top),
+					Math.min(cTableBox.bottom, rows[r].bounds.bottom)
+				), ImRegion.TABLE_ROW_TYPE));
+			else page.removeRegion(rows[r]);
+		}
+		ImRegion[] cTableRows = ((ImRegion[]) cTableRowList.toArray(new ImRegion[cTableRowList.size()]));
+		
+		//	generate cells (naively as intersections of cur columns and rows)
+		ImRegion[][] cTableCells = new ImRegion[cTableCols.length][cTableRows.length];
+		for (int c = 0; c < cTableCols.length; c++) {
+			for (int r = 0; r < cTableRows.length; r++)
+				cTableCells[c][r] = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(
+					cTableCols[c].bounds.left,
+					cTableCols[c].bounds.right,
+					cTableRows[r].bounds.top,
+					cTableRows[r].bounds.bottom
+				), ImRegion.TABLE_CELL_TYPE);
+		}
+		
+		//	mark cut table (we need that for diffing)
+		ImRegion cTable = new ImRegion(page.getDocument(), page.pageId, cTableBox, ImRegion.TABLE_TYPE);
+		
+		//	diff table markup (salvages merged cells)
+		TableAreaMarkup cTableMarkup = new TableAreaMarkup(page, cTableWords, cTable, cTableCols, cTableRows, cTableCells);
+		cTableMarkup = this.diffTableMarkup(cTableMarkup, table);
+		
+		//	keep track of whether or not we'll have to repeat the whole procedure
+		boolean columnOrRowReduced = false;
+		
+		//	shrink cut columns to words in cells not protruding beyond respective column boundary
+		for (int c = 0; c < cTableCols.length; c++) {
+			int colWordLeft = cTableCols[c].bounds.right;
+			int colWordRight = cTableCols[c].bounds.left;
+			for (int r = 0; r < cTableRows.length; r++) {
+				ImWord[] cellWords = page.getWordsInside(cTableMarkup.cells[c][r].bounds);
+				if (cellWords.length == 0)
+					continue;
+				BoundingBox cellWordBounds = ImLayoutObject.getAggregateBox(cellWords);
+				if ((c == 0) || (cTableMarkup.cells[c - 1][r] != cTableMarkup.cells[c][r]))
+					colWordLeft = Math.min(colWordLeft, cellWordBounds.left);
+				if (((c + 1) == cTableCols.length) || (cTableMarkup.cells[c + 1][r] != cTableMarkup.cells[c][r]))
+					colWordRight = Math.max(colWordRight, cellWordBounds.right);
+			}
+			if ((colWordLeft < colWordRight) && ((cTableCols[c].bounds.left < colWordLeft) || (colWordRight < cTableCols[c].bounds.right))) {
+				cTableCols[c] = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(
+					colWordLeft,
+					colWordRight,
+					cTableBox.top,
+					cTableBox.bottom
+				), ImRegion.TABLE_COL_TYPE); 
+				columnOrRowReduced = true;
+			}
+		}
+		
+		//	shrink cut rows to words in cells not protruding beyond respective row boundary
+		for (int r = 0; r < cTableRows.length; r++) {
+			int rowWordTop = cTableRows[r].bounds.bottom;
+			int rowWordBottom = cTableRows[r].bounds.top;
+			for (int c = 0; c < cTableCols.length; c++) {
+				ImWord[] cellWords = page.getWordsInside(cTableMarkup.cells[c][r].bounds);
+				if (cellWords.length == 0)
+					continue;
+				BoundingBox cellWordBounds = ImLayoutObject.getAggregateBox(cellWords);
+				if ((r == 0) || (cTableMarkup.cells[c][r - 1] != cTableMarkup.cells[c][r]))
+					rowWordTop = Math.min(rowWordTop, cellWordBounds.top);
+				if (((r + 1) == cTableRows.length) || (cTableMarkup.cells[c][r + 1] != cTableMarkup.cells[c][r]))
+					rowWordBottom = Math.max(rowWordBottom, cellWordBounds.bottom);
+			}
+			if ((rowWordTop < rowWordBottom) && ((cTableRows[r].bounds.top < rowWordTop) || (rowWordBottom < cTableRows[r].bounds.bottom))) {
+				cTableRows[r] = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(
+					cTableBox.left,
+					cTableBox.right,
+					rowWordTop,
+					rowWordBottom
+				), ImRegion.TABLE_ROW_TYPE); 
+				columnOrRowReduced = true;
+			}
+		}
+		
+		//	if we did shrink something, we need to repeat the whole hassle
+		if (columnOrRowReduced) {
+			
+			//	re-generate cells (naively as intersections)
+			for (int c = 0; c < cTableCols.length; c++) {
+				for (int r = 0; r < cTableRows.length; r++)
+					cTableCells[c][r] = new ImRegion(page.getDocument(), page.pageId, new BoundingBox(
+						cTableCols[c].bounds.left,
+						cTableCols[c].bounds.right,
+						cTableRows[r].bounds.top,
+						cTableRows[r].bounds.bottom
+					), ImRegion.TABLE_CELL_TYPE);
+			}
+			
+			
+			//	re-diff table markup (re-salvages merged cells)
+			cTableMarkup = this.diffTableMarkup(cTableMarkup, table);
+		}
+		
+		//	clean up old cells not overlapping with new table bounds (columns and rows are cleaned up above)
+		ImRegion[] cells = getRegionsOverlapping(page, table.bounds, ImRegion.TABLE_CELL_TYPE);
+		for (int c = 0; c < cells.length; c++) {
+			if (!cTableBox.overlaps(cells[c].bounds))
+				page.removeRegion(cells[c]);
+		}
+		
+		//	remove old table
 		table.setAttribute("ignoreWordCleanup"); // save the hassle, we're marking another table right away, and take care of the leftovers ourselves
 		page.removeRegion(table);
 		
-		//	add rows and columns that lie in new table, maybe shrinking them
-		for (int r = 0; r < tableRows.length; r++) {
-			if (!tableRows[r].bounds.liesIn(cTableBox, true))
-				continue;
-			BoundingBox cTableRowBox = new BoundingBox(
-					Math.max(cTableBox.left, tableRows[r].bounds.left),
-					Math.min(cTableBox.right, tableRows[r].bounds.right),
-					Math.max(cTableBox.top, tableRows[r].bounds.top),
-					Math.min(cTableBox.bottom, tableRows[r].bounds.bottom)
-				);
-			tableRows[r] = new ImRegion(page, ImLayoutObject.getAggregateBox(page.getWordsInside(cTableRowBox)), ImRegion.TABLE_ROW_TYPE);
-		}
-		for (int c = 0; c < tableCols.length; c++) {
-			if (!tableCols[c].bounds.liesIn(cTableBox, true))
-				continue;
-			BoundingBox cTableColBox = new BoundingBox(
-					Math.max(cTableBox.left, tableCols[c].bounds.left),
-					Math.min(cTableBox.right, tableCols[c].bounds.right),
-					Math.max(cTableBox.top, tableCols[c].bounds.top),
-					Math.min(cTableBox.bottom, tableCols[c].bounds.bottom)
-				);
-			tableCols[c] = new ImRegion(page, ImLayoutObject.getAggregateBox(page.getWordsInside(cTableColBox)), ImRegion.TABLE_COL_TYPE);
-		}
-		
-		//	mark table (will use existing rows and columns)
-		markTable(page, cTableWords, cTableBox, idmp);
-		
 		//	enclose cut-off words in block
 		ImWord[] coTableWords = page.getWordsInside(cutOffTableBox);
+		if (cutOffTextStreamType != null)
+			ImUtils.makeStream(coTableWords, cutOffTextStreamType, null);
 		ImUtils.orderStream(coTableWords, ImUtils.leftRightTopDownOrder);
 		Arrays.sort(coTableWords, ImUtils.textStreamOrder);
-		if ((coTableWords[0].getPreviousWord() == null) && (cutOffTextStreamType != null))
-			coTableWords[0].setTextStreamType(cutOffTextStreamType);
 		this.regionActionProvider.markBlock(page, ImLayoutObject.getAggregateBox(coTableWords));
 		
-		//	finally ...
+		//	add new markup (will recycle or clean up old regions that overlap with new table)
+		this.addTableMarkup(cTableMarkup);
+		
+		//	put words in correct order
+		ImUtils.orderTableWords(this.markTableCells(page, cTableMarkup.table));
+		cleanupTableAnnotations(page.getDocument(), cTableMarkup.table);
+		
+		//	indicate change
 		return true;
 	}
 	
@@ -1856,7 +5322,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
 		
 		//	does this caption match?
-		if (!wordCaption.getFirstWord().getString().toLowerCase().startsWith("tab"))
+		String firstWordStr = getStringFrom(wordCaption.getFirstWord());
+		if (!firstWordStr.toLowerCase().startsWith("tab"))
 			return false;
 		
 		//	set attributes
@@ -1864,6 +5331,15 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + table.pageId));
 		wordCaption.setAttribute("targetIsTable");
 		return true;
+	}
+	
+	private String getStringFrom(ImWord start) {
+		if ((start.getNextRelation() != ImWord.NEXT_RELATION_CONTINUE) && (start.getNextRelation() != ImWord.NEXT_RELATION_HYPHENATED))
+			return start.getString();
+		ImWord end = start;
+		while ((end.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) || (end.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED))
+			end = end.getNextWord();
+		return ImUtils.getString(start, end, true);
 	}
 	
 	private boolean connectTableRows(ImRegion startTable, ImWord secondWord) {
@@ -2050,7 +5526,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return true;
 	}
 	
-	private ImRegion[] getRegionsInside(ImPage page, BoundingBox box, String type, boolean fuzzy) {
+	private static ImRegion[] getRegionsInside(ImPage page, BoundingBox box, String type, boolean fuzzy) {
 		ImRegion[] regions = page.getRegionsInside(box, fuzzy);
 		ArrayList regionList = new ArrayList();
 		for (int r = 0; r < regions.length; r++) {
@@ -2060,7 +5536,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return ((ImRegion[]) regionList.toArray(new ImRegion[regionList.size()]));
 	}
 	
-	private ImRegion[] getRegionsIncluding(ImPage page, BoundingBox box, String type, boolean fuzzy) {
+	private static ImRegion[] getRegionsIncluding(ImPage page, BoundingBox box, String type, boolean fuzzy) {
 		ImRegion[] regions = page.getRegionsIncluding(box, fuzzy);
 		ArrayList regionList = new ArrayList();
 		for (int r = 0; r < regions.length; r++) {
@@ -2070,7 +5546,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return ((ImRegion[]) regionList.toArray(new ImRegion[regionList.size()]));
 	}
 	
-	private ImRegion[] getRegionsOverlapping(ImPage page, BoundingBox box, String type) {
+	private static ImRegion[] getRegionsOverlapping(ImPage page, BoundingBox box, String type) {
 		ImRegion[] regions = page.getRegions(type);
 		ArrayList regionList = new ArrayList();
 		for (int r = 0; r < regions.length; r++) {
@@ -2080,11 +5556,67 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return ((ImRegion[]) regionList.toArray(new ImRegion[regionList.size()]));
 	}
 	
-	private void copyTableData(ImRegion table, char separator) {
+	private static ImWord[] getWordsOverlapping(ImWord[] words, BoundingBox box) {
+		ArrayList wordList = new ArrayList();
+		for (int w = 0; w < words.length; w++) {
+			if (words[w].bounds.overlaps(box))
+				wordList.add(words[w]);
+		}
+		return ((ImWord[]) wordList.toArray(new ImWord[wordList.size()]));
+	}
+	
+	private static void copyTableData(ImRegion table, char separator) {
 		ImUtils.copy(new StringSelection(ImUtils.getTableData(table, separator)));
 	}
 	
-	private void copyTableGridData(ImRegion table, char separator) {
+	private static void copyTableDataXml(ImRegion table) {
+		ImUtils.copy(new HtmlSelection(ImUtils.getTableDataXml(table)));
+	}
+	
+	private static void copyTableGridData(ImRegion table, char separator) {
 		ImUtils.copy(new StringSelection(ImUtils.getTableGridData(table, separator)));
+	}
+	
+	private static void copyTableGridDataXml(ImRegion table) {
+		ImUtils.copy(new HtmlSelection(ImUtils.getTableGridDataXml(table)));
+	}
+	
+	private static class HtmlSelection implements Transferable {
+		private static List htmlFlavors = new ArrayList(3);
+		static {
+			try {
+				htmlFlavors.add(new DataFlavor("text/html;class=java.lang.String"));
+				htmlFlavors.add(new DataFlavor("text/html;class=java.io.Reader"));
+				htmlFlavors.add(new DataFlavor("text/html;charset=unicode;class=java.io.InputStream"));
+			}
+			catch (ClassNotFoundException ex) {
+				ex.printStackTrace();
+			}
+		}
+		
+		private String html;
+		
+		HtmlSelection(String html) {
+			this.html = html;
+		}
+		
+		public DataFlavor[] getTransferDataFlavors() {
+			return (DataFlavor[]) htmlFlavors.toArray(new DataFlavor[htmlFlavors.size()]);
+		}
+		
+		public boolean isDataFlavorSupported(DataFlavor flavor) {
+			return htmlFlavors.contains(flavor);
+		}
+		
+		public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException {
+			if (String.class.equals(flavor.getRepresentationClass()))
+				return this.html;
+			else if (Reader.class.equals(flavor.getRepresentationClass()))
+				return new StringReader(this.html);
+			else if (InputStream.class.equals(flavor.getRepresentationClass())) try {
+				return new ByteArrayInputStream(this.html.getBytes("UTF-8"));
+			} catch (UnsupportedEncodingException uee) { /* UTF-8 _is_ supported */ }
+			throw new UnsupportedFlavorException(flavor);
+		}
 	}
 }

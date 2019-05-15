@@ -29,7 +29,6 @@ package de.uka.ipd.idaho.im.imagine.plugins.xml;
 
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.GridLayout;
 import java.awt.Point;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
@@ -45,20 +44,18 @@ import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
-import javax.swing.JPanel;
 
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.MutableAnnotation;
 import de.uka.ipd.idaho.gamta.util.GenericMutableAnnotationWrapper;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.constants.TableConstants;
+import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.DocumentEditorDialog;
 import de.uka.ipd.idaho.goldenGate.GoldenGATE;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
@@ -68,6 +65,7 @@ import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
+import de.uka.ipd.idaho.im.gamta.ImDocumentRootOptionPanel;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
@@ -114,6 +112,7 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 	}
 	
 	private Dimension idedSize = null;
+	private int xmlWrapperFlags = (ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS | ImDocumentRoot.NORMALIZE_CHARACTERS);
 	
 	private class ImDocumentEditorDialog extends DocumentEditorDialog {
 		private boolean changesCommitted = false;
@@ -140,7 +139,7 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 			ok.setPreferredSize(new Dimension(100, 21));
 			ok.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
-					dispose(isContentModified());
+					dispose(true);
 				}
 			});
 			this.mainButtonPanel.add(ok);
@@ -168,63 +167,34 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 		
 		public void dispose(boolean commit) {
 			if (commit) {
-				this.writeChanges();
-				this.changesCommitted = true;
+				if (this.isContentModified()) {
+					this.writeChanges();
+					this.changesCommitted = true;
+				}
+				xmlWrapperFlags = this.contentFlags;
 			}
 			this.dispose();
 		}
 		
 		void customizeContent() {
-			JComboBox cNormalizationLevel = new JComboBox(NORMALIZATION_LEVELS);
-			int normalizationLevel = (this.contentFlags & ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS);
-			if (normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_RAW)
-				cNormalizationLevel.setSelectedItem(RAW_NORMALIZATION_LEVEL);
-			else if (normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_WORDS)
-				cNormalizationLevel.setSelectedItem(WORD_NORMALIZATION_LEVEL);
-			else if (normalizationLevel == ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS)
-				cNormalizationLevel.setSelectedItem(STREAM_NORMALIZATION_LEVEL);
-			else cNormalizationLevel.setSelectedItem(PARAGRAPH_NORMALIZATION_LEVEL);
-			
-			JCheckBox cNormalizeChars = new JCheckBox("Normalize Chars");
-			cNormalizeChars.setSelected((this.contentFlags & ImDocumentRoot.NORMALIZE_CHARACTERS) != 0);
-			JCheckBox cExcludeTables = new JCheckBox("Exclude Tables");
-			cExcludeTables.setSelected((this.contentFlags & ImDocumentRoot.EXCLUDE_TABLES) != 0);
-			JCheckBox cExcludeCaptionsFootnotes = new JCheckBox("Exclude Captions & Footnotes");
-			cExcludeCaptionsFootnotes.setSelected((this.contentFlags & ImDocumentRoot.EXCLUDE_CAPTIONS_AND_FOOTNOTES) != 0);
-			
-			JPanel cPanel = new JPanel(new GridLayout(0, 1), true);
-			cPanel.add(cNormalizationLevel);
-			cPanel.add(cNormalizeChars);
-			cPanel.add(cExcludeTables);
-			cPanel.add(cExcludeCaptionsFootnotes);
+			ImDocumentRootOptionPanel cIdrop = new ImDocumentRootOptionPanel(this.contentFlags);
 			int cOptionType;
 			if (this.isContentModified()) {
-				cPanel.add(new JLabel("<HTML>The content of this XML View has been modified.<BR>Retain these modifications?</HTML>"));
+				cIdrop.add(new JLabel("<HTML><B>The content of this XML View has been modified.<BR>Retain these modifications?</B></HTML>"));
 				cOptionType = JOptionPane.YES_NO_CANCEL_OPTION;
 			}
 			else cOptionType = JOptionPane.OK_CANCEL_OPTION;
 			
-			int cChoice = JOptionPane.showConfirmDialog(this, cPanel, "Customize XML View", cOptionType, JOptionPane.PLAIN_MESSAGE);
+			int cChoice = DialogFactory.confirm(cIdrop, "Customize XML View", cOptionType, JOptionPane.PLAIN_MESSAGE);
 			if ((cChoice == JOptionPane.CANCEL_OPTION) || (cChoice == JOptionPane.CLOSED_OPTION))
 				return;
 			
-			if (RAW_NORMALIZATION_LEVEL.equals(cNormalizationLevel.getSelectedItem()))
-				this.cContentFlags = ImDocumentRoot.NORMALIZATION_LEVEL_RAW;
-			else if (WORD_NORMALIZATION_LEVEL.equals(cNormalizationLevel.getSelectedItem()))
-				this.cContentFlags = ImDocumentRoot.NORMALIZATION_LEVEL_WORDS;
-			else if (STREAM_NORMALIZATION_LEVEL.equals(cNormalizationLevel.getSelectedItem()))
-				this.cContentFlags = ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS;
-			else this.cContentFlags = ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS;
-			
-			if (cNormalizeChars.isSelected())
-				this.cContentFlags |= ImDocumentRoot.NORMALIZE_CHARACTERS;
-			if (cExcludeTables.isSelected())
-				this.cContentFlags |= ImDocumentRoot.EXCLUDE_TABLES;
-			if (cExcludeCaptionsFootnotes.isSelected())
-				this.cContentFlags |= ImDocumentRoot.EXCLUDE_CAPTIONS_AND_FOOTNOTES;
-			
-			if (this.contentFlags != this.cContentFlags) // let's not recurse for nothing
-				this.dispose(this.isContentModified() && (cChoice == JOptionPane.YES_OPTION));
+			this.cContentFlags = cIdrop.getFlags();
+			if (this.contentFlags == this.cContentFlags) { // let's not recurse for nothing
+				this.cContentFlags = -1;
+				return;
+			}
+			this.dispose(cChoice == JOptionPane.YES_OPTION);
 		}
 		
 		Set getTaggedAnnotTypes() {
@@ -251,20 +221,20 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 			return this.changesCommitted;
 		}
 	}
-	
-	private static final String RAW_NORMALIZATION_LEVEL = "Raw (words strictly in layout order)";
-	private static final String WORD_NORMALIZATION_LEVEL = "Words (words in layout order, but de-hyphenated)";
-	private static final String PARAGRAPH_NORMALIZATION_LEVEL = "Paragraphs (logical paragraphs kept together)";
-	private static final String STREAM_NORMALIZATION_LEVEL = "Text Streams (logical text streams one after another)";
-	private static final String[] NORMALIZATION_LEVELS = {
-		RAW_NORMALIZATION_LEVEL,
-		WORD_NORMALIZATION_LEVEL,
-		PARAGRAPH_NORMALIZATION_LEVEL,
-		STREAM_NORMALIZATION_LEVEL,
-	};
+//	
+//	private static final String RAW_NORMALIZATION_LEVEL = "Raw (words strictly in layout order)";
+//	private static final String WORD_NORMALIZATION_LEVEL = "Words (words in layout order, but de-hyphenated)";
+//	private static final String PARAGRAPH_NORMALIZATION_LEVEL = "Paragraphs (logical paragraphs kept together)";
+//	private static final String STREAM_NORMALIZATION_LEVEL = "Text Streams (logical text streams one after another)";
+//	private static final String[] NORMALIZATION_LEVELS = {
+//		RAW_NORMALIZATION_LEVEL,
+//		WORD_NORMALIZATION_LEVEL,
+//		PARAGRAPH_NORMALIZATION_LEVEL,
+//		STREAM_NORMALIZATION_LEVEL,
+//	};
 	
 	public boolean showXmlView(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp) {
-		return this.showXmlView(doc, annot, ImDocumentRoot.NORMALIZATION_LEVEL_STREAMS, idmp);
+		return this.showXmlView(doc, annot, this.xmlWrapperFlags, idmp);
 	}
 	
 	private boolean showXmlView(ImDocument doc, ImAnnotation annot, int xmlWrapperFlags, ImDocumentMarkupPanel idmp) {
@@ -497,9 +467,15 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 					mi = new JMenuItem("- " + spanningAnnot.getType() + " '" + getAnnotationShortValue(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord()) + "'");
 					mi.addActionListener(new ActionListener() {
 						public void actionPerformed(ActionEvent ae) {
-							if (showXmlView(idmp.document, spanningAnnot, idmp)) {
-								invoker.validate();
-								invoker.repaint();
+							try {
+								idmp.beginAtomicAction("Show XML View of " + spanningAnnot.getType());
+								if (showXmlView(idmp.document, spanningAnnot, idmp)) {
+									invoker.validate();
+									invoker.repaint();
+								}
+							}
+							finally {
+								idmp.endAtomicAction();
 							}
 						}
 					});

@@ -293,19 +293,24 @@ Word cluster UI:
 	public void typeChanged(ImObject object, String oldType, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
 	 */
-	public void documentOpened(ImDocument doc) { /* we're not interested in documents opening */ }
+	public void documentOpened(ImDocument doc, Object source, ProgressMonitor pm) { /* we're not interested in documents opening */ }
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSelected(de.uka.ipd.idaho.im.ImDocument)
 	 */
-	public void documentSaving(ImDocument doc) { /* no need to listen for documents saving, as our own little supplement implementation takes care of staying up to date */ }
+	public void documentSelected(ImDocument doc) { /* we're not interested in documents being selected */ }
 	
 	/* (non-Javadoc)
-	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
 	 */
-	public void documentSaved(ImDocument doc) { /* we're not interested in documents saving success */ }
+	public void documentSaving(ImDocument doc, Object dest, ProgressMonitor pm) { /* no need to listen for documents saving, as our own little supplement implementation takes care of staying up to date */ }
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentSaved(ImDocument doc, Object dest, ProgressMonitor pm) { /* we're not interested in documents saving success */ }
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentClosed(java.lang.String)
@@ -1936,7 +1941,7 @@ UI: Make "Edit Page Image & Words" accessible from cluster representative contex
 				for (int w = 0; w < wc.words.size(); w++) {
 					ImWord imw = ((ImWord) wc.words.get(w));
 					if (imw.hasAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) {
-						wordFontSizeSum += Integer.parseInt((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE));
+						wordFontSizeSum += imw.getFontSize();
 						wordFontSizeCount++;
 					}
 				}
@@ -3571,7 +3576,7 @@ Cut histogram alignment some more slack with maximum pixel row shifts (should he
 	}
 	
 	private static String getClusterKey(ImWord imw) {
-		return (((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "-1")) + "_" + (imw.hasAttribute(ImWord.BOLD_ATTRIBUTE) ? "bold_" : "") + (imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) ? "italics_" : "") + stripAccents(imw.getString()));
+		return ("" + imw.getFontSize() + "_" + (imw.hasAttribute(ImWord.BOLD_ATTRIBUTE) ? "bold_" : "") + (imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE) ? "italics_" : "") + stripAccents(imw.getString()));
 	}
 	
 	private static final int CLUSTER_MATCH_MISMATCH = 0;
@@ -4592,7 +4597,7 @@ most 1, and stem edit distance at most 1
 		WordCluster(WordImage wi, ImWord imw) {
 			this.addWordImage(wi);
 			this.name = imw.getString();
-			this.fontSize = Integer.parseInt((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "-1"));
+			this.fontSize = imw.getFontSize();
 			this.isBold = imw.hasAttribute(ImWord.BOLD_ATTRIBUTE);
 			this.isItalics = imw.hasAttribute(ImWord.ITALICS_ATTRIBUTE);
 		}
@@ -4858,7 +4863,7 @@ most 1, and stem edit distance at most 1
 		}
 		
 		boolean isStyleCompatible(WordImage wi) {
-			return (("" + this.fontSize).equals(wi.word.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE, "-1")) && (this.isBold == wi.word.hasAttribute(ImWord.BOLD_ATTRIBUTE)) && (this.isItalics == wi.word.hasAttribute(ImWord.ITALICS_ATTRIBUTE)));
+			return ((this.fontSize == wi.word.getFontSize()) && (this.isBold == wi.word.hasAttribute(ImWord.BOLD_ATTRIBUTE)) && (this.isItalics == wi.word.hasAttribute(ImWord.ITALICS_ATTRIBUTE)));
 		}
 		
 		boolean areStylesCompatible(WordCluster wc) {

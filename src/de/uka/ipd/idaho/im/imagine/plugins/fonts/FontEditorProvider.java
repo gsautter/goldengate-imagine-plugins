@@ -85,9 +85,9 @@ import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
-import de.uka.ipd.idaho.im.util.ImFontUtils;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
+import de.uka.ipd.idaho.im.util.ImFontUtils;
 import de.uka.ipd.idaho.im.util.SymbolTable;
 import de.uka.ipd.idaho.stringUtils.StringUtils;
 
@@ -110,6 +110,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 	
 	private static Font serifFont = new Font((USE_FREE_FONTS ? "FreeSerif" : "Serif"), Font.PLAIN, 1);
 	private static Font sansFont = new Font((USE_FREE_FONTS ? "FreeSans" : "SansSerif"), Font.PLAIN, 1);
+	private static Font monospacedFont = new Font((USE_FREE_FONTS ? "FreeMono" : "Monospaced"), Font.PLAIN, 1);
 	
 	private static final String FONT_EDITOR_IMT_NAME = "FontEditor";
 	
@@ -241,6 +242,8 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			
 			ArrayList fepList = new ArrayList(fonts.length);
 			JTabbedPane fontTabs = new JTabbedPane();
+			if (fonts.length > 1)
+				fontTabs.setTabPlacement(JTabbedPane.LEFT);
 			for (int f = 0; f < fonts.length; f++) {
 				FontEditorPanel fep = new FontEditorPanel(fonts[f]);
 				if (fep.ceps == null)
@@ -272,7 +275,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			this.add(((this.feps.length == 1) ? this.feps[0] : fontTabs), BorderLayout.CENTER);
 			this.add(buttons, BorderLayout.SOUTH);
 			
-			this.setSize(400, 700);
+			this.setSize(600, 700);
 			this.setLocationRelativeTo(this.getOwner());
 		}
 		
@@ -415,16 +418,27 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 						String[] splitCharCodes = new String[imwTokens.size()];
 						String[] splitTokens = new String[imwTokens.size()];
 						float[] splitTokenWidths = new float[imwTokens.size()];
-						int fontStyle = Font.PLAIN;
-						if (imwFont.isBold())
-							fontStyle = (fontStyle | Font.BOLD);
-						if (imwFont.isItalics())
-							fontStyle = (fontStyle | Font.ITALIC);
-						int fontSize = ((Integer.parseInt((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) * pi.currentDpi) / 72); // 72 DPI is default according to PDF specification
-						Font font = (imwFont.isSerif() ? serifFont : sansFont).deriveFont(fontStyle, fontSize);
+						
+						//	initialize font (only if we need character width proportional split)
+						Font font;
+						if (imwFont.isMonospaced())
+							font = null;
+						else {
+							int fontStyle = Font.PLAIN;
+							if (imwFont.isBold())
+								fontStyle = (fontStyle | Font.BOLD);
+							if (imwFont.isItalics())
+								fontStyle = (fontStyle | Font.ITALIC);
+							int fontSize = ((imw.getFontSize() * pi.currentDpi) / 72); // 72 DPI is default according to PDF specification
+							font = (imwFont.isSerif() ? serifFont : sansFont).deriveFont(fontStyle, fontSize);
+						}
+						
+						//	perform word split
 						float splitTokenWidthSum = 0;
 						int splitCharCodeStart = 0;
 						for (int s = 0; s < splitTokens.length; s++) {
+							
+							//	split character codes according to tokens
 							splitTokens[s] = imwTokens.valueAt(s);
 							splitCharCodes[s] = ""; // have to do it this way, as char code string (a) consists of hex digit pairs and (b) might have different length (number of hex digit pairs) than Unicode string
 							for (int splitCharCodeLength = 0; splitCharCodeLength < splitTokens[s].length();) {
@@ -432,8 +446,16 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 								splitCharCodeLength += imwCharCodeLengths[splitCharCodeStart];
 								splitCharCodeStart++;
 							}
-							TextLayout tl = new TextLayout(splitTokens[s], font, new FontRenderContext(null, false, true));
-							splitTokenWidths[s] = ((float) tl.getBounds().getWidth());
+							
+							//	apply simple equidistant split for monospaced fonts
+							if (font == null)
+								splitTokenWidths[s] = ((float) splitTokens[s].length());
+							
+							//	do character width proportional split otherwise
+							else {
+								TextLayout tl = new TextLayout(splitTokens[s], font, new FontRenderContext(null, false, true));
+								splitTokenWidths[s] = ((float) tl.getBounds().getWidth());
+							}
 							splitTokenWidthSum += splitTokenWidths[s];
 						}
 						
@@ -504,27 +526,57 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 					fontStyle = (fontStyle | Font.BOLD);
 				if (imwFont.isItalics())
 					fontStyle = (fontStyle | Font.ITALIC);
-				int fontSize = ((Integer.parseInt((String) imw.getAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) * pi.currentDpi) / 72); // 72 DPI is default according to PDF specification
-				Font rf = (imwFont.isSerif() ? serifFont : sansFont).deriveFont(fontStyle, fontSize);
+				int fontSize = ((imw.getFontSize() * pi.currentDpi) / 72); // 72 DPI is default according to PDF specification
+				Font rf = (imwFont.isMonospaced() ? monospacedFont : (imwFont.isSerif() ? serifFont : sansFont)).deriveFont(fontStyle, fontSize);
 				prg.setFont(rf);
 				
-				//	adjust word size and vertical position
+				//	adjust word size and position
 				String imwString = imw.getString();
-				LineMetrics wlm = rf.getLineMetrics(imwString, prg.getFontRenderContext());
-				TextLayout wtl = new TextLayout(imwString, rf, prg.getFontRenderContext());
-				double hScale = (((double) (imw.bounds.right - imw.bounds.left)) / wtl.getBounds().getWidth());
 				AffineTransform at = prg.getTransform();
-				prg.translate(imw.bounds.left, 0);
-//				if (hScale < 1)
-//					prg.scale(hScale, 1);
-//				prg.drawString(imw.getString(), ((float) -wtl.getBounds().getMinX()), (imw.bounds.bottom - Math.round(wlm.getDescent())));
+				FontRenderContext imwFrc = new FontRenderContext(at, true, true);
+				LineMetrics wlm = rf.getLineMetrics(imwString, imwFrc);
+				TextLayout wtl = new TextLayout(imwString, rf, imwFrc);
+				prg.translate(imw.bounds.left, imw.bounds.bottom);
 				float leftShift = ((float) -wtl.getBounds().getMinX());
-				if (hScale < 1)
+				double hScale = 1;
+				
+				//	rotate and scale word as required
+				if (ImWord.TEXT_DIRECTION_BOTTOM_UP.equals(imw.getAttribute(ImWord.TEXT_DIRECTION_ATTRIBUTE))) {
+					prg.rotate((-Math.PI / 2), (((float) imw.bounds.getWidth()) / 2), -(((float) imw.bounds.getWidth()) / 2));
+					if (imwFont.isItalics())
+						hScale = (((double) imw.bounds.getHeight()) / wtl.getBounds().getWidth());
+					else {
+						hScale = (((double) imw.bounds.getHeight()) / wtl.getAdvance());
+						leftShift = 0;
+					}
+					prg.scale(1, hScale);
+				}
+				if (ImWord.TEXT_DIRECTION_TOP_DOWN.equals(imw.getAttribute(ImWord.TEXT_DIRECTION_ATTRIBUTE))) {
+					prg.rotate((Math.PI / 2), (((float) imw.bounds.getHeight()) / 2), -(((float) imw.bounds.getHeight()) / 2));
+					if (imwFont.isItalics())
+						hScale = (((double) imw.bounds.getHeight()) / wtl.getBounds().getWidth());
+					else {
+						hScale = (((double) imw.bounds.getHeight()) / wtl.getAdvance());
+						leftShift = 0;
+					}
+					prg.scale(1, hScale);
+				}
+				else {
+					if (imwFont.isItalics())
+						hScale = (((double) imw.bounds.getWidth()) / wtl.getBounds().getWidth());
+					else {
+						hScale = (((double) imw.bounds.getWidth()) / wtl.getAdvance());
+						leftShift = 0;
+					}
 					prg.scale(hScale, 1);
-				else leftShift += (((imw.bounds.right - imw.bounds.left) - wtl.getBounds().getWidth()) / 2);
+				}
+				
+				//	render word, finally ...
 				try {
-					prg.drawGlyphVector(rf.createGlyphVector(new FontRenderContext(prg.getTransform(), true, true), imw.getString()), leftShift, (imw.bounds.bottom - Math.round(wlm.getDescent())));
+					prg.drawGlyphVector(rf.createGlyphVector(imwFrc, imw.getString()), leftShift, -Math.round(wlm.getDescent()));
 				} catch (InternalError ie) {}
+				
+				//	reset graphics
 				prg.setTransform(at);
 				System.out.println(" - word '" + imw.getString() + "' re-rendered");
 			}
@@ -636,6 +688,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			private JCheckBox bold;
 			private JCheckBox italics;
 			private JCheckBox serif;
+			private JCheckBox monospaced;
 			CharEditorPanel[] ceps = null;
 			FontEditorPanel(ImFont font) {
 				super(new BorderLayout(), true);
@@ -644,6 +697,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 				this.bold = new JCheckBox("Bold", this.font.isBold());
 				this.italics = new JCheckBox("Italics", this.font.isItalics());
 				this.serif = new JCheckBox("Serif", this.font.isSerif());
+				this.monospaced = new JCheckBox("Monospaced", this.font.isMonospaced());
 				
 				int[] cids = this.font.getCharacterIDs();
 				BufferedImage[] cis = new BufferedImage[cids.length];
@@ -666,6 +720,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 				flagsPanel.add(this.bold);
 				flagsPanel.add(this.italics);
 				flagsPanel.add(this.serif);
+				flagsPanel.add(this.monospaced);
 				JButton swb = new JButton("Words");
 				swb.setToolTipText("Show list of words in font '" + this.font.name + "'");
 				swb.addActionListener(new ActionListener() {
@@ -719,11 +774,12 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			
 			HashSet commitChanges() {
 				HashSet cCidSet = new HashSet();
-				if ((this.font.isBold() != this.bold.isSelected()) || (this.font.isItalics() != this.italics.isSelected()) || (this.font.isSerif() != this.serif.isSelected())) {
+				if ((this.font.isBold() != this.bold.isSelected()) || (this.font.isItalics() != this.italics.isSelected()) || (this.font.isSerif() != this.serif.isSelected()) || (this.font.isMonospaced() != this.monospaced.isSelected())) {
 					cCidSet.add(FONT_FLAGS_CHANGED);
 					this.font.setBold(this.bold.isSelected());
 					this.font.setItalics(this.italics.isSelected());
 					this.font.setSerif(this.serif.isSelected());
+					this.font.setMonospaced(this.monospaced.isSelected());
 				}
 				for (int c = 0; c < this.ceps.length; c++) {
 					if (this.ceps[c].commitChange())

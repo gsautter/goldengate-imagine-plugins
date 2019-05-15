@@ -374,7 +374,6 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			listImObjects("Annotation List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, idmp, null);
 		}
 		public WebDocumentView getWebDocumentView(String baseUrl) {
-//			return createImObjectListView(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, null);
 			return new WebObjectList(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, null);
 		}
 	}
@@ -403,7 +402,6 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			listImObjects("Annotation List", doc, ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, idmp, getGPathFilter(this.annotType));
 		}
 		public WebDocumentView getWebDocumentView(String baseUrl) {
-//			return createImObjectListView(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, getGPathFilter(this.annotType));
 			return new WebObjectList(this, baseUrl, "Annotation List", ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS, getGPathFilter(this.annotType));
 		}
 	}

@@ -28,6 +28,9 @@
 package de.uka.ipd.idaho.im.imagine.plugins.basic;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.Point;
@@ -53,7 +56,6 @@ import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
@@ -73,6 +75,7 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
+import javax.swing.JTextField;
 import javax.swing.filechooser.FileFilter;
 import javax.swing.plaf.basic.BasicFileChooserUI;
 
@@ -99,6 +102,8 @@ import de.uka.ipd.idaho.im.analysis.Imaging;
 import de.uka.ipd.idaho.im.analysis.Imaging.AnalysisImage;
 import de.uka.ipd.idaho.im.analysis.Imaging.ImagePartRectangle;
 import de.uka.ipd.idaho.im.analysis.PageAnalysis;
+import de.uka.ipd.idaho.im.analysis.PageAnalysis.BlockLayout;
+import de.uka.ipd.idaho.im.analysis.PageAnalysis.BlockMetrics;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider;
@@ -119,10 +124,12 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	private static final String REGION_CONVERTER_IMT_NAME = "ConvertRegions";
 	private static final String REGION_RETYPER_IMT_NAME = "RetypeRegions";
 	private static final String REGION_REMOVER_IMT_NAME = "RemoveRegions";
+	private static final String REGION_DUPLICATE_REMOVER_IMT_NAME = "RemoveDuplicateRegions";
 	
 	private ImageMarkupTool regionConverter = new RegionConverter();
 	private ImageMarkupTool regionRetyper = new RegionRetyper();
 	private ImageMarkupTool regionRemover = new RegionRemover();
+	private ImageMarkupTool regionDuplicateRemover = new RegionDuplicateRemover();
 	
 	/** public zero-argument constructor for class loading */
 	public RegionActionProvider() {}
@@ -138,7 +145,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getEditMenuItemNames()
 	 */
 	public String[] getEditMenuItemNames() {
-		String[] emins = {REGION_CONVERTER_IMT_NAME, REGION_RETYPER_IMT_NAME, REGION_REMOVER_IMT_NAME};
+		String[] emins = {REGION_CONVERTER_IMT_NAME, REGION_RETYPER_IMT_NAME, REGION_REMOVER_IMT_NAME, REGION_DUPLICATE_REMOVER_IMT_NAME};
 		return emins;
 	}
 	
@@ -159,6 +166,8 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			return this.regionRetyper;
 		else if (REGION_REMOVER_IMT_NAME.equals(name))
 			return this.regionRemover;
+		else if (REGION_DUPLICATE_REMOVER_IMT_NAME.equals(name))
+			return this.regionDuplicateRemover;
 		else return null;
 	}
 	
@@ -297,6 +306,51 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				ImRegion[] pageRegions = pages[p].getRegions(regionType);
 				for (int r = 0; r < pageRegions.length; r++)
 					pages[p].removeRegion(pageRegions[r]);
+			}
+		}
+	}
+	
+	private class RegionDuplicateRemover implements ImageMarkupTool {
+		public String getLabel() {
+			return "Remove Duplicate Regions";
+		}
+		public String getTooltip() {
+			return "Remove duplicate regions from document";
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			
+			//	get pages
+			ImPage[] pages = doc.getPages();
+			
+			//	process pages
+			for (int p = 0; p < pages.length; p++) {
+				
+				//	get regions
+				ImRegion[] pageRegions = pages[p].getRegions();
+				if (pageRegions.length < 2)
+					continue;
+				
+				//	detect and merge duplicates
+				HashMap regionsByKey = new HashMap();
+				for (int r = 0; r < pageRegions.length; r++) {
+					String regionKey = (pageRegions[r].getType() + "@" + pageRegions[r].bounds.toString());
+					
+					//	get previously indexed duplicate
+					ImRegion dupPageRegion = ((ImRegion) regionsByKey.get(regionKey));
+					if (dupPageRegion == null) {
+						regionsByKey.put(regionKey, pageRegions[r]);
+						continue;
+					}
+					
+					//	merge attributes
+					AttributeUtils.copyAttributes(pageRegions[r], dupPageRegion, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+					
+					//	clean up duplicate
+					pages[p].removeRegion(pageRegions[r]);
+				}
 			}
 		}
 	}
@@ -523,6 +577,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							invoker.repaint();
 						}
 					});
+					Color regionTypeColor = idmp.getLayoutObjectColor(regionType);
+					if (regionTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(regionTypeColor);
+					}
 					pm.add(mi);
 				}
 				return pm;
@@ -584,12 +643,30 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
 						return markImageOrGraphics(page, selectedBounds, selectedRegions, ImRegion.IMAGE_TYPE, idmp);
 					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
+					}
 				});
 			
 			//	mark selected non-white area as graphics (case with words comes from text block actions)
 			else actions.add(new SelectionAction("markRegionGraphics", "Mark Graphics", "Mark selected region as a vector based graphics.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return markImageOrGraphics(page, selectedBounds, selectedRegions, ImRegion.GRAPHICS_TYPE, idmp);
+				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+					if (regionTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(regionTypeColor);
+					}
+					return mi;
 				}
 			});
 		}
@@ -603,17 +680,35 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					idmp.editAttributes(selectedRegions[0], selectedRegions[0].getType(), "");
 					return true;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color regionTypeColor = idmp.getLayoutObjectColor(selectedRegions[0].getType());
+					if (regionTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(regionTypeColor);
+					}
+					return mi;
+				}
 			});
 			
-			//	remove existing annotation
+			//	remove existing region
 			actions.add(new SelectionAction("removeRegion", ("Remove " + selectedRegions[0].getType() + " Region"), ("Remove '" + selectedRegions[0].getType() + "' region.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					page.removeRegion(selectedRegions[0]);
 					return true;
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color regionTypeColor = idmp.getLayoutObjectColor(selectedRegions[0].getType());
+					if (regionTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(regionTypeColor);
+					}
+					return mi;
+				}
 			});
 			
-			//	change type of existing annotation
+			//	change type of existing region
 			actions.add(new SelectionAction("changeTypeRegion", ("Change Region Type"), ("Change type of '" + selectedRegions[0].getType() + "' region.")) {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					String regionType = ImUtils.promptForObjectType("Enter Region Type", "Enter or select new region type", page.getRegionTypes(), selectedRegions[0].getType(), true);
@@ -622,6 +717,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					selectedRegions[0].setType(regionType);
 					idmp.setRegionsPainted(regionType, true);
 					return true;
+				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					Color regionTypeColor = idmp.getLayoutObjectColor(selectedRegions[0].getType());
+					if (regionTypeColor != null) {
+						mi.setOpaque(true);
+						mi.setBackground(regionTypeColor);
+					}
+					return mi;
 				}
 			});
 		}
@@ -647,13 +751,18 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 								invoker.repaint();
 							}
 						});
+						Color regionTypeColor = idmp.getLayoutObjectColor(selectedRegion.getType());
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
 				}
 			});
 			
-			//	remove existing annotation
+			//	remove existing region
 			actions.add(new SelectionAction("removeRegion", "Remove Region ...", "Remove selected regions.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
@@ -673,6 +782,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 								invoker.repaint();
 							}
 						});
+						Color regionTypeColor = idmp.getLayoutObjectColor(selectedRegion.getType());
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -711,13 +825,18 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 									invoker.repaint();
 								}
 							});
+							Color regionTypeColor = idmp.getLayoutObjectColor(regType);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
 							pm.add(mi);
 						}
 						return pm;
 					}
 				});
 			
-			//	change type of existing annotation
+			//	change type of existing region
 			actions.add(new SelectionAction("changeTypeRegion", "Change Region Type ...", "Change the type of selected regions.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return false;
@@ -741,6 +860,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 								}
 							}
 						});
+						Color regionTypeColor = idmp.getLayoutObjectColor(selectedRegion.getType());
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
 						pm.add(mi);
 					}
 					return pm;
@@ -807,6 +931,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							}
 							else return false;
 						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.PARAGRAPH_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
+						}
 					});
 			}
 			
@@ -830,6 +963,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						}
 						return true;
 					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.PARAGRAPH_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
+					}
 				});
 			}
 			
@@ -847,9 +989,151 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				if (blockLines.length > 1)
 					actions.add(new SelectionAction("paragraphsInBlock", "Revise Block Paragraphs", "Revise the grouping of the lines in the block into paragraphs.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return restructureBlock(page, block, block.getRegions(ImRegion.PARAGRAPH_TYPE), blockLines, idmp.getMaxPageImageDpi());
+							return restructureBlock(page, block, block.getRegions(ImRegion.PARAGRAPH_TYPE), blockLines);
+						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
 						}
 					});
+//				
+//				//	TODO remove this, and DO NOT EXPORT
+//				actions.add(new SelectionAction("paragraphsInBlock", "Analyze Block Structure (TEST)", "Assess the grouping of the lines in the block into paragraphs (TEST).") {
+//					public boolean performAction(ImDocumentMarkupPanel invoker) {
+//						BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+//						System.out.println("Analysis results for block " + block.bounds);
+//						System.out.println(" - font sizes: " + blockMetrics.fontSizes);
+//						System.out.println("   ==> main font size: " + blockMetrics.mainFontSize);
+//						System.out.println(" - font sizes (by chars): " + blockMetrics.charFontSizes);
+//						System.out.println("   ==> main font size (by chars): " + blockMetrics.mainCharFontSize);
+//						System.out.println(" - font names: " + blockMetrics.fontNames);
+//						System.out.println("   ==> main font name: " + blockMetrics.mainFontName);
+//						System.out.println(" - font names (by chars): " + blockMetrics.charFontNames);
+//						System.out.println("   ==> main font name (by chars): " + blockMetrics.mainCharFontName);
+//						System.out.println(" - words: " + blockMetrics.wordCount);
+//						System.out.println("   in bold: " + blockMetrics.boldWordCount);
+//						System.out.println("   in italics: " + blockMetrics.italicsWordCount);
+//						System.out.println(" - chars: " + blockMetrics.charCount);
+//						System.out.println("   in bold: " + blockMetrics.boldCharCount);
+//						System.out.println("   in italics: " + blockMetrics.italicsCharCount);
+//						blockMetrics.analyze();
+//						return false;
+//					}
+//					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+//						JMenuItem mi = super.getMenuItem(invoker);
+//						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+//						if (regionTypeColor != null) {
+//							mi.setOpaque(true);
+//							mi.setBackground(regionTypeColor);
+//						}
+//						return mi;
+//					}
+//				});
+//				//	TODO remove this, and DO NOT EXPORT
+//				actions.add(new SelectionAction("paragraphsInContinuedBlock", "Analyze Continue Block Structure (TEST)", "Assess the grouping of the lines in the block into paragraphs, assuming it continuing the previous block (TEST).") {
+//					public boolean performAction(ImDocumentMarkupPanel invoker) {
+//						ImWord[] blockWords = block.getWords();
+//						Arrays.sort(blockWords, ImUtils.textStreamOrder);
+//						ImWord prevBlockLastWord = blockWords[0].getPreviousWord();
+//						if (prevBlockLastWord == null) {
+//							System.out.println("Cannot find predecessor word of " + blockWords[0] + ", so no block to continue from.");
+//							return false;
+//						}
+//						ImPage prevBlockPage = page.getDocument().getPage(prevBlockLastWord.pageId);
+//						ImRegion[] prevBlockPageBlocks = prevBlockPage.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+//						ImRegion prevBlock = null;
+//						for (int b = 0; b < prevBlockPageBlocks.length; b++)
+//							if (prevBlockPageBlocks[b].bounds.includes(prevBlockLastWord.bounds, true)) {
+//								prevBlock = prevBlockPageBlocks[b];
+//								break;
+//							}
+//						if (prevBlock == null) {
+//							System.out.println("Cannot find block containing " + prevBlockLastWord + " to continue from.");
+//							return false;
+//						}
+//						
+//						BlockMetrics prevBlockMetrics = PageAnalysis.computeBlockMetrics(prevBlockPage, prevBlockPage.getImageDPI(), prevBlock);
+//						System.out.println("Analysis results for block " + prevBlock.bounds);
+//						System.out.println(" - font sizes: " + prevBlockMetrics.fontSizes);
+//						System.out.println("   ==> main font size: " + prevBlockMetrics.mainFontSize);
+//						System.out.println(" - font sizes (by chars): " + prevBlockMetrics.charFontSizes);
+//						System.out.println("   ==> main font size (by chars): " + prevBlockMetrics.mainCharFontSize);
+//						System.out.println(" - font names: " + prevBlockMetrics.fontNames);
+//						System.out.println("   ==> main font name: " + prevBlockMetrics.mainFontName);
+//						System.out.println(" - font names (by chars): " + prevBlockMetrics.charFontNames);
+//						System.out.println("   ==> main font name (by chars): " + prevBlockMetrics.mainCharFontName);
+//						System.out.println(" - words: " + prevBlockMetrics.wordCount);
+//						System.out.println("   in bold: " + prevBlockMetrics.boldWordCount);
+//						System.out.println("   in italics: " + prevBlockMetrics.italicsWordCount);
+//						System.out.println(" - chars: " + prevBlockMetrics.charCount);
+//						System.out.println("   in bold: " + prevBlockMetrics.boldCharCount);
+//						System.out.println("   in italics: " + prevBlockMetrics.italicsCharCount);
+//						BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+//						System.out.println("Analysis results for block " + block.bounds);
+//						System.out.println(" - font sizes: " + blockMetrics.fontSizes);
+//						System.out.println("   ==> main font size: " + blockMetrics.mainFontSize);
+//						System.out.println(" - font sizes (by chars): " + blockMetrics.charFontSizes);
+//						System.out.println("   ==> main font size (by chars): " + blockMetrics.mainCharFontSize);
+//						System.out.println(" - font names: " + blockMetrics.fontNames);
+//						System.out.println("   ==> main font name: " + blockMetrics.mainFontName);
+//						System.out.println(" - font names (by chars): " + blockMetrics.charFontNames);
+//						System.out.println("   ==> main font name (by chars): " + blockMetrics.mainCharFontName);
+//						System.out.println(" - words: " + blockMetrics.wordCount);
+//						System.out.println("   in bold: " + blockMetrics.boldWordCount);
+//						System.out.println("   in italics: " + blockMetrics.italicsWordCount);
+//						System.out.println(" - chars: " + blockMetrics.charCount);
+//						System.out.println("   in bold: " + blockMetrics.boldCharCount);
+//						System.out.println("   in italics: " + blockMetrics.italicsCharCount);
+//						
+//						CountingSet lineGaps = new CountingSet(new TreeMap());
+//						int lineGapSum = 0;
+//						for (int l = 1; l < prevBlockMetrics.aboveLineGaps.length; l++) {
+//							lineGapSum += prevBlockMetrics.aboveLineGaps[l];
+//							lineGaps.add(new Integer(prevBlockMetrics.aboveLineGaps[l]));
+//						}
+//						for (int l = 1; l < blockMetrics.aboveLineGaps.length; l++) {
+//							lineGapSum += blockMetrics.aboveLineGaps[l];
+//							lineGaps.add(new Integer(blockMetrics.aboveLineGaps[l]));
+//						}
+//						int minLineGap = ((lineGaps.size() == 0) ? 0 : ((Integer) lineGaps.first()).intValue());
+//						int maxLineGap = ((lineGaps.size() == 0) ? 0 : ((Integer) lineGaps.last()).intValue());
+//						int avgLineGap = ((lineGaps.size() == 0) ? 0 : ((lineGapSum + (lineGaps.size() / 2)) / lineGaps.size()));
+//						if (avgLineGap == 0) {
+//							System.out.println("Cannot analyze block continuation with two single-line blocks.");
+//							return false;
+//						}
+//						
+//						//	we only have a single line distance
+//						if ((maxLineGap - minLineGap) < ((page.getImageDPI() + (25 / 2)) / 25)) {
+//							System.out.println("ANALYZING WITH AVERAGE LINE GAP OF " + avgLineGap);
+//							blockMetrics.analyzeContinuingFrom(prevBlockMetrics, avgLineGap);
+//						}
+//						
+//						//	we might have blocks with line distance paragraph separating
+//						else {
+//							System.out.println("ANALYZING WITH MINIMUM LINE GAP OF " + minLineGap);
+//							blockMetrics.analyzeContinuingFrom(prevBlockMetrics, minLineGap);
+//							System.out.println("ANALYZING WITH MAXIMUM LINE GAP OF " + maxLineGap);
+//							blockMetrics.analyzeContinuingFrom(prevBlockMetrics, maxLineGap);
+//						}
+//						
+//						return false;
+//					}
+//					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+//						JMenuItem mi = super.getMenuItem(invoker);
+//						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+//						if (regionTypeColor != null) {
+//							mi.setOpaque(true);
+//							mi.setBackground(regionTypeColor);
+//						}
+//						return mi;
+//					}
+//				});
 			}
 			
 			//	if blocks and paragraphs visible and multiple blocks selected, offer merging blocks and re-detecting paragraphs and lines
@@ -877,13 +1161,26 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						sortIntoLines(page, blockWords);
 						
 						//	re-detect paragraphs
-						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+//						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+//						BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+//						BlockLayout blockLayout = blockMetrics.analyze();
+//						blockLayout.writeParagraphStructure();
+						PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
 						
 						//	update text stream structure
 						updateBlockTextStream(block);
 						
 						//	finally ...
 						return true;
+					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
 					}
 				});
 			
@@ -894,11 +1191,99 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
 						return splitBlock(page, block, selectedBounds);
 					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
+					}
+				});
+			}
+			
+			//	if columns, blocks, and paragraphs visible and multiple columns selected, offer merging columns and re-detecting blocks, paragraphs, and lines
+			if (idmp.areRegionsPainted(ImRegion.COLUMN_ANNOTATION_TYPE) && idmp.areRegionsPainted(ImRegion.BLOCK_ANNOTATION_TYPE) && multiSelectedRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE))
+				actions.add(new SelectionAction("blocksInColumn", "Merge Columns", "Merge selected columns, re-detect first blocks, then lines, and group the latter into paragraphs.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						//	TODO implement this
+//						
+//						//	get & merge blocks
+//						LinkedList blockList = ((LinkedList) multiSelectedRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE));
+//						ImRegion[] blocks = ((ImRegion[]) blockList.toArray(new ImRegion[blockList.size()]));
+//						for (int b = 0; b < blocks.length; b++)
+//							page.removeRegion(blocks[b]);
+//						ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(blocks), ImRegion.BLOCK_ANNOTATION_TYPE);
+//						
+//						//	remove old lines and paragraphs
+//						ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
+//						for (int p = 0; p < blockParagraphs.length; p++)
+//							page.removeRegion(blockParagraphs[p]);
+//						ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+//						for (int l = 0; l < blockLines.length; l++)
+//							page.removeRegion(blockLines[l]);
+//						
+//						//	get block words
+//						ImWord[] blockWords = block.getWords();
+//						sortIntoLines(page, blockWords);
+//						
+//						//	re-detect paragraphs
+////						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+////						BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+////						BlockLayout blockLayout = blockMetrics.analyze();
+////						blockLayout.writeParagraphStructure();
+//						PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
+//						
+//						//	update text stream structure
+//						updateBlockTextStream(block);
+						
+						//	finally ...
+						return true;
+					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.COLUMN_ANNOTATION_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
+					}
+				});
+			
+			//	if one column partially selected, and one or more blocks fully selected, offer splitting
+			if (idmp.areRegionsPainted(ImRegion.COLUMN_ANNOTATION_TYPE) && idmp.areRegionsPainted(ImRegion.BLOCK_ANNOTATION_TYPE) && contextRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE) && !multiSelectedRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE) && selectedRegionsByType.containsKey(ImRegion.BLOCK_ANNOTATION_TYPE)) {
+				final ImRegion block = ((ImRegion) ((LinkedList) contextRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE)).getFirst());
+				actions.add(new SelectionAction("blocksInColumn", "Split Column", "Split selected column, re-detect blocks, then lines, and group the latter into paragraphs.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return splitBlock(page, block, selectedBounds);
+					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
+					}
 				});
 			}
 		}
 		
+		/* TODO offer sanitizing selected regions:
+		 * - shrink any selected 'column', 'block', 'paragraph', and 'line' regions to their contained words ...
+		 * - ... and remove duplicates afterwards
+		 * - also remove any regions nested in other regions of same type
+		 * 
+		 * - apply this to all regions that have at least one word selected (in terms of center point)
+		 * 
+		 * TODO also consider applying this to generic 'region' regions, or discarding these guys altogether
+		 */
+		
 		//	get supplements if we might need them for images or graphics
+		//	TODO move all the caption and target handling (including exporting) to TextBlockActions (we mark images and captions there after all)
 		final ImSupplement[] supplements = ((idmp.areRegionsPainted(ImRegion.IMAGE_TYPE) || idmp.areRegionsPainted(ImRegion.GRAPHICS_TYPE)) ? page.getSupplements() : null);
 		
 		//	offer copying selected figure to clipboard, as well as assigning caption
@@ -932,7 +1317,8 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
 						
 						//	does this caption match?
-						if (wordCaption.getFirstWord().getString().toLowerCase().startsWith("tab"))
+						String firstWordStr = getStringFrom(wordCaption.getFirstWord());
+						if (firstWordStr.toLowerCase().startsWith("tab"))
 							return false;
 						
 						//	set attributes
@@ -947,6 +1333,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					}
 					public String getActiveLabel() {
 						return ("Click on a caption to assign it to the image at " + selImage.bounds.toString() + " on page " + (selImage.pageId + 1));
+					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
 					}
 				});
 				final Figure[] clickedFigures = ImSupplement.getFiguresAt(supplements, selectedBox);
@@ -972,6 +1367,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							if (image != null)
 								ImUtils.copy(new ImageSelection(image));
 							return false;
+						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
 						}
 					});
 				if (clickedFigures.length == 1) // clicked single figure
@@ -1007,12 +1411,30 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							//	we did not change anything ...
 							return false;
 						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
+						}
 					});
 				if (contextFigures.length > 1) {// we have an image group to copy or save
 					actions.add(new SelectionAction("copyImageGroup", "Copy Image Group", "Copy the whole selected image group to the system clipboard.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
 							copyCompositeImage(contextFigures, -1, null, null, page);
 							return false;
+						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
 						}
 					});
 					actions.add(new SelectionAction("saveImageGroup", "Save Image Group", "Save the whole selected image group to disk.") {
@@ -1022,6 +1444,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							if (imageFile != null)
 								saveCompositeImage(imageFile, contextFigures, -1, null, null, page);
 							return false;
+						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
 						}
 					});
 				}
@@ -1038,6 +1469,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							}
 							return false;
 						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
+						}
 					});
 					actions.add(new SelectionAction("saveImageCustom", "Save Image or Group ...", "Save the selected image or group to disk, with custom options.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
@@ -1047,6 +1487,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							if (imageFile != null)
 								saveCompositeImage(imageFile, contextFigures, exportParamPanel.getDpi(), (exportParamPanel.includeGraphics() ? contextGraphics : null), (exportParamPanel.includeWords() ? contextWords : null), page);
 							return false;
+						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
 						}
 					});
 				}
@@ -1084,7 +1533,8 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
 						
 						//	does this caption match?
-						if (wordCaption.getFirstWord().getString().toLowerCase().startsWith("tab"))
+						String firstWordStr = getStringFrom(wordCaption.getFirstWord());
+						if (firstWordStr.toLowerCase().startsWith("tab"))
 							return false;
 						
 						//	set attributes
@@ -1100,6 +1550,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					public String getActiveLabel() {
 						return ("Click on a caption to assign it to the graphics at " + selGraphics.bounds.toString() + " on page " + (selGraphics.pageId + 1));
 					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
+					}
 				});
 				final Graphics[] clickedGraphics = ImSupplement.getGraphicsAt(supplements, selectedBox);
 				final Graphics[] contextGraphics = ImSupplement.getGraphicsIn(supplements, selGraphics.bounds);
@@ -1108,6 +1567,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
 							copyGraphics(((clickedGraphics.length == 0) ? contextGraphics : clickedGraphics), null, -1, null, page);
 							return false;
+						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
 						}
 					});
 					actions.add(new SelectionAction("saveGraphics", "Save Graphics", "Save the selected graphics to disk.") {
@@ -1118,6 +1586,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							if (graphicsFile != null)
 								saveGraphics(graphicsFile, ((clickedGraphics.length == 0) ? contextGraphics : clickedGraphics), null, exportParamPanel.getDpi(), null, page);
 							return false;
+						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
 						}
 					});
 				}
@@ -1134,6 +1611,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							}
 							return false;
 						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
+						}
 					});
 					actions.add(new SelectionAction("saveGraphicsCustom", "Save Graphics ...", "Save the selected graphics to disk, with custom options.") {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
@@ -1144,6 +1630,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 								saveGraphics(graphicsFile, ((clickedGraphics.length == 0) ? contextGraphics : clickedGraphics), (exportParamPanel.includeFigures() ? contextFigures : null), exportParamPanel.getDpi(), (exportParamPanel.includeWords() ? contextWords : null), page);
 							return false;
 						}
+						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+							JMenuItem mi = super.getMenuItem(invoker);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+							if (regionTypeColor != null) {
+								mi.setOpaque(true);
+								mi.setBackground(regionTypeColor);
+							}
+							return mi;
+						}
 					});
 				}
 			}
@@ -1151,6 +1646,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	private String getStringFrom(ImWord start) {
+		if ((start.getNextRelation() != ImWord.NEXT_RELATION_CONTINUE) && (start.getNextRelation() != ImWord.NEXT_RELATION_HYPHENATED))
+			return start.getString();
+		ImWord end = start;
+		while ((end.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) || (end.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED))
+			end = end.getNextWord();
+		return ImUtils.getString(start, end, true);
 	}
 	
 	private boolean cleanupPageRegions(ImPage page) {
@@ -1438,11 +1942,10 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		boolean captionAbove = docLayout.getBooleanProperty("caption.aboveFigure", false);
 		boolean captionBelow = docLayout.getBooleanProperty("caption.belowFigure", true);
 		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
-//		boolean captionInside = docLayout.getBooleanProperty("caption.insideFigure", false);
+		boolean captionInside = docLayout.getBooleanProperty("caption.insideFigure", false);
 		
 		//	get potential captions
-		//	TODO also consider inside target captions (implement 6-argument method in ImUtils)
-		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside,/* captionInside,*/ true);
+		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside, captionInside, true);
 		
 		//	try setting attributes in unassigned captions first
 		for (int a = 0; a < captionAnnots.length; a++) {
@@ -1525,7 +2028,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		//	use (normalized) caption start
 		captionStart = captionStart.replaceAll("\\s+", ""); // eliminate spaces
 		captionStart = captionStart.replaceAll("\\.", ""); // eliminate dots
-		captionStart = captionStart.replaceAll("[\\-\\u00AD\\u2010-\\u2015\\u2212]+", "-"); // normalize dashes
+		captionStart = captionStart.replaceAll("[\\-\\u00AD\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212]+", "-"); // normalize dashes
 		captionStart = captionStart.replaceAll("[^a-zA-Z0-9\\-\\_]+", "_"); // replace anything that might cause trouble
 		return (docName + "." + captionStart);
 	}
@@ -2110,7 +2613,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
 		
 		//	re-detect paragraphs
-		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+//		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+//		BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+//		BlockLayout blockLayout = blockMetrics.analyze();
+//		blockLayout.writeParagraphStructure();
+		PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
 		
 		//	finally ...
 		Arrays.sort(words, ImUtils.textStreamOrder);
@@ -2135,6 +2642,8 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	 * @param blockBounds the bounding box of the block to create
 	 * @return the newly marked block
 	 */
+	//	TODO make this method accessible from context menu
+	//	TODO figure out conditions for showing menu entry (maybe blocks visible in general, but none selected, and words there)
 	public ImRegion markBlock(ImPage page, BoundingBox blockBounds) {
 		ImWord[] words = page.getWordsInside(blockBounds);
 		if (words.length == 0)
@@ -2149,7 +2658,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
 		
 		//	re-detect paragraphs
-		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+//		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
+//		BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+//		BlockLayout blockLayout = blockMetrics.analyze();
+//		blockLayout.writeParagraphStructure();
+		PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
 		
 		//	finally ...
 		return block;
@@ -2301,51 +2814,33 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				page.removeRegion(bParagraphs[p]);
 			
 			//	re-mark paragraphs
-			PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), ProgressMonitor.dummy);
+//			PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), ProgressMonitor.dummy);
+//			BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+//			BlockLayout blockLayout = blockMetrics.analyze();
+//			blockLayout.writeParagraphStructure();
+			PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
 		}
 	}
 	
-	private boolean restructureBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines, int dpi) {
+	private boolean restructureBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines) {
 		
-		//	make sure block lines come top-down
-		Arrays.sort(blockLines, ImUtils.topDownOrder);
+		//	compute block metrics
+		BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
+		if (blockMetrics == null)
+			return false; // happens if there are no lines at all
 		
-		//	index paragraphs start lines
-		HashSet paragraphStartLineBounds = new HashSet();
-		for (int p = 0; p < blockParagraphs.length; p++) {
-			ImRegion[] paragraphLines = blockParagraphs[p].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
-			if (paragraphLines.length == 0)
-				continue;
-			Arrays.sort(paragraphLines, ImUtils.topDownOrder);
-			paragraphStartLineBounds.add(paragraphLines[0].bounds);
-		}
-		
-		//	assess line starts
-		int pslLeftDistSum = 0;
-		int leftDistSum = 0;
-		boolean[] isIndentedLine = new boolean[blockLines.length];
-		boolean[] isShortLine = new boolean[blockLines.length];
-		for (int l = 0; l < blockLines.length; l++) {
-			int leftDist = (blockLines[l].bounds.left - block.bounds.left);
-			if (paragraphStartLineBounds.contains(blockLines[l].bounds))
-				pslLeftDistSum += leftDist;
-			leftDistSum += leftDist;
-			isIndentedLine[l] = ((dpi / 12) /* about 2mm */ < leftDist); // at least 2mm shy of left block edge
-			int rightDist = (block.bounds.right - blockLines[l].bounds.right);
-			isShortLine[l] = ((block.bounds.right - block.bounds.left) < (rightDist * 20)); // at least 5% shy of right block edge
-		}
-		int avgLeftDist = (leftDistSum / blockLines.length);
-		int avgPslLeftDist = ((paragraphStartLineBounds.isEmpty()) ? avgLeftDist : (pslLeftDistSum / paragraphStartLineBounds.size()));
+		//	run analysis
+		BlockLayout blockLayout = blockMetrics.analyze();
 		
 		//	assemble split option panel
-		final JRadioButton pslIndent = new JRadioButton("indented", ((avgLeftDist + (dpi / 12)) < avgPslLeftDist)); // at least 2mm difference
-		final JRadioButton pslOutdent = new JRadioButton("outdented", ((avgPslLeftDist + (dpi / 12)) < avgLeftDist)); // at least 2mm difference
+		final JRadioButton pslIndent = new JRadioButton("indented", (blockLayout.paragraphStartLinePos == 'I'));
+		final JRadioButton pslOutdent = new JRadioButton("outdented", (blockLayout.paragraphStartLinePos == 'O'));
 		final JRadioButton pslFlush = new JRadioButton("neither", (!pslIndent.isSelected() && !pslOutdent.isSelected()));
 		ButtonGroup pslButtonGroup = new ButtonGroup();
 		pslButtonGroup.add(pslIndent);
 		pslButtonGroup.add(pslOutdent);
 		pslButtonGroup.add(pslFlush);
-		JPanel pslButtonPanel = new JPanel(new GridLayout(1, 0), true);
+		JPanel pslButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT), true);
 		pslButtonPanel.add(pslIndent);
 		pslButtonPanel.add(pslOutdent);
 		pslButtonPanel.add(pslFlush);
@@ -2353,18 +2848,39 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		pslPanel.add(new JLabel("Paragraph start lines are "), BorderLayout.WEST);
 		pslPanel.add(pslButtonPanel, BorderLayout.CENTER);
 		
-		final JCheckBox ilhBold = new JCheckBox("bold", false); // at least 2mm difference
-		final JCheckBox ilhItalics = new JCheckBox("italics", false); // at least 2mm difference
+		final JCheckBox ilhBold = new JCheckBox("bold", false);
+		final JCheckBox ilhItalics = new JCheckBox("italics", false);
 		final JCheckBox ilhAllCaps = new JCheckBox("all-caps", false);
-		JPanel ilhButtonPanel = new JPanel(new GridLayout(1, 0), true);
+		final JTextField ilhTerminator = new JTextField(); // TODO use drop-down with all found ???
+		ilhTerminator.setPreferredSize(new Dimension(20, ilhTerminator.getPreferredSize().height));
+		JPanel ilhButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT), true);
 		ilhButtonPanel.add(ilhBold);
 		ilhButtonPanel.add(ilhItalics);
 		ilhButtonPanel.add(ilhAllCaps);
+		ilhButtonPanel.add(new JLabel("  terminated by "));
+		ilhButtonPanel.add(ilhTerminator);
 		JPanel ilhPanel = new JPanel(new BorderLayout(), true);
 		ilhPanel.add(new JLabel("Split before in-line headings in "), BorderLayout.WEST);
 		ilhPanel.add(ilhButtonPanel, BorderLayout.CENTER);
+		if (blockLayout.inLineHeadingStyle != null) {
+			ilhBold.setSelected(blockLayout.inLineHeadingStyle.indexOf('B') != -1);
+			ilhItalics.setSelected(blockLayout.inLineHeadingStyle.indexOf('I') != -1);
+			ilhAllCaps.setSelected(blockLayout.inLineHeadingStyle.indexOf('C') != -1);
+			ilhTerminator.setText("" + blockLayout.inLineHeadingTerminator);
+		}
 		
-		final JCheckBox shortLineEndsParagraph = new JCheckBox("Lines short of right block edge end paragraphs", true);
+		final JCheckBox uriAbove = new JCheckBox("with", ("RA".indexOf(blockLayout.uriLineSplitMode) != -1));
+		final JCheckBox uriBelow = new JCheckBox("after", ("RB".indexOf(blockLayout.uriLineSplitMode) != -1));
+		JPanel uriButtonPanel = new JPanel(new GridLayout(1, 0), true);
+		uriButtonPanel.add(uriAbove);
+		uriButtonPanel.add(uriBelow);
+		JPanel uriPanel = new JPanel(new FlowLayout(FlowLayout.LEFT), true);
+		uriPanel.add(new JLabel("Start new paragraph "), BorderLayout.WEST);
+		uriPanel.add(uriButtonPanel, BorderLayout.CENTER);
+		uriPanel.add(new JLabel(" lines consisting of a URI"), BorderLayout.EAST);
+		
+		final JCheckBox shortLineEndsParagraph = new JCheckBox("Lines short of right block edge end paragraphs", blockLayout.shortLineEndsParagraph);
+		final JCheckBox lineDistEndsParagraph = new JCheckBox("Large line distance ends paragraphs", (blockLayout.paragraphDistance != -1));
 		final JCheckBox singleLineParagraphs = new JCheckBox("Make each line a separate paragraph", false);
 		singleLineParagraphs.addItemListener(new ItemListener() {
 			public void itemStateChanged(ItemEvent ie) {
@@ -2372,21 +2888,35 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				pslOutdent.setEnabled(!singleLineParagraphs.isSelected());
 				pslFlush.setEnabled(!singleLineParagraphs.isSelected());
 				shortLineEndsParagraph.setEnabled(!singleLineParagraphs.isSelected());
+				lineDistEndsParagraph.setEnabled(!singleLineParagraphs.isSelected());
 				ilhBold.setEnabled(!singleLineParagraphs.isSelected());
 				ilhItalics.setEnabled(!singleLineParagraphs.isSelected());
 				ilhAllCaps.setEnabled(!singleLineParagraphs.isSelected());
+				ilhTerminator.setEditable(!singleLineParagraphs.isSelected());
+				uriAbove.setEnabled(!singleLineParagraphs.isSelected());
+				uriBelow.setEnabled(!singleLineParagraphs.isSelected());
 			}
 		});
 		
 		JPanel blockSplitOptionPanel = new JPanel(new GridLayout(0, 1), true);
 		blockSplitOptionPanel.add(pslPanel);
 		blockSplitOptionPanel.add(shortLineEndsParagraph);
+		blockSplitOptionPanel.add(lineDistEndsParagraph);
 		blockSplitOptionPanel.add(ilhPanel);
+		blockSplitOptionPanel.add(uriPanel);
 		blockSplitOptionPanel.add(singleLineParagraphs);
 		
 		//	prompt user
 		if (DialogFactory.confirm(blockSplitOptionPanel, "Select Block Splitting Options", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION)
 			return false;
+		
+		//	do single-paragraph line split if requested
+		if (singleLineParagraphs.isSelected()) {
+			ImRegion[] lines = new ImRegion[blockMetrics.lines.length];
+			for (int l = 0; l < blockMetrics.lines.length; l++)
+				lines[l] = blockMetrics.lines[l].line;
+			return PageAnalysis.writeSingleLineParagraphStructure(page, block, lines, BlockLayout.getTextOrientation(blockLayout.alignment), BlockLayout.getIntentation(blockLayout.paragraphStartLinePos));
+		}
 		
 		//	get start line position
 		char paragraphStartLinePos = 'N';
@@ -2403,230 +2933,26 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			inLineHeadingStyle += "I";
 		if (ilhAllCaps.isSelected())
 			inLineHeadingStyle += "C";
+		if (inLineHeadingStyle.length() == 0)
+			inLineHeadingStyle = null;
+		String ilhTerminatorStr = ilhTerminator.getText().trim();
+		char inLineHeadingTerminator = ((ilhTerminatorStr.length() == 1) ? ilhTerminatorStr.charAt(0) : ((char) 0));
+		if (inLineHeadingTerminator == 0)
+			inLineHeadingStyle = null;
 		
-		//	loop through to multi-access signature
-		return this.restructureBlock(page, block, blockParagraphs, blockLines, isIndentedLine, isShortLine, singleLineParagraphs.isSelected(), paragraphStartLinePos, shortLineEndsParagraph.isSelected(), inLineHeadingStyle);
-//		
-//		//	index paragraphs
-//		HashMap paragraphsByBounds = new HashMap();
-//		for (int p = 0; p < blockParagraphs.length; p++)
-//			paragraphsByBounds.put(blockParagraphs[p].bounds, blockParagraphs[p]);
-//		
-//		//	keep track of logical paragraphs at block boundaries
-//		boolean firstParagraphHasStart = (singleLineParagraphs.isSelected() || (isIndentedLine[0] && pslIndent.isSelected()) || (!isIndentedLine[0] && pslOutdent.isSelected()));
-//		boolean lastParagraphHasEnd = (singleLineParagraphs.isSelected() || (isShortLine[blockLines.length-1] && shortLineEndsParagraph.isSelected()));
-//		
-//		//	do the splitting
-//		int paragraphStartLineIndex = 0;
-//		for (int l = 0; l < blockLines.length; l++) {
-//			
-//			//	assess whether or not to split after current line
-//			boolean lineEndsParagraph = false;
-//			if (singleLineParagraphs.isSelected()) // just split after each line
-//				lineEndsParagraph = true;
-//			else if (shortLineEndsParagraph.isSelected() && isShortLine[l]) // split after short line
-//				lineEndsParagraph = true;
-//			else if (((l+1) < blockLines.length) && isIndentedLine[l+1] && pslIndent.isSelected()) // split before indented line
-//				lineEndsParagraph = true;
-//			else if (((l+1) < blockLines.length) && !isIndentedLine[l+1] && pslOutdent.isSelected()) // split before outdented line
-//				lineEndsParagraph = true;
-//			
-//			//	perform split
-//			if (lineEndsParagraph) {
-//				BoundingBox paragraphBounds = ImLayoutObject.getAggregateBox(blockLines, paragraphStartLineIndex, (l+1));
-//				ImRegion paragraph = ((ImRegion) paragraphsByBounds.remove(paragraphBounds));
-//				if (paragraph == null)
-//					paragraph = new ImRegion(page, paragraphBounds, ImRegion.PARAGRAPH_TYPE);
-//				paragraphStartLineIndex = (l+1);
-//			}
-//		}
-//		if (paragraphStartLineIndex < blockLines.length) {
-//			BoundingBox paragraphBounds = ImLayoutObject.getAggregateBox(blockLines, paragraphStartLineIndex, blockLines.length);
-//			ImRegion paragraph = ((ImRegion) paragraphsByBounds.remove(paragraphBounds));
-//			if (paragraph == null)
-//				paragraph = new ImRegion(page, paragraphBounds, ImRegion.PARAGRAPH_TYPE);
-//		}
-//		
-//		//	clean up now-spurious paragraphs
-//		for (Iterator pbit = paragraphsByBounds.keySet().iterator(); pbit.hasNext();)
-//			page.removeRegion((ImRegion) paragraphsByBounds.get(pbit.next()));
-//		
-//		//	update word relations
-//		blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
-//		for (int p = 0; p < blockParagraphs.length; p++) {
-//			ImWord[] paragraphWords = blockParagraphs[p].getWords();
-//			if (paragraphWords.length == 0)
-//				continue;
-//			Arrays.sort(paragraphWords, ImUtils.textStreamOrder);
-//			for (int w = 0; w < (paragraphWords.length-1); w++) {
-//				if (paragraphWords[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
-//					paragraphWords[w].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
-//			}
-//			if (((p != 0) || firstParagraphHasStart) && (paragraphWords[0].getPreviousWord() != null))
-//				paragraphWords[0].getPreviousWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
-//			if (((p+1) != blockParagraphs.length) || lastParagraphHasEnd)
-//				paragraphWords[paragraphWords.length-1].setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
-//		}
-//		
-//		//	finally ...
-//		return true;
-	}
-	
-	/**
-	 * Restructure the paragraphs in a block. If single line paragraphs are
-	 * specified, each line in the argument block becomes a paragraph of its
-	 * own. Otherwise, the block is split up at short lines if specified, and
-	 * at indented ('I') lines or outdented ('O') lines, depending on the other
-	 * arguments.
-	 * @param block the block whose lines to group into paragraphs
-	 * @param singleLineParagraphs make each line a separate paragraph?
-	 * @param paragraphStartLinePos use 'I' to indicate indented paragraph
-	 *            start lines, 'O' to indicate outdented ones, and any other
-	 *            char to disable indent/outdent based splitting
-	 * @param shortLineEndsParagraph end paragraphs at short lines?
-	 * @return true if the argument block was modified
-	 */
-	public boolean restructureBlock(ImRegion block, boolean singleLineParagraphs, char paragraphStartLinePos, boolean shortLineEndsParagraph) {
+		//	get URI line splitting mode
+		char uriLineSplitMode = 'N';
+		if (uriAbove.isSelected() && uriBelow.isSelected())
+			uriLineSplitMode = 'R';
+		else if (uriAbove.isSelected())
+			uriLineSplitMode = 'A';
+		else if (uriBelow.isSelected())
+			uriLineSplitMode = 'B';
 		
-		//	get page
-		ImPage page = block.getPage();
-		if (page == null)
-			return false;
+		//	re-analyze layout with user input
+		blockLayout = blockMetrics.analyze(blockLayout.alignment, paragraphStartLinePos, shortLineEndsParagraph.isSelected(), inLineHeadingStyle, inLineHeadingTerminator, (lineDistEndsParagraph.isSelected() ? blockLayout.paragraphDistance : -1), uriLineSplitMode);
 		
-		//	get block lines
-		ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
-		Arrays.sort(blockLines, ImUtils.topDownOrder);
-		
-		//	assess line properties
-		int dpi = page.getImageDPI();
-		boolean[] isIndentedLine = new boolean[blockLines.length];
-		boolean[] isShortLine = new boolean[blockLines.length];
-		for (int l = 0; l < blockLines.length; l++) {
-			int leftDist = (blockLines[l].bounds.left - block.bounds.left);
-			isIndentedLine[l] = ((dpi / 12) /* about 2mm */ < leftDist); // at least 2mm shy of left block edge
-			int rightDist = (block.bounds.right - blockLines[l].bounds.right);
-			isShortLine[l] = ((block.bounds.right - block.bounds.left) < (rightDist * 20)); // at least 5% shy of right block edge
-		}
-		
-		//	do restructuring
-		return this.restructureBlock(block, blockLines, isIndentedLine, isShortLine, singleLineParagraphs, paragraphStartLinePos, shortLineEndsParagraph);
-	}
-	
-	/**
-	 * Restructure the paragraphs in a block. If single line paragraphs are
-	 * specified, each line in the argument block becomes a paragraph of its
-	 * own. Otherwise, the block is split up at short lines if specified, and
-	 * at indented ('I') lines or outdented ('O') lines, depending on the other
-	 * arguments. The two boolean arrays are expected to have the same length
-	 * as the array holding the lines. Further, the lines are expected to be
-	 * sorted top-down (this method cannot sort without potentially losing the
-	 * relation with the boolean arrays).
-	 * @param block the block whose lines to group into paragraphs
-	 * @param blockLines the lines of the argument block
-	 * @param isIndentedLine an array of booleans indicating for each line
-	 *            whether or not it starts flush left in the block
-	 * @param isShortLine an array of booleans indicating for each line
-	 *            whether or not it ends flush right in the block
-	 * @param singleLineParagraphs make each line a separate paragraph?
-	 * @param paragraphStartLinePos use 'I' to indicate indented paragraph
-	 *            start lines, 'O' to indicate outdented ones, and any other
-	 *            char to disable indent/outdent based splitting
-	 * @param shortLineEndsParagraph end paragraphs at short lines?
-	 * @return true if the argument block was modified
-	 */
-	public boolean restructureBlock(ImRegion block, ImRegion[] blockLines, boolean[] isIndentedLine, boolean[] isShortLine, boolean singleLineParagraphs, char paragraphStartLinePos, boolean shortLineEndsParagraph) {
-		
-		//	get page
-		ImPage page = block.getPage();
-		if (page == null)
-			return false;
-		
-		//	get block paragraphs
-		ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
-		
-		//	do restructuring
-		return this.restructureBlock(page, block, blockParagraphs, blockLines, isIndentedLine, isShortLine, singleLineParagraphs, paragraphStartLinePos, shortLineEndsParagraph, "");
-	}
-	
-	private boolean restructureBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines, boolean[] isIndentedLine, boolean[] isShortLine, boolean singleLineParagraphs, char paragraphStartLinePos, boolean shortLineEndsParagraph, String inLineHeadingStyle) {
-		
-		//	index paragraphs
-		HashMap paragraphsByBounds = new HashMap();
-		for (int p = 0; p < blockParagraphs.length; p++)
-			paragraphsByBounds.put(blockParagraphs[p].bounds, blockParagraphs[p]);
-		
-		//	keep track of logical paragraphs at block boundaries
-		boolean firstParagraphHasStart = (singleLineParagraphs || (isIndentedLine[0] && (paragraphStartLinePos == 'I')) || (!isIndentedLine[0] && (paragraphStartLinePos == 'O')));
-		boolean lastParagraphHasEnd = (singleLineParagraphs || (isShortLine[blockLines.length-1] && shortLineEndsParagraph));
-		
-		//	do the splitting
-		int paragraphStartLineIndex = 0;
-		for (int l = 0; l < blockLines.length; l++) {
-			
-			//	assess whether or not to split after current line
-			boolean lineEndsParagraph = false;
-			if (singleLineParagraphs) // just split after each line
-				lineEndsParagraph = true;
-			else if (shortLineEndsParagraph && isShortLine[l]) // split after short line
-				lineEndsParagraph = true;
-			else if (((l+1) < blockLines.length) && isIndentedLine[l+1] && (paragraphStartLinePos == 'I')) // split before indented line
-				lineEndsParagraph = true;
-			else if (((l+1) < blockLines.length) && !isIndentedLine[l+1] && (paragraphStartLinePos == 'O')) // split before outdented line
-				lineEndsParagraph = true;
-			else if (((l+1) < blockLines.length) && (inLineHeadingStyle.length() != 0)) {
-				ImWord[] nextLineWords = blockLines[l+1].getWords();
-				if (nextLineWords.length != 0) {
-					Arrays.sort(nextLineWords, ImUtils.leftRightOrder);
-					ImWord nextLineStart = nextLineWords[0];
-					if ((nextLineStart != null) && (inLineHeadingStyle.indexOf('B') != -1) && !nextLineStart.hasAttribute(ImWord.BOLD_ATTRIBUTE))
-						nextLineStart = null;
-					if ((nextLineStart != null) && (inLineHeadingStyle.indexOf('I') != -1) && !nextLineStart.hasAttribute(ImWord.ITALICS_ATTRIBUTE))
-						nextLineStart = null;
-					if ((nextLineStart != null) && (inLineHeadingStyle.indexOf('C') != -1) && ((nextLineStart.getString().length() < 3) || !nextLineStart.getString().equals(nextLineStart.getString().toUpperCase())))
-						nextLineStart = null;
-					if (nextLineStart != null)
-						lineEndsParagraph = true;
-				}
-			}
-			
-			//	perform split
-			if (lineEndsParagraph) {
-				BoundingBox paragraphBounds = ImLayoutObject.getAggregateBox(blockLines, paragraphStartLineIndex, (l+1));
-				ImRegion paragraph = ((ImRegion) paragraphsByBounds.remove(paragraphBounds));
-				if (paragraph == null)
-					paragraph = new ImRegion(page, paragraphBounds, ImRegion.PARAGRAPH_TYPE);
-				paragraphStartLineIndex = (l+1);
-			}
-		}
-		if (paragraphStartLineIndex < blockLines.length) {
-			BoundingBox paragraphBounds = ImLayoutObject.getAggregateBox(blockLines, paragraphStartLineIndex, blockLines.length);
-			ImRegion paragraph = ((ImRegion) paragraphsByBounds.remove(paragraphBounds));
-			if (paragraph == null)
-				paragraph = new ImRegion(page, paragraphBounds, ImRegion.PARAGRAPH_TYPE);
-		}
-		
-		//	clean up now-spurious paragraphs
-		for (Iterator pbit = paragraphsByBounds.keySet().iterator(); pbit.hasNext();)
-			page.removeRegion((ImRegion) paragraphsByBounds.get(pbit.next()));
-		
-		//	update word relations
-		blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
-		for (int p = 0; p < blockParagraphs.length; p++) {
-			ImWord[] paragraphWords = blockParagraphs[p].getWords();
-			if (paragraphWords.length == 0)
-				continue;
-			Arrays.sort(paragraphWords, ImUtils.textStreamOrder);
-			for (int w = 0; w < (paragraphWords.length-1); w++) {
-				if (paragraphWords[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
-					paragraphWords[w].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
-			}
-			if (((p != 0) || firstParagraphHasStart) && (paragraphWords[0].getPreviousWord() != null))
-				paragraphWords[0].getPreviousWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
-			if (((p+1) != blockParagraphs.length) || lastParagraphHasEnd)
-				paragraphWords[paragraphWords.length-1].setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
-		}
-		
-		//	finally ...
-		return true;
+		//	apply computed layout
+		return blockLayout.writeParagraphStructure();
 	}
 }
