@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -33,6 +33,7 @@ import java.awt.Shape;
 import java.awt.geom.CubicCurve2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.QuadCurve2D;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -62,6 +63,7 @@ import de.uka.ipd.idaho.im.imagine.plugins.AbstractGoldenGateImaginePlugin;
 import de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.ColumnOccupationLow;
 import de.uka.ipd.idaho.im.imagine.plugins.tables.TableAreaStatistics.GraphicsSlice;
+import de.uka.ipd.idaho.im.util.ImDocumentIO;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImUtils;
@@ -92,8 +94,10 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin imple
 	public void init() {
 		
 		//	get table action provider
-		if (this.parent == null)
+		if (this.parent == null) {
 			this.tableActionProvider = new TableActionProvider();
+			this.tableActionProvider.init();
+		}
 		else this.tableActionProvider = ((TableActionProvider) this.parent.getPlugin(TableActionProvider.class.getName()));
 	}
 	
@@ -785,13 +789,60 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin imple
 				if ((cTac.cols.length > tac.cols.length) && cTac.bounds.liesIn(tac.bounds, false))
 					subTableAreaCandidates.add(cTac);
 			}
-			if (subTableAreaCandidates.size() > 1) {
-				pageTableAreaCandidates.remove(t--);
-				pm.setInfo("   - removed " + tac.bounds + " as likely conflation of " + subTableAreaCandidates.size() + " better candidates:");
-				for (int s = 0; s < subTableAreaCandidates.size(); s++) {
-					TableAreaCandidate sTac = ((TableAreaCandidate) subTableAreaCandidates.get(s));
-					pm.setInfo("     - " + sTac.bounds);
+			if (subTableAreaCandidates.size() < 2)
+				continue;
+			for (int ct = 0; ct < subTableAreaCandidates.size(); ct++) {
+				TableAreaCandidate cTac = ((TableAreaCandidate) subTableAreaCandidates.get(ct));
+				for (int cct = (ct+1); cct < subTableAreaCandidates.size(); cct++) {
+					TableAreaCandidate ccTac = ((TableAreaCandidate) subTableAreaCandidates.get(cct));
+					if (ccTac.bounds.overlaps(cTac.bounds))
+						subTableAreaCandidates.remove(cct--);
 				}
+			}
+			if (subTableAreaCandidates.size() < 2)
+				continue;
+			
+			pm.setInfo("   - checking columns in " + tac.bounds + " against sub candidates");
+			for (int ct = 0; ct < subTableAreaCandidates.size(); ct++) {
+				TableAreaCandidate cTac = ((TableAreaCandidate) subTableAreaCandidates.get(ct));
+				pm.setInfo("     - candidate " + cTac.bounds);
+				int colFlankMatchCount = 0;
+				int flankMatchColCount = 0;
+				for (int cc = 0; cc < cTac.cols.length; cc++) {
+					pm.setInfo("       - " + cTac.cols[cc].bounds);
+					for (int c = 0; c < tac.cols.length; c++) {
+						if (tac.cols[c].bounds.right <= cTac.cols[cc].bounds.left)
+							continue;
+						if (cTac.cols[cc].bounds.right <= tac.cols[c].bounds.left)
+							pm.setInfo("       ==> no match");
+						else {
+							pm.setInfo("       ==> overlaps with " + tac.cols[c].bounds);
+							boolean flankMatch = false;
+							if (cTac.cols[cc].bounds.left == tac.cols[c].bounds.left) {
+								pm.setInfo("       ==> left flank match");
+								colFlankMatchCount++;
+								flankMatch = true;
+							}
+							if (cTac.cols[cc].bounds.right == tac.cols[c].bounds.right) {
+								pm.setInfo("       ==> right flank match");
+								colFlankMatchCount++;
+								flankMatch = true;
+							}
+							if (flankMatch)
+								flankMatchColCount++;
+						}
+						break;
+					}
+				}
+				pm.setInfo("     ==> got " + colFlankMatchCount + " matching column flanks of " + (tac.cols.length * 2) + " / " + (cTac.cols.length * 2));
+				pm.setInfo("     ==> got " + flankMatchColCount + " columns with matching flanks of " + tac.cols.length + " / " + cTac.cols.length);
+			}
+			
+			pageTableAreaCandidates.remove(t--);
+			pm.setInfo("   - removed " + tac.bounds + " as likely conflation of " + subTableAreaCandidates.size() + " better candidates:");
+			for (int s = 0; s < subTableAreaCandidates.size(); s++) {
+				TableAreaCandidate sTac = ((TableAreaCandidate) subTableAreaCandidates.get(s));
+				pm.setInfo("     - " + sTac.bounds);
 			}
 		}
 //		
@@ -957,7 +1008,8 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin imple
 			if (ImWord.TEXT_STREAM_TYPE_DELETED.equals(words[w].getTextStreamType())) {}
 			else if (ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(words[w].getTextStreamType())) {}
 			else if (ImWord.TEXT_STREAM_TYPE_PAGE_TITLE.equals(words[w].getTextStreamType())) {}
-			else stripeWordLists[Math.max(regionBounds.top, words[w].bounds.top) - regionBounds.top].add(words[w]);
+			else if (words[w].bounds.getHeight() != 0) // stripe word list can be null for height 0 (OCR artifacts !!!)
+				stripeWordLists[Math.max(regionBounds.top, words[w].bounds.top) - regionBounds.top].add(words[w]);
 		}
 		
 		//	generate stripes
@@ -1159,6 +1211,8 @@ When marking a table, keep using current approach of optimizing column count and
 	}
 	
 	private static TableAreaCandidate getTableAreaCandidate(ImPage page, BoundingBox tableArea, float docWordDensity1d, float docWordDensity2d, float docWordSpacing, float docNormSpaceWidth, ProgressMonitor pm) {
+		if ((aimAtPage != -1) && (page.pageId != aimAtPage))
+			return null;
 		
 		//	make sure to (a) wrap table area tightly around contained words, but (b) not to cut off any words
 		ImWord[] areaWords;
@@ -1199,8 +1253,11 @@ When marking a table, keep using current approach of optimizing column count and
 		//	==> TODO consider introducing table font size style parameter
 		
 		
-		//	TODO prevent marking overlapping tables !!!
+		//	TODOne prevent marking overlapping tables !!!
 		//	TODO example: EJT 404 / IMF FFD9CE63FF9BF752FF85FF922711FFB9 (EJT-testbed/197)
+		
+		//	TODOne double-check area peak vs. stripe grid assessment ==> corrected error in stripe flank computation
+		//	TODOne TEST ejt-585_ebersole_cicimurri_stinger.pdf.imd (page 6)
 		
 		//	compute table area statistics
 //		TableAreaStatistics areaStats = new TableAreaStatistics(areaWords, normSpaceWidth);
@@ -1499,6 +1556,9 @@ When marking a table, keep using current approach of optimizing column count and
 			return null;
 		}
 		
+		//	TODOne check "short horizontal grid line" observation ==> added a few pixels of tolerance for grid lines mingled into words
+		//	TODOne TEST ejt-598_rivera_herculano_lanna.pdf.imd (page 6), EJT-testbed/615
+		
 		//	use this for debug
 //		BufferedImage areaImage = null;
 		Graphics2D areaGr = null;
@@ -1509,7 +1569,7 @@ When marking a table, keep using current approach of optimizing column count and
 //			if (areaImage == null) {
 //				areaImage = new BufferedImage(areaStats.grImage.getWidth(), areaStats.grImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
 //				areaGr = areaImage.createGraphics();
-//				areaGr.drawImage(areaStats.grImage, 0, 0, null);
+////				areaGr.drawImage(areaStats.grImage, 0, 0, null);
 //				areaGr.setColor(new Color(128, 128, 128, 128));
 //				for (int w = 0; w < areaStats.words.length; w++) {
 //					int wordLeft = (areaStats.words[w].bounds.left - areaStats.grBounds.left);
@@ -1520,9 +1580,18 @@ When marking a table, keep using current approach of optimizing column count and
 //			areaGr.setColor(new Color(0, 0, 255, 64));
 //			for (int tr = 0; tr < areaStripes.length; tr++)
 //				areaGr.fillRect(0, (areaStripes[tr].bounds.top - areaStats.grBounds.top), areaStats.grBounds.getWidth(), areaStripes[tr].bounds.getHeight());
-//			areaGr.setColor(new Color(0, 0, 255, 128));
+//			areaGr.setColor(new Color(0, 0, 255, 64));
 //			for (int r = 0; r < areaStats.grRowOccupations.length; r++)
 //				areaGr.fillRect(0, r, areaStats.grRowOccupations[r], 1);
+//			if (areaImage != null) {
+//				areaGr.dispose();
+//				ImageDisplayDialog grIdd = new ImageDisplayDialog("Table Area Graphics in Page " + page.pageId + " at " + areaStats.grBounds);
+//				grIdd.addImage(areaImage, "");
+//				grIdd.setSize(600, 800);
+//				grIdd.setLocationRelativeTo(null);
+//				grIdd.setVisible(true);
+//			}
+			
 			GraphicsPeakStats grRowStats25 = analyzeRowGraphicsPeaks(localAreaStats, areaStripes, areaWordHeight, 0.25f, 0.7f, areaGr);
 //			GraphicsPeakStats grRowStats33 = analyzeRowGraphicsPeaks(localAreaStats, areaStripes, areaWordHeight, 0.33f, 0.7f, areaGr);
 //			GraphicsPeakStats grRowStats50 = analyzeRowGraphicsPeaks(localAreaStats, areaStripes, areaWordHeight, 0.5f, 0.7f, areaGr);
@@ -1548,7 +1617,7 @@ When marking a table, keep using current approach of optimizing column count and
 //			if (areaImage == null) {
 //				areaImage = new BufferedImage(areaStats.grImage.getWidth(), areaStats.grImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
 //				areaGr = areaImage.createGraphics();
-//				areaGr.drawImage(areaStats.grImage, 0, 0, null);
+////				areaGr.drawImage(areaStats.grImage, 0, 0, null);
 //				areaGr.setColor(new Color(128, 128, 128, 128));
 //				for (int w = 0; w < areaStats.words.length; w++) {
 //					int wordLeft = (areaStats.words[w].bounds.left - areaStats.grBounds.left);
@@ -1559,9 +1628,18 @@ When marking a table, keep using current approach of optimizing column count and
 //			areaGr.setColor(new Color(255, 0, 0, 64));
 //			for (int tc = 0; tc < areaTestCols.length; tc++)
 //				areaGr.fillRect((areaTestCols[tc].bounds.left - areaStats.grBounds.left), 0, areaTestCols[tc].bounds.getWidth(), areaStats.grBounds.getHeight());
-//			areaGr.setColor(new Color(255, 0, 0, 128));
+//			areaGr.setColor(new Color(255, 0, 0, 64));
 //			for (int c = 0; c < areaStats.grColOccupations.length; c++)
 //				areaGr.fillRect(c, (areaStats.grBounds.getHeight() - areaStats.grColOccupations[c]), 1, areaStats.grColOccupations[c]);
+//			if (areaImage != null) {
+//				areaGr.dispose();
+//				ImageDisplayDialog grIdd = new ImageDisplayDialog("Table Area Graphics in Page " + page.pageId + " at " + areaStats.grBounds);
+//				grIdd.addImage(areaImage, "");
+//				grIdd.setSize(600, 800);
+//				grIdd.setLocationRelativeTo(null);
+//				grIdd.setVisible(true);
+//			}
+			
 			GraphicsPeakStats grColStats25 = analyzeColGraphicsPeaks(localAreaStats, areaTestCols, areaWordHeight, docNormSpaceWidth, 0.25f, 0.8f, areaGr);
 //			GraphicsPeakStats grColStats33 = analyzeColGraphicsPeaks(localAreaStats, areaTestCols, areaWordHeight, docNormSpaceWidth, 0.33f, 0.8f, areaGr);
 //			GraphicsPeakStats grColStats50 = analyzeColGraphicsPeaks(localAreaStats, areaTestCols, areaWordHeight, docNormSpaceWidth, 0.5f, 0.8f, areaGr);
@@ -1718,51 +1796,69 @@ When marking a table, keep using current approach of optimizing column count and
 					int peakCenter = (o + (peakWidth / 2) + areaOffset);
 					//	TODO cut some slack for mingled lines?
 					for (int s = 0; s < areaStripes.length; s++) {
-						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= peakCenter)
+						int slack = getGraphicsPeakUntagleSlack(stripesVertical, areaStripes[s]);
+						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= (peakCenter + slack)) {
+							if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) > peakCenter)
+								System.out.println("   --> accepted center " + peakCenter + " mingled into right/bottom of " + areaStripes[s]);
 							continue;
-						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakCenter) {
+						}
+						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < (peakCenter - slack)) {
 							intraStripePeaks++;
 							stripeIntraPeaks[s]++;
 							System.out.println("   --> found center " + peakCenter + " inside " + areaStripes[s]);
 						}
 						else {
 							interStripePeaks++;
-							System.out.println("   --> found center " + peakCenter + " before " + areaStripes[s]);
+							if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakCenter)
+								System.out.println("   --> accepted center " + peakCenter + " mingled into left/top of " + areaStripes[s]);
+							else System.out.println("   --> found center " + peakCenter + " before " + areaStripes[s]);
 						}
 						break;
 					}
 				}
 				//	peak to wide to be a simple line, likely stripe grid, look at flanks
 				else {
-					int peakMinFlank = ((o / 2) + areaOffset);
+					int peakMinFlank = (o + areaOffset);
 					//	TODO cut some slack for mingled flanks?
 					for (int s = 0; s < areaStripes.length; s++) {
-						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= peakMinFlank)
+						int slack = getGraphicsPeakUntagleSlack(stripesVertical, areaStripes[s]);
+						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= (peakMinFlank + slack)) {
+							if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) > peakMinFlank)
+								System.out.println("   --> accepted min flank " + peakMinFlank + " mingled into right/bottom of " + areaStripes[s]);
 							continue;
-						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakMinFlank) {
+						}
+						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < (peakMinFlank - slack)) {
 							intraStripePeaks++;
 							stripeIntraPeaks[s]++;
 							System.out.println("   --> found min flank " + peakMinFlank + " inside " + areaStripes[s]);
 						}
 						else {
 							interStripePeaks++;
-							System.out.println("   --> found min flank " + peakMinFlank + " before " + areaStripes[s]);
+							if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakMinFlank)
+								System.out.println("   --> accepted min flank " + peakMinFlank + " mingled into left/top of " + areaStripes[s]);
+							else System.out.println("   --> found min flank " + peakMinFlank + " before " + areaStripes[s]);
 						}
 						break;
 					}
-					int peakMaxFlank = ((lo / 2) + areaOffset);
+					int peakMaxFlank = (lo + areaOffset);
 					//	TODO cut some slack for mingled flanks?
 					for (int s = 0; s < areaStripes.length; s++) {
-						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= peakMaxFlank)
+						int slack = getGraphicsPeakUntagleSlack(stripesVertical, areaStripes[s]);
+						if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) <= (peakMaxFlank + slack)) {
+							if ((stripesVertical ? areaStripes[s].right : areaStripes[s].bottom) > peakMaxFlank)
+								System.out.println("   --> accepted max flank " + peakMaxFlank + " mingled into right/bottom of " + areaStripes[s]);
 							continue;
-						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakMaxFlank) {
+						}
+						if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < (peakMaxFlank - slack)) {
 							intraStripePeaks++;
 							stripeIntraPeaks[s]++;
 							System.out.println("   --> found max flank " + peakMaxFlank + " inside " + areaStripes[s]);
 						}
 						else {
 							interStripePeaks++;
-							System.out.println("   --> found max flank " + peakMaxFlank + " before " + areaStripes[s]);
+							if ((stripesVertical ? areaStripes[s].left : areaStripes[s].top) < peakMaxFlank)
+								System.out.println("   --> accepted max flank " + peakMaxFlank + " mingled into left/top of " + areaStripes[s]);
+							else System.out.println("   --> found max flank " + peakMaxFlank + " before " + areaStripes[s]);
 						}
 						break;
 					}
@@ -1773,6 +1869,10 @@ When marking a table, keep using current approach of optimizing column count and
 		}
 		System.out.println(" ==> got " + peaks + " peaks, " + fullHeightPeaks + " full height ones, " + interStripePeaks + " between stripes, and " + intraStripePeaks + " inside stripes (" + Arrays.toString(stripeIntraPeaks) + ")");
 		return new GraphicsPeakStats(peaks, fullHeightPeaks, interStripePeaks, intraStripePeaks, stripeIntraPeaks);
+	}
+	
+	private static int getGraphicsPeakUntagleSlack(boolean stripesVertical, BoundingBox areaStripe) {
+		return Math.min(2, (((stripesVertical ? areaStripe.getWidth() : areaStripe.getHeight()) * 3) / 20));
 	}
 	
 	private static class TableAreaStripe {
@@ -1878,4 +1978,18 @@ When seeking tables split up into multiple blocks:
 			return ((bb2.getArea() - bb1.getArea()));
 		}
 	};
+	
+	/** TEST ONLY !!! */
+	public static void main(String[] args) throws Exception {
+		//	zoosystema2020v42a3.pdf.imdir (partially ultra-dense table on page 5)
+		//	EJT/ejt-585_ebersole_cicimurri_stinger.pdf.imdir (horizontal stripe grid on page 6)
+		//	EJT/ejt-598_rivera_herculano_lanna.pdf.imdir (mingled horizontal line grid on page 6)
+		String testDocPath = "E:/Testdaten/PdfExtract/zoosystema2020v42a3.pdf.imdir";
+		aimAtPage = 5;
+		ImDocument doc = ImDocumentIO.loadDocument(new File(testDocPath));
+		TableDetectorProvider tdp = new TableDetectorProvider();
+		tdp.init();
+		tdp.detectTables(doc, DocumentStyle.getStyleFor(doc), null, ProgressMonitor.dummy);
+	}
+	private static int aimAtPage = -1;
 }

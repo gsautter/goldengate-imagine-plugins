@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -255,15 +255,15 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 			int dsAnchorMatchCount = 0;
 			for (int a = 0; a < ds.anchors.length; a++) {
 				System.out.println("   - testing anchor " + ds.anchors[a].pattern + " at " + ds.anchors[a].area);
-				if (anchorMatches(doc, doc.getFirstPageId(), ds.anchors[a].area, ds.anchors[a].minFontSize, ds.anchors[a].maxFontSize, ds.anchors[a].isBold, ds.anchors[a].isItalics, ds.anchors[a].isAllCaps, ds.anchors[a].pattern)) {
-					dsAnchorMatchCount++;
-					System.out.println("   --> match on first page");
-				}
-				else if ((ds.anchorPageId != 0) && anchorMatches(doc, ds.anchorPageId, ds.anchors[a].area, ds.anchors[a].minFontSize, ds.anchors[a].maxFontSize, ds.anchors[a].isBold, ds.anchors[a].isItalics, ds.anchors[a].isAllCaps, ds.anchors[a].pattern)) {
-					dsAnchorMatchCount++;
-					System.out.println("   --> match after cover pages");
-				}
-				else System.out.println("   --> no match");
+				boolean misMatch = true;
+				for (int p = 0; p <= Math.min(ds.maxAnchorPageId, (doc.getPageCount() - 1)); p++)
+					if (anchorMatches(doc, (doc.getFirstPageId() + p), ds.anchors[a].area, ds.anchors[a].minFontSize, ds.anchors[a].maxFontSize, ds.anchors[a].isBold, ds.anchors[a].isItalics, ds.anchors[a].isAllCaps, ds.anchors[a].pattern)) {
+						dsAnchorMatchCount++;
+						System.out.println("   --> match on page " + p);
+						misMatch = false;
+						break;
+					}
+				if (misMatch) System.out.println("   --> no match");
 			}
 			if (dsAnchorMatchCount == 0)
 				continue;
@@ -382,7 +382,7 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 	
 	private static class DocStyle {
 		DocStyleAnchor[] anchors;
-		int anchorPageId;
+		int maxAnchorPageId;
 		Settings paramList;
 		DocStyle(Settings paramList) {
 			this.paramList = paramList;
@@ -402,6 +402,8 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 			String[] anchorNames = anchorParamLists.getSubsetPrefixes();
 			ArrayList anchorList = new ArrayList();
 			for (int a = 0; a < anchorNames.length; a++) {
+				if ("maxPageId".equals(anchorNames[a]))
+					continue;
 				Settings anchorParamList = anchorParamLists.getSubset(anchorNames[a]);
 				BoundingBox area = BoundingBox.parse(anchorParamList.getSetting("area"));
 				if (area == null)
@@ -422,7 +424,8 @@ public class DocumentStyleProvider extends AbstractResourceManager implements Go
 				} catch (NumberFormatException nfe) {}
 			}
 			this.anchors = ((DocStyleAnchor[]) anchorList.toArray(new DocStyleAnchor[anchorList.size()]));
-			this.anchorPageId = Integer.parseInt(this.paramList.getSetting("layout.coverPageCount", "0"));
+//			this.anchorPageId = Integer.parseInt(this.paramList.getSetting("layout.coverPageCount", "0"));
+			this.maxAnchorPageId = Integer.parseInt(this.paramList.getSetting("anchor.maxPageId", this.paramList.getSetting("layout.coverPageCount", "0")));
 		}
 		Properties toProperties() {
 			return this.paramList.toProperties();

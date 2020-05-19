@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -470,13 +470,118 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					detailAnnotList.add(annots[a]);
 			}
 			
-			//	check annotation nesting
+			//	check nesting on structural annotations
 			pm.setProgress(60);
 			pm.setInfo(" - checking structural annotation nesting");
 			this.cleanUpInterleavingAnnots(doc, structAnnotList);
+			
+			//	handle detail annotations
 			pm.setProgress(annotPathOperations.isEmpty() ? 80 : 73);
 			pm.setInfo(" - checking detail annotation nesting");
+			
+			//	extend annotations to cover entirety of joined (or hyphenated) words
+			for (int a = 0; a < detailAnnotList.size(); a++) {
+				ImAnnotation annot = ((ImAnnotation) detailAnnotList.get(a));
+				
+				//	seek potential new start word further upstream
+				ImWord first = annot.getFirstWord();
+				while (first != null) {
+					if (first.getPreviousRelation() == ImWord.NEXT_RELATION_CONTINUE) {}
+					else if (first.getPreviousRelation() == ImWord.NEXT_RELATION_HYPHENATED) {}
+					else break;
+					first = first.getPreviousWord();
+				}
+				
+				//	seek potential new end word further downstream
+				ImWord last = annot.getLastWord();
+				while (last != null) {
+					if (last.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) {}
+					else if (last.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED) {}
+					else break;
+					last = last.getNextWord();
+				}
+				
+				//	adjust annotation if anything changed
+				if ((first != null) && (first != annot.getFirstWord()))
+					annot.setFirstWord(first);
+				if ((last != null) && (last != annot.getLastWord()))
+					annot.setLastWord(last);
+			}
+			
+			//	re-sort detail annotations in case we changed anything
+			Collections.sort(detailAnnotList, annotationOrder);
+			
+			//	clean up nesting
 			this.cleanUpInterleavingAnnots(doc, detailAnnotList);
+			
+			//	merge adjacent equal detail annotations (type and attributes)
+			//	TEST Zootaxa/zootaxa.4772.2.1.pdf.imd (version on server is fixed)
+			ArrayList openAnnots = new ArrayList();
+			for (int a = 0; a < detailAnnotList.size(); a++) {
+				ImAnnotation annot = ((ImAnnotation) detailAnnotList.get(a));
+				
+				//	make sure not to merge across table cell boundaries
+				if (ImWord.TEXT_STREAM_TYPE_TABLE.equals(annot.getFirstWord().getTextStreamType()))
+					continue;
+				
+				//	find closest end of annotations starting before current one
+				int minOpenEndPos = Integer.MAX_VALUE;
+				if (openAnnots.size() != 0)
+					for (int oa = 0; oa < openAnnots.size(); oa++) {
+						ImAnnotation oAnnot = ((ImAnnotation) openAnnots.get(oa));
+						if (oAnnot.getLastWord().getTextStreamPos() < annot.getFirstWord().getTextStreamPos())
+							openAnnots.remove(oa--); // we've proceeded beyond the end of this one
+						else if (oAnnot.getFirstWord().getTextStreamPos() == annot.getFirstWord().getTextStreamPos())
+							break; // anything to come can just as well be nested in current annotation
+						else minOpenEndPos = Math.min(minOpenEndPos, oAnnot.getLastWord().getTextStreamPos());
+					}
+				
+				//	find successor to merge with, as well as closest end of adjacent annotations
+				ImAnnotation mergeAnnot = null;
+				int minNonMergeEnd = Integer.MAX_VALUE;
+				for (int ma = (a+1); ma < detailAnnotList.size(); ma++) {
+					ImAnnotation mAnnot = ((ImAnnotation) detailAnnotList.get(ma));
+					if (mAnnot.getFirstWord().getTextStreamPos() > (annot.getLastWord().getTextStreamPos() + 1))
+						break; // no use seeking beyond gap
+					
+					//	nested inside current annotation
+					if (mAnnot.getLastWord().getTextStreamPos() <= annot.getLastWord().getTextStreamPos()) {
+						
+						//	"merge" on the fly by removing nested equal annotation
+						if (annot.getType().equals(mAnnot.getType()) && AttributeUtils.hasEqualAttributes(annot, mAnnot)) {
+							doc.removeAnnotation(mAnnot);
+							detailAnnotList.remove(ma--);
+						}
+						
+						//	no need to worry about this one with regard to nesting
+						continue;
+					}
+					
+					//	this one looks good, also regarding open annotations
+					if (annot.getType().equals(mAnnot.getType()) && (mAnnot.getLastWord().getTextStreamPos() <= minOpenEndPos) && AttributeUtils.hasEqualAttributes(annot, mAnnot)) {
+						mergeAnnot = mAnnot;
+						doc.removeAnnotation(mAnnot);
+						detailAnnotList.remove(ma);
+						break;
+					}
+					
+					//	this one is adjacent to current annotation, need to observe nesting
+					if (mAnnot.getFirstWord().getTextStreamPos() == (annot.getLastWord().getTextStreamPos() + 1)) {
+						if (mAnnot.getLastWord().getTextStreamPos() < minNonMergeEnd)
+							break; // there is some further reaching annotation in the way
+						else minNonMergeEnd = Math.min(minNonMergeEnd, mAnnot.getLastWord().getTextStreamPos()); // no merging across start of this one
+					}
+				}
+				
+				//	anything to merge with?
+				if (mergeAnnot != null) {
+					annot.setLastWord(mergeAnnot.getLastWord());
+					a--; // start over with new end position
+				}
+				
+				//	mark ourselves as open for downstream annotations
+				else openAnnots.add(annot);
+			}
 			
 			//	any custom cleanup rules to apply? (we can save the XML wrapper hassle if not)
 			if (annotPathOperations.isEmpty())
@@ -877,6 +982,9 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 		//	single word selection (offer editing word attributes above same for other annotations)
 		if (start == end)
 			actions.add(new SelectionAction("editAttributesWord", "Edit Word Attributes", ("Edit attributes of '" + start.getString() + "'.")) {
+				protected boolean isAtomicAction() {
+					return false;
+				}
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					idmp.editAttributes(start, start.getType(), start.getString());
 					return true;
@@ -888,6 +996,9 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			
 			//	edit attributes of existing annotations
 			actions.add(new SelectionAction("editAttributesAnnot", ("Edit " + spanningAnnots[0].getType() + " Attributes"), ("Edit attributes of '" + spanningAnnots[0].getType() + "' annotation.")) {
+				protected boolean isAtomicAction() {
+					return false;
+				}
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					StringBuffer spanningAnnotValue = new StringBuffer();
 					for (ImWord imw = spanningAnnots[0].getFirstWord(); imw != null; imw = imw.getNextWord()) {
@@ -914,6 +1025,9 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			//	offer copying attributes to other annotation
 			if (start == end)
 				actions.add(new TwoClickSelectionAction("copyAttributesAnnot", "Copy " + spanningAnnots[0].getType() + " Attributes", "Copy attributes of '" + spanningAnnots[0].getType() + "' annotation.") {
+					protected boolean isAtomicAction() {
+						return false;
+					}
 					public ImWord getFirstWord() {
 						return start;
 					}
@@ -1037,6 +1151,9 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 			if (start == end)
 				actions.add(new TwoClickSelectionAction("copyAttributesAnnot", "Copy Annotation Attributes ...", "Copy attributes of selected annotations.") {
 					private ImAnnotation sourceAnnot = null;
+					protected boolean isAtomicAction() {
+						return false;
+					}
 					public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
 						JMenu pm = new JMenu("Copy Annotation Attributes ...");
 						JMenuItem mi;
@@ -1465,13 +1582,17 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 				break;
 		}
 		
-		//	copy attributes (using 'add' mode by default)
-		idmp.beginAtomicAction("Copy " + sourceAnnot.getType() + " Attributes");
-		AttributeUtils.copyAttributes(sourceAnnot, targetAnnot, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
-		idmp.endAtomicAction();
+		//	copy attributes (using 'add' mode by default) and open them for editing
+		try {
+			idmp.beginAtomicAction("Copy " + sourceAnnot.getType() + " Attributes");
+			AttributeUtils.copyAttributes(sourceAnnot, targetAnnot, AttributeUtils.ADD_ATTRIBUTE_COPY_MODE);
+			idmp.editAttributes(targetAnnot, targetAnnot.getType(), targetAnnotValue.toString());
+		}
+		finally {
+			idmp.endAtomicAction();
+		}
 		
-		//	open attributes for editing
-		idmp.editAttributes(targetAnnot, targetAnnot.getType(), targetAnnotValue.toString());
+		//	indicate changes
 		return true;
 	}
 	

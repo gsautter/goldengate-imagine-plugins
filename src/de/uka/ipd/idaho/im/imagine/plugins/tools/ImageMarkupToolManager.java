@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -33,7 +33,6 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
-import java.awt.GridLayout;
 import java.awt.Point;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
@@ -88,7 +87,7 @@ import de.uka.ipd.idaho.gamta.util.gPath.types.GPathObject;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.swing.AnnotationDisplayDialog;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
-import de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager;
+import de.uka.ipd.idaho.goldenGate.plugins.AbstractDocumentProcessorManager;
 import de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessor;
 import de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessorManager;
 import de.uka.ipd.idaho.goldenGate.plugins.MonitorableDocumentProcessor;
@@ -119,7 +118,7 @@ import de.uka.ipd.idaho.stringUtils.StringVector;
  * 
  * @author sautter
  */
-public class ImageMarkupToolManager extends AbstractResourceManager implements SelectionActionProvider, ImageMarkupToolProvider {
+public class ImageMarkupToolManager extends AbstractDocumentProcessorManager implements SelectionActionProvider, ImageMarkupToolProvider {
 	
 	private static final String FILE_EXTENSION = ".imTool";
 	
@@ -141,6 +140,42 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 	 */
 	public String getResourceTypeLabel() {
 		return "Image Markup Tool";
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessorManager#getDocumentProcessor(java.lang.String)
+	 */
+	public DocumentProcessor getDocumentProcessor(String name) {
+		DpImageMarkupTool dpImt = this.getImageMarkupTool(name, this.loadSettingsResource(name));
+		return ((dpImt == null) ? null : dpImt.processorProvider.getDocumentProcessor(dpImt.processorName));
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessorManager#createDocumentProcessor()
+	 */
+	public String createDocumentProcessor() {
+		return null; // we're not creating any document processors this way ...
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessorManager#editDocumentProcessor(java.lang.String)
+	 */
+	public void editDocumentProcessor(String name) {
+		 // we're not editing any document processors this way ...
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager#getToolsMenuLabel()
+	 */
+	public String getToolsMenuLabel() {
+		return "Apply";
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessorManager#editDocumentProcessors()
+	 */
+	public void editDocumentProcessors() {
+		this.editImageMarkupTools();
 	}
 	
 	/* (non-Javadoc)
@@ -531,16 +566,6 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 					int choice = DialogFactory.confirm(("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, (isWarning ? JOptionPane.WARNING_MESSAGE : JOptionPane.ERROR_MESSAGE));
 					if (choice != JOptionPane.YES_OPTION)
 						return;
-//					if (precludingError.startsWith("W:")) {
-//						precludingError = precludingError.substring("W:".length());
-//						int choice = DialogFactory.confirm(("The document does not seem to be fit for " + this.label + ":\n" + precludingError + "\n\nExecuting " + this.label + " anyway might produce undesired results. Proceed?"), ("Document not Fit for '" + this.label + "'"), JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-//						if (choice != JOptionPane.YES_OPTION)
-//							return;
-//					}
-//					else {
-//						DialogFactory.alert(("The document is fit for " + this.label + ":\n" + precludingError), ("Document not Fit for '" + this.label + "'"), JOptionPane.ERROR_MESSAGE);
-//						return;
-//					}
 				}
 			}
 			
@@ -1453,9 +1478,9 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 			gbc.weightx = 1;
 			this.linePanel.add(this.filterLabel, gbc.clone());
 			gbc.gridx = 1;
-			gbc.weightx = 0;
 			this.linePanel.add(this.messageLabel, gbc.clone());
 			gbc.gridx = 2;
+			gbc.weightx = 0;
 			this.linePanel.add(this.isWarningLabel, gbc.clone());
 			gbc.gridy++;
 			
@@ -1467,9 +1492,9 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				gbc.weightx = 1;
 				this.linePanel.add(line.filterPanel, gbc.clone());
 				gbc.gridx = 1;
-				gbc.weightx = 0;
 				this.linePanel.add(line.messagePanel, gbc.clone());
 				gbc.gridx = 2;
+				gbc.weightx = 0;
 				this.linePanel.add(line.isWarning, gbc.clone());
 				gbc.gridy++;
 			}
@@ -1826,12 +1851,33 @@ public class ImageMarkupToolManager extends AbstractResourceManager implements S
 				this.isWarning.setBorder(BorderFactory.createLoweredBevelBorder());
 				this.isWarning.setHorizontalAlignment(JCheckBox.CENTER);
 				
-				JPanel inputPanel = new JPanel(new GridLayout(2, 3), true);
+				JPanel inputPanel = new JPanel(new GridBagLayout(), true);
+				GridBagConstraints gbc = new GridBagConstraints();
+				gbc.insets.top = 0;
+				gbc.insets.bottom = 0;
+				gbc.insets.left = 0;
+				gbc.insets.right = 0;
+				gbc.weighty = 0;
+				gbc.gridy = 0;
+				gbc.gridheight = 1;
+				gbc.gridwidth = 1;
+				gbc.fill = GridBagConstraints.BOTH;
+				gbc.gridx = 0;
+				gbc.weightx = 1;
 				inputPanel.add(new JLabel("Preclusion GPath Filter Expression", JLabel.CENTER));
+				gbc.gridx = 1;
 				inputPanel.add(new JLabel("Message to Show on Match", JLabel.CENTER));
+				gbc.gridx = 2;
+				gbc.weightx = 0;
 				inputPanel.add(new JLabel("Warning, not Error?", JLabel.CENTER));
+				gbc.gridy++;
+				gbc.gridx = 0;
+				gbc.weightx = 1;
 				inputPanel.add(this.filterInput);
+				gbc.gridx = 1;
 				inputPanel.add(this.messageInput);
+				gbc.gridx = 2;
+				gbc.weightx = 0;
 				inputPanel.add(this.isWarning);
 				
 				JButton addPreclusionButton = new JButton("Add Preclusion");

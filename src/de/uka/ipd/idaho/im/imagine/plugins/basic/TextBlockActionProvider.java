@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -106,7 +106,7 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		}
 		
 		//	return actions
-		return this.getActions(((ImWord[]) words.toArray(new ImWord[words.size()])), null, null, idmp);
+		return this.getActions(((ImWord[]) words.toArray(new ImWord[words.size()])), start.getPage(), null, idmp);
 	}
 	
 	/* (non-Javadoc)
@@ -127,73 +127,13 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 	private SelectionAction[] getActions(final ImWord[] words, final ImPage page, final BoundingBox selectedBox, final ImDocumentMarkupPanel idmp) {
 		LinkedList actions = new LinkedList();
 		
+		//	get bounding box of selected words
+		final BoundingBox wordBox = ImLayoutObject.getAggregateBox(words);
+		
 		//	mark selected words as a caption
 		actions.add(new SelectionAction("markRegionCaption", "Mark Caption", "Mark selected words as a caption.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				
-				//	cut out caption
-				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_CAPTION, null);
-				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-				
-				//	annotate caption
-				ImAnnotation caption = words[0].getDocument().addAnnotation(words[0], words[words.length-1], CAPTION_TYPE);
-				caption.getLastWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
-				invoker.setAnnotationsPainted(CAPTION_TYPE, true);
-				BoundingBox captionBox = ImLayoutObject.getAggregateBox(words);
-				
-				//	do we have a table caption or a figure caption?
-				boolean isTableCaption = words[0].getString().toLowerCase().startsWith("tab"); // covers most Latin based languages
-				
-				//	find possible targets
-				ImRegion[] targets;
-				if (isTableCaption)
-					targets = page.getRegions(ImRegion.TABLE_TYPE);
-				else {
-					targets = page.getRegions(ImRegion.IMAGE_TYPE);
-					if (targets.length == 0)
-						targets = page.getRegions(ImRegion.GRAPHICS_TYPE);
-					if (targets.length == 0)
-						targets = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
-				}
-				if (targets.length == 0)
-					return true;
-				
-				//	assign target
-				Arrays.sort(targets, ImUtils.topDownOrder);
-				for (int t = 0; t < targets.length; t++) {
-					
-					//	check vertical alignment
-					if (!isTableCaption && (captionBox.top < targets[t].bounds.bottom))
-						break; // due to top-down sort order, we won't find any matches from here onward
-					
-					//	check general alignment
-					if (ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, page.getImageDPI())) {}
-					else if (isTableCaption && ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, page.getImageDPI())) {}
-					else if (!isTableCaption && ImUtils.isCaptionBesideTargetMatch(captionBox, targets[t].bounds, page.getImageDPI())) {}
-					else continue;
-					
-					//	check size and words if using block fallback
-					if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(targets[t].getType())) {
-						if ((targets[t].bounds.right - targets[t].bounds.left) < page.getImageDPI())
-							continue;
-						if ((targets[t].bounds.bottom - targets[t].bounds.top) < page.getImageDPI())
-							continue;
-						ImWord[] imageWords = targets[t].getWords();
-						if (imageWords.length != 0)
-							continue;
-					}
-					
-					//	link caption to target
-					caption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + targets[t].pageId));
-					caption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, targets[t].bounds.toString());
-					caption.setAttribute("startId", caption.getFirstWord().getLocalID());
-					if (isTableCaption)
-						caption.setAttribute("targetIsTable");
-					break;
-				}
-				
-				//	finally ...
-				return true;
+				return markCaption(page, words, wordBox, invoker, true);
 			}
 			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
 				JMenuItem mi = super.getMenuItem(invoker);
@@ -206,9 +146,26 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 			}
 		});
 		
+		//	mark selected words as an in-line caption
+		actions.add(new SelectionAction("markInLineCaption", "Mark In-Line Caption", "Mark selected words as an in-line caption.") {
+			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				return markCaption(page, words, wordBox, invoker, false);
+			}
+			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+				JMenuItem mi = super.getMenuItem(invoker);
+				Color regionTypeColor = idmp.getAnnotationColor(CAPTION_TYPE);
+				if (regionTypeColor != null) {
+					mi.setOpaque(true);
+					mi.setBackground(regionTypeColor);
+				}
+				return mi;
+			}
+		});
+		
 		//	mark selected words as a footnote
 		actions.add(new SelectionAction("markRegionFootnote", "Mark Footnote", "Mark selected words as a footnote.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				splitOverlappingBlocks(page, wordBox);
 				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_FOOTNOTE, null);
 				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 				ImAnnotation footnote = words[0].getDocument().addAnnotation(words[0], words[words.length-1], FOOTNOTE_TYPE);
@@ -230,6 +187,9 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		//	mark selected words as a table note
 		actions.add(new SelectionAction("markRegionTableNote", "Mark Table Note", "Mark selected words as a table note, i.e., explanatory text associated with a table.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				
+				//	split any partially selected blocks
+				splitOverlappingBlocks(page, wordBox);
 				
 				//	cut out and mark table note
 				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_TABLE_NOTE, null);
@@ -276,6 +236,7 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		//	mark selected words as a page header
 		actions.add(new SelectionAction("markRegionPageHeader", "Mark Page Header", "Mark selected words as a page header or footer.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				splitOverlappingBlocks(page, wordBox);
 				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_PAGE_TITLE, null);
 				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 				ImAnnotation pageTitle = words[0].getDocument().addAnnotation(words[0], words[words.length-1], PAGE_TITLE_TYPE);
@@ -297,6 +258,7 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		//	mark selected words as a page header
 		actions.add(new SelectionAction("markRegionParenthesis", "Mark Parenthesis", "Mark selected words as a parenthesis, e.g. a standalone text box or a note.") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
+				splitOverlappingBlocks(page, wordBox);
 				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_MAIN_TEXT, null);
 				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 				ImAnnotation pageTitle = words[0].getDocument().addAnnotation(words[0], words[words.length-1], PARENTHESIS_TYPE);
@@ -326,6 +288,39 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 					imw.setNextWord(null);
 				for (int w = 0; w < words.length; w++)
 					page.removeWord(words[w], true);
+				
+				//	also remove or shrink regions
+				if ((page != null) && (selectedBox != null)) {
+					ImRegion[] regions = page.getRegions();
+					ArrayList shrinkRegions = new ArrayList();
+					for (int r = 0; r < regions.length; r++) {
+						if (selectedBox.includes(regions[r].bounds, false))
+							page.removeRegion(regions[r]);
+						else if (selectedBox.overlaps(regions[r].bounds))
+							shrinkRegions.add(regions[r]);
+					}
+					for (int r = 0; r < shrinkRegions.size(); r++) {
+						ImRegion region = ((ImRegion) shrinkRegions.get(r));
+						if (ImRegion.IMAGE_TYPE.equals(region.getType()))
+							continue;
+						if (ImRegion.GRAPHICS_TYPE.equals(region.getType()))
+							continue;
+						ImWord[] regionWords = region.getWords();
+						if (regionWords.length == 0) {
+							page.removeRegion(region);
+							continue;
+						}
+						BoundingBox regionBounds = ImLayoutObject.getAggregateBox(regionWords);
+						if (regionBounds == null) {
+							page.removeRegion(region);
+							continue;
+						}
+						if (regionBounds.equals(region.bounds))
+							continue;
+						(new ImRegion(page, regionBounds, region.getType())).copyAttributes(region);
+						page.removeRegion(region);
+					}
+				}
 				
 				//	indicate change
 				return true;
@@ -408,6 +403,183 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
+	private boolean markCaption(ImPage page, ImWord[] words, BoundingBox wordBox, ImDocumentMarkupPanel invoker, boolean isBlockCaption) {
+		
+		//	make block captions into separate text stream
+		if (isBlockCaption) {
+			
+			//	split any partially selected blocks
+			this.splitOverlappingBlocks(page, wordBox);
+			
+			//	cut out caption
+			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_CAPTION, null);
+			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+		}
+		
+		//	make sure to get words in right order for in-line caption
+		else {
+			ImUtils.orderStream(words, ImUtils.textStreamOrder);
+			if (!words[0].getTextStreamId().equals(words[words.length-1].getTextStreamId()))
+				return false;
+		}
+		
+		//	annotate caption
+		ImAnnotation caption = words[0].getDocument().addAnnotation(words[0], words[words.length-1], CAPTION_TYPE);
+		if (isBlockCaption)
+			caption.getLastWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+		else caption.setAttribute(IN_LINE_OBJECT_MARKER_ATTRIBUTE);
+		invoker.setAnnotationsPainted(CAPTION_TYPE, true);
+		
+		//	do we have a table caption or a figure caption?
+		boolean isTableCaption = words[0].getString().toLowerCase().startsWith("tab"); // covers most Latin based languages
+		
+		//	find possible targets
+		ImRegion[] targets = this.getCaptionTargets(page, isTableCaption, isBlockCaption);
+		if (targets.length == 0)
+			return true;
+		
+		//	assign target TODO factor in style template specified caption positioning
+		Arrays.sort(targets, ImUtils.topDownOrder);
+		ImRegion target = this.findCaptionTarget(page.getImageDPI(), wordBox, targets, isTableCaption, isBlockCaption);
+		
+		//	link caption to target
+		if (target != null) {
+			caption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + target.pageId));
+			caption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, target.bounds.toString());
+			if (isBlockCaption)
+				caption.setAttribute("startId", caption.getFirstWord().getLocalID());
+			if (isTableCaption)
+				caption.setAttribute("targetIsTable");
+		}
+		
+		//	finally ...
+		return true;
+	}
+	
+	private ImRegion[] getCaptionTargets(ImPage page, boolean isTableCaption, boolean isBlockCaption) {
+		ArrayList targets = new ArrayList(5);
+		
+		//	observe caption type in block captions, as they usually have indicative start words
+		if (isBlockCaption) {
+			if (isTableCaption)
+				targets.addAll(Arrays.asList(page.getRegions(ImRegion.TABLE_TYPE)));
+			else {
+				targets.addAll(Arrays.asList(page.getRegions(ImRegion.IMAGE_TYPE)));
+				targets.addAll(Arrays.asList(page.getRegions(ImRegion.GRAPHICS_TYPE)));
+				if (targets.isEmpty())
+					targets.addAll(Arrays.asList(page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE)));
+			}
+		}
+		
+		//	work with all possible targets if we have an in-line caption, as they might not have have the indicative start words
+		else {
+			targets.addAll(Arrays.asList(page.getRegions(ImRegion.TABLE_TYPE)));
+			targets.addAll(Arrays.asList(page.getRegions(ImRegion.IMAGE_TYPE)));
+			targets.addAll(Arrays.asList(page.getRegions(ImRegion.GRAPHICS_TYPE)));
+		}
+		
+		return ((ImRegion[]) targets.toArray(new ImRegion[targets.size()]));
+	}
+	
+	private ImRegion findCaptionTarget(int pageImageDpi, BoundingBox captionBox, ImRegion[] targets, boolean isTableCaption, boolean isBlockCaption) {
+		
+		//	for block caption, prefer caption above table and caption below figure
+		if (isBlockCaption) {
+			
+			//	run with preferred assignment direction first
+			for (int t = 0; t < targets.length; t++) {
+				if (!isTableCaption && ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else if (isTableCaption && ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else continue;
+				if (this.isValidCaptionTarget(targets[t], pageImageDpi))
+					return targets[t];
+			}
+			
+			//	check all assignment directions
+			for (int t = 0; t < targets.length; t++) {
+				if (ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else if (ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else if (!isTableCaption && ImUtils.isCaptionBesideTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else continue;
+				if (this.isValidCaptionTarget(targets[t], pageImageDpi))
+					return targets[t];
+			}
+		}
+		
+		//	for in-line caption, prefer closest target
+		else {
+			ImRegion closestTarget = null;
+			int closestTargetDist = Integer.MAX_VALUE;
+			
+			//	run with main caption targets first
+			for (int t = 0; t < targets.length; t++) {
+				if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(targets[t].getType()))
+					continue;
+				int targetDist;
+				if (captionBox.right <= targets[t].bounds.left) {
+					if (targets[t].bounds.bottom <= captionBox.top)
+						continue;
+					if (captionBox.bottom <= targets[t].bounds.top)
+						continue;
+					targetDist = (targets[t].bounds.left - captionBox.right);
+				}
+				else if (targets[t].bounds.right <= captionBox.left) {
+					if (targets[t].bounds.bottom <= captionBox.top)
+						continue;
+					if (captionBox.bottom <= targets[t].bounds.top)
+						continue;
+					targetDist = (captionBox.left - targets[t].bounds.right);
+				}
+				else if (targets[t].bounds.bottom <= captionBox.top)
+					targetDist = (captionBox.top - targets[t].bounds.bottom);
+				else if (captionBox.bottom <= targets[t].bounds.top)
+					targetDist = (targets[t].bounds.top - captionBox.bottom);
+				else targetDist = 0;
+				if (targetDist < closestTargetDist) {
+					closestTarget = targets[t];
+					closestTargetDist = targetDist;
+				}
+			}
+			
+			//	this one is close enough
+			if (closestTargetDist < pageImageDpi)
+				return closestTarget;
+		}
+		
+		//	nothing found
+		return null;
+	}
+	
+	private boolean isValidCaptionTarget(ImRegion target, int pageImageDpi) {
+		
+		//	check size and words if using block fallback
+		if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(target.getType())) {
+			if ((target.bounds.right - target.bounds.left) < pageImageDpi)
+				return false;
+			if ((target.bounds.bottom - target.bounds.top) < pageImageDpi)
+				return false;
+			ImWord[] imageWords = target.getWords();
+			return (imageWords.length == 0);
+		}
+		
+		//	all other targets are inherently valid
+		else return true;
+	}
+	
+	private void splitOverlappingBlocks(ImPage page, BoundingBox bounds) {
+		if (this.regionActions == null)
+			return;
+		
+		//	split any overlapping blocks
+		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+		for (int b = 0; b < pageBlocks.length; b++) {
+			if (pageBlocks[b].bounds.liesIn(bounds, false))
+				continue; // completely contained, no need for splitting
+			if (pageBlocks[b].bounds.overlaps(bounds))
+				this.regionActions.splitBlock(page, pageBlocks[b], bounds.intersect(pageBlocks[b].bounds));
+		}
+	}
+	
 	private void markImageOrGraphics(ImWord[] words, ImPage page, BoundingBox selectedBox, String type, ImDocumentMarkupPanel idmp) {
 		
 		//	shrink selection to what is actually painted
@@ -449,17 +621,13 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 			//	dissolve remaining words out of text streams (helps prevent cycles on block splitting)
 			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
 			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-			for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes to text stream ID
+			for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes of text stream ID
 				imw.setNextWord(null);
 		}
 		
 		//	split any overlapping block
 		if (this.regionActions != null) {
-			ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
-			for (int b = 0; b < pageBlocks.length; b++) {
-				if (pageBlocks[b].bounds.overlaps(iogBounds))
-					this.regionActions.splitBlock(page, pageBlocks[b], iogBounds);
-			}
+			this.splitOverlappingBlocks(page, iogBounds);
 			
 			//	restore text streams preserved above
 			if (colWordsByStreamId != null)
@@ -472,7 +640,7 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 			if ((words != null) && (words.length != 0)) {
 				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
 				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-				for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes to text stream ID
+				for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes of text stream ID
 					imw.setNextWord(null);
 			}
 		}

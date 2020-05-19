@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -40,6 +40,8 @@ import java.awt.Point;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.font.FontRenderContext;
 import java.awt.font.LineMetrics;
 import java.awt.font.TextLayout;
@@ -114,7 +116,6 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 	
 	private static final String FONT_EDITOR_IMT_NAME = "FontEditor";
 	
-	private SymbolTable symbolTable = SymbolTable.getSharedSymbolTable();
 	private ImageMarkupTool fontEditor = new FontEditor();
 	
 	/** public zero-argument constructor for class loading */
@@ -236,14 +237,21 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 		private ImDocument doc;
 		private TreeMap fontWordsByName = new TreeMap();
 		FontEditorPanel[] feps = null;
+		
+		SymbolTable symbolTable;
+		SymbolTable.Owner symbolTableOwner;
+		SymbolTable.Owner symbolTableTarger;
+		
 		FontEditorDialog(ImDocument doc, ImFont[] fonts) {
 			super(((fonts.length == 1) ? ("Edit Font '" + fonts[0].name + "'") : "Edit Fonts"), true);
 			this.doc = doc;
 			
 			ArrayList fepList = new ArrayList(fonts.length);
 			JTabbedPane fontTabs = new JTabbedPane();
-			if (fonts.length > 1)
+			if (fonts.length > 1) {
 				fontTabs.setTabPlacement(JTabbedPane.LEFT);
+				fontTabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+			}
 			for (int f = 0; f < fonts.length; f++) {
 				FontEditorPanel fep = new FontEditorPanel(fonts[f]);
 				if (fep.ceps == null)
@@ -272,11 +280,50 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			buttons.add(ok);
 			buttons.add(cancel);
 			
-			this.add(((this.feps.length == 1) ? this.feps[0] : fontTabs), BorderLayout.CENTER);
+			if (this.feps.length == 1)
+				this.add(this.feps[0], BorderLayout.CENTER);
+			else {
+				fontTabs.setSelectedIndex(0);
+				this.add(fontTabs, BorderLayout.CENTER);
+			}
 			this.add(buttons, BorderLayout.SOUTH);
 			
 			this.setSize(600, 700);
 			this.setLocationRelativeTo(this.getOwner());
+			
+			this.symbolTableOwner = new SymbolTable.Owner() {
+				public void useSymbol(char symbol) {
+					symbolTableTarger.useSymbol(symbol);
+				}
+				public Color getColor() {
+					return symbolTableTarger.getColor();
+				}
+				public Point getLocation() {
+					return symbolTableTarger.getLocation();
+				}
+				public Dimension getSize() {
+					return symbolTableTarger.getSize();
+				}
+				public void symbolTableClosed() {
+					symbolTable = null;
+				}
+			};
+		}
+		
+		public void dispose() {
+			if (this.symbolTable != null)
+				this.symbolTable.close();
+			super.dispose();
+		}
+		
+		void showSymbolTableFor(SymbolTable.Owner target) {
+			this.symbolTableTarger = target;
+			if (this.symbolTable == null) {
+				this.symbolTable = SymbolTable.getSharedSymbolTable();
+				this.symbolTable.setOwner(this.symbolTableOwner);
+				this.symbolTable.open();
+			}
+			else this.symbolTable.updateOwner();
 		}
 		
 		boolean hasChanges() {
@@ -827,12 +874,6 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 					this.updateDataDisplay();
 					
 					final JButton stb = new JButton("Symbol");
-					stb.addActionListener(new ActionListener() {
-						public void actionPerformed(ActionEvent ae) {
-							symbolTable.setOwner(sto);
-							symbolTable.open();
-						}
-					});
 					this.sto = new SymbolTable.Owner() {
 						public void useSymbol(char symbol) {
 							CharEditorPanel.this.useSymbol(symbol);
@@ -848,6 +889,18 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 						}
 						public void symbolTableClosed() {}
 					};
+					stb.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							showSymbolTableFor(sto);
+							charStr.requestFocus();
+						}
+					});
+					this.charStr.addFocusListener(new FocusAdapter() {
+						public void focusGained(FocusEvent fe) {
+							if (symbolTable != null)
+								showSymbolTableFor(sto);
+						}
+					});
 					
 					JButton swb = new JButton("Words");
 					swb.setToolTipText("Show list of words in font '" + font.name + "' containing character " + this.charId);
@@ -880,6 +933,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 					sb.insert(cp, symbol);
 					this.charStr.setText(sb.toString());
 					this.charStr.setCaretPosition(++cp);
+					this.charStr.requestFocus();
 				}
 //				
 //				boolean isDirty() {

@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -88,7 +88,6 @@ import de.uka.ipd.idaho.stringUtils.StringUtils;
  *
  */
 public class NavigationActionProvider extends AbstractReactionProvider implements SelectionActionProvider, ReactionProvider, GoldenGateImagineDocumentListener {
-	
 	private static final boolean DEBUG_FIND = false;
 	
 	private static final int MODE_CASE_SENSITIVE = 1;
@@ -185,7 +184,7 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 		//	collect actions
 		LinkedList actions = new LinkedList();
 		
-		//	TODO offer all option on top level only if last selection action was navigation ...
+		//	TODO offer 'all' option on top level only if last selection action was navigation ...
 		//	TODO ... and put them in 'Find' sub menu otherwise
 		//	==> TODO keep track of when asked for actions, and which ones are selected
 		
@@ -728,7 +727,7 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 			if (32 < ch) {
 				if (ch < 127)
 					nToFindBuilder.append(Character.toLowerCase(ch));
-				else nToFindBuilder.append(StringUtils.getBaseChar(ch));
+				else nToFindBuilder.append(Character.toLowerCase(StringUtils.getBaseChar(ch)));
 			}
 		}
 		String nToFind = nToFindBuilder.toString();
@@ -763,8 +762,10 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 			//	backward search, switch to previous page, and wrap at document start
 			if (backward) {
 				pageId--;
-				if (pageId < 0) {
-					pageId = (doc.getPageCount() - 1);
+//				if (pageId < 0) {
+				if (pageId < docIndex.firstPageId) {
+//					pageId = (doc.getPageCount() - 1);
+					pageId = (docIndex.firstPageId + doc.getPageCount() - 1);
 					wrapped = true;
 				}
 			}
@@ -772,8 +773,10 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 			//	forward search, switch to next page, and wrap at document end
 			else {
 				pageId++;
-				if (doc.getPageCount() <= pageId) {
-					pageId = 0;
+//				if (doc.getPageCount() <= pageId) {
+				if ((docIndex.firstPageId + doc.getPageCount()) <= pageId) {
+//					pageId = 0;
+					pageId = docIndex.firstPageId;
 					wrapped = true;
 				}
 			}
@@ -793,9 +796,13 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 	
 	private static class ImDocumentIndex {
 		final ImPageIndex[] pageIndexes;
+		final int firstPageId;
 		
 		ImDocumentIndex(ImDocument doc) {
-			this.pageIndexes = new ImPageIndex[doc.getPageCount()];
+//			this.pageIndexes = new ImPageIndex[doc.getPageCount()];
+			ImPage[] pages = doc.getPages();
+			this.pageIndexes = new ImPageIndex[pages.length];
+			this.firstPageId = pages[0].pageId;
 		}
 		
 		void invalidateIndex() {
@@ -806,22 +813,22 @@ public class NavigationActionProvider extends AbstractReactionProvider implement
 		}
 		
 		void invalidatePageIndexFor(ImWord imw) {
-			if (this.pageIndexes[imw.pageId] == null)
+			if (this.pageIndexes[imw.pageId - this.firstPageId] == null)
 				return;
-			this.pageIndexes[imw.pageId].invalidate();
-			if ((imw.pageId == 0) || (this.pageIndexes[imw.pageId - 1] == null))
+			this.pageIndexes[imw.pageId - this.firstPageId].invalidate();
+			if ((imw.pageId ==  this.firstPageId) || (this.pageIndexes[imw.pageId - this.firstPageId - 1] == null))
 				return;
-			this.pageIndexes[imw.pageId - 1].invalidateIfContains(imw);
+			this.pageIndexes[imw.pageId - this.firstPageId - 1].invalidateIfContains(imw);
 		}
 		
 		ImWord[] find(String toFind, int matchMode, String nToFind, ImWord pivot, boolean backward, boolean wrapped, ImPage inPage) {
 			
 			//	make sure page index exists
-			if (this.pageIndexes[inPage.pageId] == null)
-				this.pageIndexes[inPage.pageId] = new ImPageIndex(inPage);
+			if (this.pageIndexes[inPage.pageId - this.firstPageId] == null)
+				this.pageIndexes[inPage.pageId - this.firstPageId] = new ImPageIndex(inPage);
 			
 			//	use page index
-			return this.pageIndexes[inPage.pageId].find(toFind, matchMode, nToFind, pivot, backward, wrapped);
+			return this.pageIndexes[inPage.pageId - this.firstPageId].find(toFind, matchMode, nToFind, pivot, backward, wrapped);
 		}
 	}
 	

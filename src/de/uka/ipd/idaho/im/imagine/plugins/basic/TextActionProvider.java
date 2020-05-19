@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -65,14 +65,14 @@ public class TextActionProvider extends AbstractSelectionActionProvider {
 		
 		//	collect available actions
 		LinkedList actions = new LinkedList();
-		
-		//	edit word string
-		actions.add(new SelectionAction("editWord", ("Edit String ('" + start.getString() + "')"), ("Edit the string value associated with the word, currently '" + start.getString() + "'")) {
-			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				idmp.editWord(start);
-				return true;
-			}
-		});
+//		
+//		//	edit word string
+//		actions.add(new SelectionAction("editWord", ("Edit String ('" + start.getString() + "')"), ("Edit the string value associated with the word, currently '" + start.getString() + "'")) {
+//			public boolean performAction(ImDocumentMarkupPanel invoker) {
+//				idmp.editWord(start);
+//				return true;
+//			}
+//		});
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));

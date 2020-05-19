@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -41,14 +41,16 @@ import java.awt.event.ItemListener;
 import java.awt.geom.Rectangle2D;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.PrintStream;
 import java.io.Reader;
-import java.io.StringReader;
+import java.io.UnsupportedEncodingException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -82,6 +84,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.ListSelectionModel;
+import javax.swing.WindowConstants;
 
 import de.uka.ipd.idaho.easyIO.settings.Settings;
 import de.uka.ipd.idaho.gamta.Annotation;
@@ -89,25 +92,30 @@ import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.TokenSequence;
 import de.uka.ipd.idaho.gamta.TokenSequenceUtils;
+import de.uka.ipd.idaho.gamta.defaultImplementation.AbstractAttributed;
 import de.uka.ipd.idaho.gamta.util.CountingSet;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
-import de.uka.ipd.idaho.gamta.util.SgmlDocumentReader;
 import de.uka.ipd.idaho.gamta.util.feedback.html.renderers.BufferedLineWriter;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterDescription;
 import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterGroupDescription;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.TestableElement;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.plugins.PluginDataProviderFileBased;
+import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.htmlXmlUtil.accessories.HtmlPageBuilder;
 import de.uka.ipd.idaho.htmlXmlUtil.accessories.HtmlPageBuilder.HtmlPageBuilderHost;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
+import de.uka.ipd.idaho.im.ImLayoutObject;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.DisplayExtensionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener;
 import de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider;
 import de.uka.ipd.idaho.im.imagine.web.plugins.WebDocumentViewer;
 import de.uka.ipd.idaho.im.util.ImDocumentIO;
@@ -118,15 +126,14 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefConstants;
+import de.uka.ipd.idaho.plugins.bibRefs.BibRefDataSource;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefEditorFormHandler;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefEditorPanel;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefTypeSystem;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefTypeSystem.BibRefType;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefUtils;
+import de.uka.ipd.idaho.plugins.bibRefs.BibRefUtils.AuthorData;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefUtils.RefData;
-import de.uka.ipd.idaho.plugins.bibRefs.refBank.RefBankClient;
-import de.uka.ipd.idaho.plugins.bibRefs.refBank.RefBankClient.BibRef;
-import de.uka.ipd.idaho.plugins.bibRefs.refBank.RefBankClient.BibRefIterator;
 import de.uka.ipd.idaho.plugins.dateTime.DateTimeUtils;
 import de.uka.ipd.idaho.stringUtils.StringUtils;
 import de.uka.ipd.idaho.stringUtils.StringVector;
@@ -136,7 +143,7 @@ import de.uka.ipd.idaho.stringUtils.StringVector;
  * 
  * @author sautter
  */
-public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvider implements SelectionActionProvider, BibRefConstants {
+public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvider implements SelectionActionProvider, GoldenGateImagineDocumentListener, BibRefConstants {
 	
 	private static final String META_DATA_EDITOR_IMT_NAME = "MetaDataEditor";
 	private ImageMarkupTool metaDataEditor = new MetaDataEditor(META_DATA_EDITOR_IMT_NAME);
@@ -144,8 +151,11 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	private ImageMarkupTool metaDataAdder = new MetaDataEditor(META_DATA_ADDER_IMT_NAME);
 	
 	private BibRefTypeSystem refTypeSystem = BibRefTypeSystem.getDefaultInstance();
+	private String refTypeDefault = null;
 	private String[] refIdTypes = {};
-	private RefBankClient refBankClient;
+	private String[] authorDetails = {};
+	
+	private BibRefDataSource[] refDataSources = null;
 	
 	/** public zero-argument constructor for class loading */
 	public DocumentMetaDataEditorProvider() {}
@@ -168,16 +178,24 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			set = Settings.loadSettings(new InputStreamReader(this.dataProvider.getInputStream("config.cnfg"), "UTF-8"));
 		} catch (IOException ioe) {}
 		
-		//	connect to RefBank
-		String refBankUrl = set.getSetting("refBankUrl");
-		if (refBankUrl != null) try {
-			this.refBankClient = new RefBankClient(this.dataProvider.getURL(refBankUrl).toString());
-		} catch (IOException ioe) {}
-		
 		//	get publication ID types
 		LinkedHashSet refIdTypes = new LinkedHashSet();
 		refIdTypes.addAll(Arrays.asList((" " + set.getSetting("refIdTypes", "DOI Handle ISBN ISSN")).split("\\s+")));
 		this.refIdTypes = ((String[]) refIdTypes.toArray(new String[refIdTypes.size()]));
+		
+		//	get publication ID types
+		LinkedHashSet authorDetails = new LinkedHashSet();
+		authorDetails.addAll(Arrays.asList((" " + set.getSetting("authorDetails", "")).split("\\s+")));
+		authorDetails.remove("");
+		this.authorDetails = ((String[]) authorDetails.toArray(new String[authorDetails.size()]));
+		
+		//	find default publication type
+		this.refTypeDefault = set.getSetting("refTypeDefault");
+		if (this.refTypeSystem.getBibRefType(this.refTypeDefault) == null) {
+			if (this.refTypeDefault != null)
+				System.out.println("DocumentMetaDataEditorProvider: invalid default reference type '" + this.refTypeDefault + "', available reference types are " + Arrays.toString(this.refTypeSystem.getBibRefTypeNames()));
+			this.refTypeDefault = null;
+		}
 		
 		//	add style parameter group descriptions for metadata in general ...
 		ParameterGroupDescription pgd = new ParameterGroupDescription("docMeta");
@@ -189,30 +207,120 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		pgd.setParamDescription("maxFromEndPageId", "Maximum page from document end to search for metadata attributes, treating last page as 1 (aimed at back matter data)");
 		pgd.setParamLabel("docRefPresent", "Extract Document Reference?");
 		pgd.setParamDescription("docRefPresent", "Extract a self-document reference, i.e., a bibliographic reference to the document proper?");
+		pgd.setParamLabel("useDataSources", "Use External Sources to Complete Metadata?");
+		pgd.setParamDescription("useDataSources", "Use lookups in external data sources like RefBank to complete the metadata if (only if not completely extractable from document proper)?");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	... and individual attributes ...
 		for (int f = 0; f < extractableFieldNames.length; f++) {
 			if (YEAR_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
-				addParameterGroupDescription(extractableFieldNames[f], "Year of Publication", "Parameters for automated extraction of the year a document was published");
+				addParameterGroupDescription(extractableFieldNames[f], "Year of Publication", "Parameters for automated extraction of the year a document was published", false);
 			else if (PUBLICATION_DATE_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
-				addParameterGroupDescription(extractableFieldNames[f], "Exact Date of Publication", "Parameters for automated extraction of the exact date a document was published");
+				addParameterGroupDescription(extractableFieldNames[f], "Exact Date of Publication", "Parameters for automated extraction of the exact date a document was published", false);
 			else if (VOLUME_DESIGNATOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]) || ISSUE_DESIGNATOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
-				addParameterGroupDescription(extractableFieldNames[f], (extractableFieldNames[f].substring(0, 1).toUpperCase() + extractableFieldNames[f].substring(1) + " Number"), ("Parameters for automated extraction of the " + extractableFieldNames[f] + " number of a document"));
+				addParameterGroupDescription(extractableFieldNames[f], (extractableFieldNames[f].substring(0, 1).toUpperCase() + extractableFieldNames[f].substring(1) + " Number"), ("Parameters for automated extraction of the " + extractableFieldNames[f] + " number of a document"), false);
 			else if (VOLUME_TITLE_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
-				addParameterGroupDescription(extractableFieldNames[f], "Volume Title", "Parameters for automated extraction of the volume title, i.e., the title of a publication target documents are a part of (mostly for book chapters, the overall book title)");
+				addParameterGroupDescription(extractableFieldNames[f], "Volume Title", "Parameters for automated extraction of the volume title, i.e., the title of a publication target documents are a part of (mostly for book chapters, the overall book title)", false);
 			else if (AUTHOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]) || EDITOR_ANNOTATION_TYPE.equals(extractableFieldNames[f])) {
-				pgd = addParameterGroupDescription(extractableFieldNames[f], (extractableFieldNames[f].substring(0, 1).toUpperCase() + extractableFieldNames[f].substring(1) + "s"), ("Parameters for automated extraction of the " + extractableFieldNames[f] + "s of a document"));
+				pgd = addParameterGroupDescription(extractableFieldNames[f], (extractableFieldNames[f].substring(0, 1).toUpperCase() + extractableFieldNames[f].substring(1) + "s"), ("Parameters for automated extraction of the " + extractableFieldNames[f] + "s of a document"), false);
 				pgd.setParamLabel("isLastNameLast", "Names are Last Name Last");
 				pgd.setParamDescription("isLastNameLast", "The order of author name parts, i.e., last name before ('Kennedy, J.F.') or after ('J.F. Kennedy') first name.");
 			}
-			else addParameterGroupDescription(extractableFieldNames[f], (extractableFieldNames[f].substring(0, 1).toUpperCase() + extractableFieldNames[f].substring(1)), ("Parameters for automated extraction of the " + extractableFieldNames[f] + " of a document"));
+			else addParameterGroupDescription(extractableFieldNames[f], (extractableFieldNames[f].substring(0, 1).toUpperCase() + extractableFieldNames[f].substring(1)), ("Parameters for automated extraction of the " + extractableFieldNames[f] + " of a document"), false);
+		}
+		
+		//	add parameter groups for author details (best right below authors proper)
+		if ((this.authorDetails != null) && (this.authorDetails.length != 0)) {
+			pgd = new TestableParameterGroupDescription("docMeta" + "." + AUTHOR_ANNOTATION_TYPE + "." + "details");
+			pgd.setLabel("Author Details");
+			pgd.setDescription("Parameters for automated extraction of details about document authors");
+			pgd.setParamLabel("indexChars", "All Index Characters");
+			pgd.setParamDescription("indexChars", "List of all index characters used for any author details (for index based association only).");
+			DocumentStyle.addParameterGroupDescription(pgd);
+			
+			for (int d = 0; d < this.authorDetails.length; d++) {
+				if (AuthorData.AUTHOR_NAME_ATTRIBUTE.equals(this.authorDetails[d]))
+					continue;
+				pgd = addParameterGroupDescription((AUTHOR_ANNOTATION_TYPE + "." + "details" + "." + this.authorDetails[d]), ("Author " + this.authorDetails[d].substring(0, 1).toUpperCase() + this.authorDetails[d].substring(1) + "s"), ("Parameters for automated extraction of the " + this.authorDetails[d] + "s of the authors of a document"), true);
+				pgd.setParamLabel("indexChars", "Index Characters");
+				pgd.setParamDescription("indexChars", ("List of all index characters used for author " + this.authorDetails[d] + "s (for index based association only, other options represent proximity based association)."));
+				String[] indexCharValues = {"", "BELOW", "RIGHT", "ABOVE", "LEFT", "INLINE-LEFT", "INLINE-RIGHT"};
+				pgd.setParamValues("indexChars", indexCharValues);
+				pgd.setParamValueLabel("indexChars", "BELOW", "None (values below author names)");
+				pgd.setParamValueLabel("indexChars", "RIGHT", "None (values to right of author names)");
+				pgd.setParamValueLabel("indexChars", "ABOVE", "None (values above author names)");
+				pgd.setParamValueLabel("indexChars", "LEFT", "None (values to left of author names)");
+				pgd.setParamValueLabel("indexChars", "INLINE-RIGHT", "None (values in-line following author names)");
+				pgd.setParamValueLabel("indexChars", "INLINE-LEFT", "None (values in-line preceding author names)");
+				
+				pgd.setParameterDescription("maxDistanceFromAuthorAnnots", new ValueAreaParameterDescription(pgd, "maxDistanceFromAuthorAnnots"));
+				pgd.setParamLabel("maxDistanceFromAuthorAnnots", "Maximum Distance from Author Name");
+				pgd.setParamDescription("maxDistanceFromAuthorAnnots", ("Maximum distance of author " + this.authorDetails[d] + "s from author names (for proximity based association, to side for right and left, down for below, up for above)."));
+				
+				pgd.setParameterDescription("areaPositionHorizontal", new ValueAreaParameterDescription(pgd, "areaPositionHorizontal"));
+				pgd.setParamLabel("areaPositionHorizontal", "Position of Extraction Area (Horizontal)");
+				pgd.setParamDescription("areaPositionHorizontal", ("Position of extraction area for " + this.authorDetails[d] + "s below or above author names (for proximity based association)"));
+				String[] areaPositionHorizontalValues = {"ABSOLUTE", "RIGHT", "CENTER", "LEFT"};
+				pgd.setParamValues("areaPositionHorizontal", areaPositionHorizontalValues);
+				pgd.setParamValueLabel("areaPositionHorizontal", "ABSOLUTE", "Absolute");
+				pgd.setParamValueLabel("areaPositionHorizontal", "RIGHT", "Relative to author name (values starting flush left with name, extending right)");
+				pgd.setParamValueLabel("areaPositionHorizontal", "CENTER", "Relative to author name (values centered below or above name)");
+				pgd.setParamValueLabel("areaPositionHorizontal", "LEFT", "Relative to author name (values extending left, ending flush right with name)");
+				
+				pgd.setParameterDescription("areaPositionVertical", new ValueAreaParameterDescription(pgd, "areaPositionVertical"));
+				pgd.setParamLabel("areaPositionVertical", "Position of Extraction Area (Vertical)");
+				pgd.setParamDescription("areaPositionVertical", ("Position of extraction area for " + this.authorDetails[d] + "s to right or left of author names (for proximity based association)"));
+				String[] areaPositionVerticalValues = {"ABSOLUTE", "DOWN", "CENTER", "UP"};
+				pgd.setParamValues("areaPositionVertical", areaPositionVerticalValues);
+				pgd.setParamValueLabel("areaPositionVertical", "ABSOLUTE", "Absolute");
+				pgd.setParamValueLabel("areaPositionVertical", "DOWN", "Relative to author name (values starting same height as name, extending down)");
+				pgd.setParamValueLabel("areaPositionVertical", "CENTER", "Relative to author name (values centered left or right of name)");
+				pgd.setParamValueLabel("areaPositionVertical", "UP", "Relative to author name (values ending same height as name, extending above)");
+				
+				String[] indexCharPositionValues = {"leading-superscript", "leading", "tailing-superscript", "tailing"};
+				pgd.setParamLabel("indexCharPositionOnAuthorAnnots", "Index Character Position on Author Names");
+				pgd.setParamDescription("indexCharPositionOnAuthorAnnots", ("Position of index characters on author names (for index based association only)."));
+				pgd.setParamValues("indexCharPositionOnAuthorAnnots", indexCharPositionValues);
+				pgd.setParamLabel("indexCharPositionOnDetailValues", ("Index Character Position on Author " + this.authorDetails[d].substring(0, 1).toUpperCase() + this.authorDetails[d].substring(1) + "s"));
+				pgd.setParamDescription("indexCharPositionOnDetailValues", ("Position of index characters on author " + this.authorDetails[d] + "s (for index based association only)."));
+				pgd.setParamValues("indexCharPositionOnDetailValues", indexCharPositionValues);
+				pgd.setParamLabel("detailValueSeparator", ("Separator Character Between Author " + this.authorDetails[d].substring(0, 1).toUpperCase() + this.authorDetails[d].substring(1) + "s"));
+				pgd.setParamDescription("detailValueSeparator", ("Separator character between individual author " + this.authorDetails[d] + "s (for index based association only)."));
+				String[] detailValueSeparatorValues = {"", "PARAGRAPH", "LINE", "INDEX"};
+				pgd.setParamValues("detailValueSeparator", detailValueSeparatorValues);
+				pgd.setParamValueLabel("detailValueSeparator", "PARAGRAPH", "Values are whole paragraphs");
+				pgd.setParamValueLabel("detailValueSeparator", "LINE", "Values are whole lines");
+				pgd.setParamValueLabel("detailValueSeparator", "INDEX", "Values separated by index characters");
+				pgd.setParamLabel("useFirstAuthorValue", "Use Only First Value for each Author?");
+				pgd.setParamDescription("useFirstAuthorValue", ("Use only the first non-empty extracted author " + this.authorDetails[d] + "s per author (for index based association only)."));
+				pgd.setParamLabel("useFirstDetailValue", "Use Only First Value for each Index Character?");
+				pgd.setParamDescription("useFirstDetailValue", ("Use only the first non-empty extracted author " + this.authorDetails[d] + "s per index character (for index based association only)."));
+				
+				ParameterDescription icPd = pgd.getParameterDescription("indexChars");
+				icPd.setRequired();
+				icPd.addRequiredParameter(null, "area");
+				icPd.addRequiredParameter(null, "indexCharPositionOnAuthorAnnots");
+				icPd.addRequiredParameter(null, "indexCharPositionOnDetailValues");
+				icPd.addRequiredParameter(null, "detailValueSeparator");
+				icPd.addExcludedParameter(null, "areaPositionHorizontal");
+				icPd.addExcludedParameter(null, "areaPositionVertical");
+				icPd.addExcludedParameter(null, "maxDistanceFromAuthorAnnots");
+				markInLineAssociationDependencies(icPd, "INLINE-RIGHT");
+				markInLineAssociationDependencies(icPd, "INLINE-LEFT");
+				markSpacialAssociationDependencies(icPd, "BELOW");
+				markSpacialAssociationDependencies(icPd, "ABOVE");
+				markSpacialAssociationDependencies(icPd, "RIGHT");
+				markSpacialAssociationDependencies(icPd, "LEFT");
+				
+				if (AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(this.authorDetails[d]))
+					markFixedValueExcludingAll(pgd);
+			}
 		}
 		
 		//	... as well as configured identifier types ...
 		for (int t = 0; t < this.refIdTypes.length; t++) {
 			if (this.refIdTypes[t].length() != 0)
-				addParameterGroupDescription(("ID-" + this.refIdTypes[t]), (this.refIdTypes[t] + " Identifier"), ("Parameters for automated extraction of the identifier for a document as issued by " + this.refIdTypes[t] + "."));
+				addParameterGroupDescription(("ID-" + this.refIdTypes[t]), (this.refIdTypes[t] + " Identifier"), ("Parameters for automated extraction of the identifier for a document as issued by " + this.refIdTypes[t] + "."), false);
 		}
 		
 		//	... and any document reference
@@ -232,7 +340,15 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		DocumentStyle.addParameterGroupDescription(pgd);
 	}
 	
-	private static ParameterGroupDescription addParameterGroupDescription(String name, String label, String description) {
+	private void checkRefDataSources() {
+		if (this.refDataSources != null)
+			return;
+		BibRefDataSource[] refDataSources = BibRefDataSource.getDataSources();
+		if (refDataSources.length != 0)
+			this.refDataSources = refDataSources;
+	}
+	
+	private static ParameterGroupDescription addParameterGroupDescription(String name, String label, String description, boolean isAuthorDetail) {
 		ParameterGroupDescription pgd = new TestableParameterGroupDescription("docMeta" + "." + name);
 		pgd.setLabel(label);
 		pgd.setDescription(description);
@@ -242,11 +358,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		pgd.setParamLabel("maxFromEndPageId", "Maximum Page From End");
 		pgd.setParamDescription("maxFromEndPageId", "Maximum page from document end to search for the " + pgd.getLabel() + ", treating last page as 1 (aimed at back matter data).");
 		
-		pgd.setParamLabel("fixedValue", "Fixed Value");
-		pgd.setParamDescription("fixedValue", ("A fixed value to use as the " + pgd.getLabel() + " (mostly for journal names)."));
-		
+		if (isAuthorDetail)
+			pgd.setParameterDescription("area", new ValueAreaParameterDescription(pgd, "area"));
 		pgd.setParamLabel("area", "Extraction Area");
 		pgd.setParamDescription("area", ("A bounding box restricting the area to search the " + pgd.getLabel() + " in (normalized to 72 DPI, leaving this parameter empty deactivates extraction of the " + pgd.getLabel() + ")."));
+		if (!isAuthorDetail)
+			pgd.setParamRequired("area");
 		
 		pgd.setParamLabel("isBold", "Value is Bold");
 		pgd.setParamDescription("isBold", ("Include only words in Bold for extraction of " + pgd.getLabel() + " (for filtering)."));
@@ -254,6 +371,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		pgd.setParamDescription("isItalics", ("Include only words in Italics for extraction of " + pgd.getLabel() + " (for filtering)."));
 		pgd.setParamLabel("isAllCaps", "Value is in All Caps");
 		pgd.setParamDescription("isAllCaps", ("Include only words in All Caps for extraction of " + pgd.getLabel() + " (for filtering)."));
+		if (AUTHOR_ANNOTATION_TYPE.equals(name) || EDITOR_ANNOTATION_TYPE.equals(name)) {
+			pgd.setParamLabel("isPartAllCaps", "Value is Partially in All Caps");
+			pgd.setParamDescription("isPartAllCaps", ("Indicate that some part of " + pgd.getLabel() + " is in all-caps and requires normalization."));
+		}
 		
 		pgd.setParamLabel("fontSize", "Font Size");
 		pgd.setParamDescription("fontSize", ("The exact font size of the " + pgd.getLabel() + " (use minimum and maximum font size if variation present or to be expected)."));
@@ -262,16 +383,61 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		pgd.setParamLabel("maxFontSize", "Maximum Font Size");
 		pgd.setParamDescription("maxFontSize", ("The maximum font size of the " + pgd.getLabel() + " (use only if variation present or to be expected, otherwise use exact font size)."));
 		
+		if (AUTHOR_ANNOTATION_TYPE.equals(name) || EDITOR_ANNOTATION_TYPE.equals(name)) {
+			pgd.setParamLabel("singleLineValues", "Individual Values on Single Lines?");
+			pgd.setParamDescription("singleLineValues", ("Restrict individual pattern matches for " + pgd.getLabel() + " to single lines unless line breaks matched explicitly (helpful for multi-value attributes like authors if individual values are only separated by line breaks)."));
+		}
 		pgd.setParamLabel("contextPattern", "Context Pattern");
 		pgd.setParamDescription("contextPattern", ("A regular expression pattern extracting the " + pgd.getLabel() + " plus some context (helpful especially for numeric attributes like the volume number, e.g. to disambiguate based upon surrounding punctuation)."));
 		pgd.setParamLabel("valuePattern", "Value Pattern");
 		pgd.setParamDescription("valuePattern", ("A regular expression pattern extracting the actual " + pgd.getLabel() + " (if a context pattern is in use, the value pattern is only applied to what the latter matches)."));
+		if (isAuthorDetail) {
+			pgd.setParamLabel("filterPatterns", "Filter Patterns");
+			pgd.setParamDescription("filterPatterns", ("Regular expression patterns excluding specific values as " + pgd.getLabel() + " (useful for filtering out specific values if actual values vary widely)."));
+		}
+		
+		if (JOURNAL_NAME_ANNOTATION_TYPE.equals(name) || PUBLISHER_ANNOTATION_TYPE.equals(name) || LOCATION_ANNOTATION_TYPE.equals(name) || "ID-ISSN".equals(name) || YEAR_ANNOTATION_TYPE.equals(name) || (AUTHOR_ANNOTATION_TYPE + ".details." + AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE).equals(name) || EDITOR_ANNOTATION_TYPE.equals(name)) {
+			pgd.setParamLabel("fixedValue", "Fixed Value");
+			pgd.setParamDescription("fixedValue", ("A fixed value to use as the " + pgd.getLabel() + " (mostly for journal names)."));
+			markFixedValueExcludingAll(pgd);
+		}
 		
 		DocumentStyle.addParameterGroupDescription(pgd);
 		return pgd;
 	}
 	
-	private static class TestableParameterGroupDescription extends ParameterGroupDescription implements DisplayExtension {
+	private static void markInLineAssociationDependencies(ParameterDescription icPd, String association) {
+		icPd.addExcludedParameter(association, "area");
+		icPd.addExcludedParameter(association, "indexCharPositionOnAuthorAnnots");
+		icPd.addExcludedParameter(association, "indexCharPositionOnDetailValues");
+		icPd.addExcludedParameter(association, "detailValueSeparator");
+		icPd.addExcludedParameter(association, "useFirstAuthorValue");
+		icPd.addExcludedParameter(association, "useFirstDetailValue");
+	}
+	
+	private static void markSpacialAssociationDependencies(ParameterDescription icPd, String association) {
+		icPd.addRequiredParameter(association, "areaPositionHorizontal");
+		icPd.addRequiredParameter(association, "areaPositionVertical");
+		icPd.addRequiredParameter(association, "maxDistanceFromAuthorAnnots");
+		icPd.addExcludedParameter(association, "indexCharPositionOnAuthorAnnots");
+		icPd.addExcludedParameter(association, "indexCharPositionOnDetailValues");
+		icPd.addExcludedParameter(association, "detailValueSeparator");
+		icPd.addExcludedParameter(association, "useFirstAuthorValue");
+		icPd.addExcludedParameter(association, "useFirstDetailValue");
+	}
+	
+	private static void markFixedValueExcludingAll(ParameterGroupDescription pgd) {
+		ParameterDescription fvPd = pgd.getParameterDescription("fixedValue");
+		if (fvPd != null) {
+			String[] pns = pgd.getParameterNames();
+			for (int p = 0; p < pns.length; p++) {
+				if (!"fixedValue".equals(pns[p]))
+					fvPd.addExcludedParameter(null, pns[p]);
+			}
+		}
+	}
+	
+	private static class TestableParameterGroupDescription extends ParameterGroupDescription implements DisplayExtension, TestableElement {
 		private final String localPnp;
 		TestableParameterGroupDescription(String pnp) {
 			super(pnp);
@@ -282,7 +448,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 		public DisplayExtensionGraphics[] getExtensionGraphics(ImPage page, ImDocumentMarkupPanel idmp) {
 			if (this.localPnp == null)
-				return new DisplayExtensionGraphics[0];
+				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
 			DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
 			DocumentStyle metaDataStyle = docStyle.getSubset("docMeta");
 			DocumentStyle attributeStyle = metaDataStyle.getSubset(this.localPnp);
@@ -296,16 +462,35 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			else if (page.pageId >= (idmp.document.getPageCount() - maxFromEndPageId)) { /* in range at end */ }
 			else return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS; // page out of range
 			
+			//	set up match logging
+			String docId = ((idmp == null) ? ((page.getDocument() == null) ? null : page.getDocument().docId) : idmp.document.docId);
+			ByteArrayOutputStream logBaos = new ByteArrayOutputStream();
+			PrintStream log;
+			try {
+				log = new PrintStream(logBaos, true, "UTF-8");
+			}
+			catch (UnsupportedEncodingException uee) {
+				log = new PrintStream(logBaos, true); // never gonna happen, but Java is dumb !!!
+			}
+			
 			//	extract current matches from page and highlight them
 			ArrayList attributeValues = new ArrayList();
-			if (extractAttribute(this.localPnp, this.localPnp.startsWith("ID-"), page, page.getImageDPI(), attributeStyle, (AUTHOR_ANNOTATION_TYPE.equals(this.localPnp) || EDITOR_ANNOTATION_TYPE.equals(this.localPnp)), null, attributeValues)) {
+			boolean gotDegs;
+			if (this.localPnp.startsWith(AUTHOR_ANNOTATION_TYPE + "." + "details" + ".")) {
+				DocumentStyle allDetailsStyle = metaDataStyle.getSubset(AUTHOR_ANNOTATION_TYPE + "." + "details");
+				String detailName = this.localPnp.substring((AUTHOR_ANNOTATION_TYPE + "." + "details" + ".").length());
+				gotDegs = extractAuthorDetail(null, detailName, !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(detailName), page, page.getImageDPI(), attributeStyle, allDetailsStyle, null, attributeValues, log);
+			}
+			else gotDegs = extractAttribute(this.localPnp, this.localPnp.startsWith("ID-"), page, page.getImageDPI(), attributeStyle, (AUTHOR_ANNOTATION_TYPE.equals(this.localPnp) || EDITOR_ANNOTATION_TYPE.equals(this.localPnp)), null, attributeValues, log);
+			displayAttributeExtractionLog(docId, this.localPnp, logBaos.toByteArray());
+			if (gotDegs) {
 				ArrayList shapes = new ArrayList();
 				for (int v = 0; v < attributeValues.size(); v++) {
 					ExtractedAttributeValue eav = ((ExtractedAttributeValue) attributeValues.get(v));
 					for (int w = 0; w < eav.words.length; w++)
 						shapes.add(new Rectangle2D.Float(eav.words[w].bounds.left, eav.words[w].bounds.top, eav.words[w].bounds.getWidth(), eav.words[w].bounds.getHeight()));
 				}
-				DisplayExtensionGraphics[] degs = {new DisplayExtensionGraphics(this, null, page, ((Shape[]) shapes.toArray(new Shape[shapes.size()])), attributeMatchLineColor, attributeMatchLineStroke, attributeMatchFillColor) {
+				DisplayExtensionGraphics[] degs = {new DisplayExtensionGraphics(this, idmp, page, ((Shape[]) shapes.toArray(new Shape[shapes.size()])), attributeMatchLineColor, attributeMatchLineStroke, attributeMatchFillColor) {
 					public boolean isActive() {
 						return true;
 					}
@@ -314,11 +499,200 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			}
 			
 			//	nothing to show right now
-			return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
+			else return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
 		}
+		public void test(Properties paramGroup) {
+			if (attributeExtractionLogDisplay == null)
+				attributeExtractionLogDisplay = new AttributeExtractionLogDisplay();
+			attributeExtractionLogDisplay.setVisible(true);
+			attributeExtractionLogDisplay.getDialog().toFront();
+			//	actual content will come from display extension update in our case
+		}
+		
 		private static final Color attributeMatchLineColor = Color.BLUE;
 		private static final BasicStroke attributeMatchLineStroke = new BasicStroke(3);
 		private static final Color attributeMatchFillColor = new Color(attributeMatchLineColor.getRed(), attributeMatchLineColor.getGreen(), attributeMatchLineColor.getBlue(), 64);
+		
+		//	TODO any reasons to bind this to a plug-in instance ???
+		private static AttributeExtractionLogDisplay attributeExtractionLogDisplay = null;
+		private static void displayAttributeExtractionLog(String docId, String attribute, byte[] logBytes) {
+			if (attributeExtractionLogDisplay == null)
+				return;
+			String log;
+			try {
+				log = new String(logBytes, "UTF-8");
+			}
+			catch (UnsupportedEncodingException uee) {
+				log = new String(logBytes);
+			}
+			attributeExtractionLogDisplay.setLog(docId, attribute, log);
+		}
+		static void closeAttributeExtractionLogDisplay(String docId) {
+			if (attributeExtractionLogDisplay == null)
+				return;
+			if ((docId != null) && !docId.equals(attributeExtractionLogDisplay.docId))
+				return;
+			attributeExtractionLogDisplay.dispose();
+		}
+		private static class AttributeExtractionLogDisplay extends DialogPanel {
+			private String docId;
+			private JTextArea log = new JTextArea();
+			AttributeExtractionLogDisplay() {
+				super("Attribute Extraction Log", false);
+				
+				JScrollPane logBox = new JScrollPane(this.log);
+				logBox.getHorizontalScrollBar().setUnitIncrement(50);
+				logBox.getHorizontalScrollBar().setBlockIncrement(500);
+				logBox.getVerticalScrollBar().setUnitIncrement(50);
+				logBox.getVerticalScrollBar().setBlockIncrement(500);
+				this.add(logBox, BorderLayout.CENTER);
+				
+				JButton close = new JButton("Close");
+				close.setBorder(BorderFactory.createRaisedBevelBorder());
+				close.addActionListener(new ActionListener() {
+					public void actionPerformed(ActionEvent ae) {
+						dispose();
+					}
+				});
+				this.add(close, BorderLayout.SOUTH);
+				
+				this.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+				this.setSize(600, 800);
+				this.setLocationRelativeTo(null);
+			}
+			public void dispose() {
+				attributeExtractionLogDisplay = null;
+				super.dispose();
+			}
+			void setLog(String docId, String attribute, String log) {
+				this.docId = docId;
+				this.setTitle("Attribute Extraction Log - " + attribute);
+				this.log.setText(log);
+			}
+		}
+	}
+	
+	private static class ValueAreaParameterDescription extends ParameterDescription implements DisplayExtension {
+		private final String localPnp;
+		public ValueAreaParameterDescription(ParameterGroupDescription pgd, String lpn) {
+			super(pgd.parameterNamePrefix + "." + lpn);
+			this.localPnp = (pgd.parameterNamePrefix.startsWith("docMeta.") ? pgd.parameterNamePrefix.substring("docMeta.".length()) : null);
+		}
+		public boolean isActive() {
+			return true;
+		}
+		public DisplayExtensionGraphics[] getExtensionGraphics(ImPage page, ImDocumentMarkupPanel idmp) {
+			DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
+			DocumentStyle metaDataStyle = docStyle.getSubset("docMeta");
+			DocumentStyle detailStyle = metaDataStyle.getSubset(this.localPnp);
+			if (detailStyle.isEmpty())
+				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
+			
+			//	observe minimum and maximum page
+			int maxFromStartPageId = detailStyle.getIntProperty("maxPageId", metaDataStyle.getIntProperty("maxPageId", 0));
+			int maxFromEndPageId = detailStyle.getIntProperty("maxFromEndPageId", metaDataStyle.getIntProperty("maxFromEndPageId", 0));
+			if (page.pageId <= maxFromStartPageId) { /* in range at start */ }
+			else if (page.pageId >= (idmp.document.getPageCount() - maxFromEndPageId)) { /* in range at end */ }
+			else return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS; // page out of range
+			
+			//	get detail association data
+			String associationData = detailStyle.getProperty("indexChars");
+			
+			//	highlight areas relative to author annotations
+			if ("BELOW".equals(associationData) || "RIGHT".equals(associationData) || "ABOVE".equals(associationData) || "LEFT".equals(associationData)) {
+				ImAnnotation[] authorAnnots = idmp.document.getAnnotations("docAuthor", page.pageId);
+				
+				//	nothing to work with, highlight area normally
+				if (authorAnnots.length == 0) {
+					if ("area".equals(this.localName))
+						return this.getAreaVisualizationGraphics(page, detailStyle);
+					return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
+				}
+				
+				//	get and wrap author relative areas
+				BoundingBox[] vaBounds = getAuthorDetailValueAreas(authorAnnots, page, associationData, detailStyle, page.getImageDPI(), System.out);
+				ArrayList degs = new ArrayList(vaBounds.length);
+				for (int a = 0; a < vaBounds.length; a++) {
+					if (vaBounds[a] != null)
+						degs.add(getBoundingBoxVisualizationGraphics(this, page, vaBounds[a], true));
+				}
+				
+				//	show main bounding box as well if that is our field
+				if ("area".equals(this.localName))
+					degs.addAll(Arrays.asList(this.getAreaVisualizationGraphics(page, detailStyle)));
+				
+				//	anything to show?
+				if (degs.size() != 0)
+					return ((DisplayExtensionGraphics[]) degs.toArray(new DisplayExtensionGraphics[degs.size()]));
+			}
+			
+			//	visualize bounding box normally
+			if ("area".equals(this.localName))
+				return this.getAreaVisualizationGraphics(page, detailStyle);
+			
+			//	display nothing for other involved fields
+			return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
+		}
+		private DisplayExtensionGraphics[] getAreaVisualizationGraphics(ImPage page, DocumentStyle detailStyle) {
+			BoundingBox area = detailStyle.getBoxProperty("area", null, page.getImageDPI());
+			if (area == null)
+				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
+			DisplayExtensionGraphics[] degs = {getBoundingBoxVisualizationGraphics(this, page, area, false)};
+			return degs;
+		}
+		
+		private static final Color boundingBoxLineColor = Color.GREEN;
+		private static final BasicStroke boundingBoxLineStroke = new BasicStroke(3);
+		private static final Color boundingBoxFillColor = new Color(boundingBoxLineColor.getRed(), boundingBoxLineColor.getGreen(), boundingBoxLineColor.getBlue(), 64);
+		private static final Color relBoundingBoxLineColor = Color.BLUE;
+		private static final BasicStroke relBoundingBoxLineStroke = new BasicStroke(1);
+		private static final Color relBoundingBoxFillColor = new Color(relBoundingBoxLineColor.getRed(), relBoundingBoxLineColor.getGreen(), relBoundingBoxLineColor.getBlue(), 64);
+		private static DisplayExtensionGraphics getBoundingBoxVisualizationGraphics(ValueAreaParameterDescription parent, ImPage page, BoundingBox bb, boolean isRelative) {
+			Shape[] shapes = {new Rectangle2D.Float(bb.left, bb.top, bb.getWidth(), bb.getHeight())};
+			return new DisplayExtensionGraphics(parent, null, page, shapes, 
+					(isRelative ? relBoundingBoxLineColor : boundingBoxLineColor), 
+					(isRelative ? relBoundingBoxLineStroke : boundingBoxLineStroke), 
+					(isRelative ? relBoundingBoxFillColor : boundingBoxFillColor)
+			) {
+				public boolean isActive() {
+					return true;
+				}
+			};
+		}
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#exit()
+	 */
+	public void exit() {
+		TestableParameterGroupDescription.closeAttributeExtractionLogDisplay(null);
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentOpened(ImDocument doc, Object source, ProgressMonitor pm) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSelected(de.uka.ipd.idaho.im.ImDocument)
+	 */
+	public void documentSelected(ImDocument doc) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentSaving(ImDocument doc, Object dest, ProgressMonitor pm) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentSaved(ImDocument doc, Object dest, ProgressMonitor pm) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentClosed(java.lang.String)
+	 */
+	public void documentClosed(String docId) {
+		TestableParameterGroupDescription.closeAttributeExtractionLogDisplay(docId);
 	}
 	
 	/* (non-Javadoc)
@@ -379,7 +753,36 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 							}
 						});
 						mi.setToolTipText("Use as " + efn + ((cfv == null) ? "" : (" (currently '" + cfv + "')")));
+						mi.setBackground(idmp.getAnnotationColor("doc" + Character.toUpperCase(efn.charAt(0)) + efn.substring(1)));
 						m.add(mi);
+						if (!AUTHOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
+							continue;
+						String[] docAuthors = ref.getAttributeValues(AUTHOR_ANNOTATION_TYPE);
+						if ((docAuthors == null) || (docAuthors.length == 0))
+							continue;
+						JMenuItem admi;
+						for (int d = 0; d < authorDetails.length; d++) {
+							if (AuthorData.AUTHOR_NAME_ATTRIBUTE.equals(authorDetails[d]))
+								continue;
+							final String eadn = authorDetails[d];
+							final boolean isAuthorIdentifier = (!AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(eadn)); 
+							JMenu adm = new JMenu("Author " + eadn.substring(0, 1).toUpperCase() + eadn.substring(1));
+							adm.setBackground(idmp.getAnnotationColor("doc" + "Author" + Character.toUpperCase(eadn.charAt(0)) + eadn.substring(1)));
+							for (int a = 0; a < docAuthors.length; a++) {
+								final String dan = docAuthors[a];
+								String cadv = ref.getAuthorAttribute(docAuthors[a], authorDetails[d]);
+								admi = new JMenuItem(docAuthors[a] + " (" + ((cadv == null) ? "-" : "+") + ")");
+								admi.addActionListener(new ActionListener() {
+									public void actionPerformed(ActionEvent ae) {
+										useAuthorDetailSelection(start, end, dan, eadn, isAuthorIdentifier, ref, idmp);
+									}
+								});
+								admi.setToolTipText("Use as " + eadn + " for " + docAuthors[a] + ((cadv == null) ? "" : (" (currently '" + cadv + "')")));
+								admi.setBackground(idmp.getAnnotationColor("doc" + "Author" + Character.toUpperCase(eadn.charAt(0)) + eadn.substring(1)));
+								adm.add(admi);
+							}
+							m.add(adm);
+						}
 					}
 					if (refIdTypes.length != 0)
 						m.addSeparator();
@@ -395,6 +798,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 							}
 						});
 						mi.setToolTipText("Use as ID-" + idt + ((idv == null) ? "" : (" (currently '" + idv + "')")));
+						mi.setBackground(idmp.getAnnotationColor("docId" + idt));
 						m.add(mi);
 					}
 					return m;
@@ -529,6 +933,65 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		idmp.repaint();
 	}
 	
+	private void useAuthorDetailSelection(ImWord start, ImWord end, String authorName, String type, boolean isIdentifier, RefData ref, ImDocumentMarkupPanel idmp) {
+		idmp.beginAtomicAction("Mark Author " + Character.toUpperCase(type.charAt(0)) + type.substring(1));
+		
+		//	assemble annotated value
+		String value = ImUtils.getString(start, end, true);
+		
+		//	TODO sanitize attribute value, and check validity along the way
+		//	TODO somehow validate identifier (and configure patterns in the first place !!!)
+//		String sValue = sanitizeAttributeValue(type, value, isIdentifier);
+//		if (sValue == null) {
+//			//	TODO maybe prompt for permission only ?!?
+//			DialogFactory.alert(("'" + value + "' is not a valid value for document " + type), ("Invalid Document " + Character.toUpperCase(type.charAt(0)) + type.substring(1)), JOptionPane.ERROR_MESSAGE);
+//			return;
+//		}
+//		else value = sValue;
+		
+		//	generate annotation type
+		String annotType = ("docAuthor" + Character.toUpperCase(type.charAt(0)) + type.substring(1));
+		
+		//	check existing annotations
+		ImAnnotation exAnnot = null;
+		ImAnnotation[] exAnnots = idmp.document.getAnnotations(annotType);
+		for (int a = 0; a < exAnnots.length; a++) {
+			
+			//	this one is exactly what we intend to annotate, hold on to it
+			if ((exAnnots[a].getFirstWord() == start) && (exAnnots[a].getLastWord() == end))
+				exAnnot = exAnnots[a];
+			
+			//	only remove overlapping annotations, as author details are list-valued
+			else {
+				if (!start.getTextStreamId().equals(exAnnots[a].getFirstWord().getTextStreamId())) { /* different text streams, for whatever reason */ }
+				else if (ImUtils.textStreamOrder.compare(end, exAnnots[a].getFirstWord()) <= 0) { /* selection lies before existing annotation */ }
+				else if (ImUtils.textStreamOrder.compare(exAnnots[a].getLastWord(), start) <= 0) { /* selection lies after existing annotation */ }
+				else idmp.document.removeAnnotation(exAnnots[a]);
+			}
+		}
+		
+		//	annotate selection (unless done before)
+		if (exAnnot == null)
+			idmp.document.addAnnotation(start, end, annotType);
+		
+		//	set attribute
+		if (isIdentifier)
+			ref.setAuthorAttribute(authorName, type, value.replaceAll("\\s", ""));
+		else ref.setAuthorAttribute(authorName, type, value);
+		
+		//	store attributes, and invalidate cache
+		BibRefUtils.toModsAttributes(ref, idmp.document);
+		this.refDataByDocId.remove(idmp.document.docId);
+		
+		//	finally ...
+		idmp.endAtomicAction();
+		
+		//	make changes show
+		idmp.setAnnotationsPainted(annotType, true);
+		idmp.validate();
+		idmp.repaint();
+	}
+	
 	private static String sanitizeAttributeValue(String type, String value, boolean isIdentifier) {
 		
 		//	normalize dashes and whitespace
@@ -542,8 +1005,41 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				sValue = ("" + StringUtils.parseRomanNumber(sValue));
 			return (sValue.matches("[12][0-9]{3}") ? sValue : null);
 		}
-		else if (PUBLICATION_DATE_ANNOTATION_TYPE.equals(type))
-			return DateTimeUtils.parseTextDate(sValue);
+		else if (PUBLICATION_DATE_ANNOTATION_TYPE.equals(type)) {
+//			return DateTimeUtils.parseTextDate(sValue);
+			String sDate = DateTimeUtils.parseTextDate(sValue);
+			if (sDate != null)
+				return sDate;
+			
+			//	substitute 16 as the day to get month parsed
+			String tsValue;
+			if (sValue.matches("[12][0-9]{3}.*"))
+				tsValue = (sValue + " 16"); // add day tailing if year leading
+			else if (sValue.matches(".*?[12][0-9]{3}"))
+				tsValue = ("16 " + sValue); // add day leading if year tailing
+			else return sDate;
+			String tsDate = DateTimeUtils.parseTextDate(tsValue);
+			if (tsDate == null)
+				return sDate;
+			
+			//	extract month and determine last day
+			String sMonth = tsDate.substring("1999-".length(), "1999-12".length());
+			String sDay;
+			if ("02".equals(sMonth))
+				sDay = "28";
+			else if ("04 06 09 11".indexOf(sMonth) != -1)
+				sDay = "30";
+			else sDay = "31";
+			String rsValue;
+			if (sValue.matches("[12][0-9]{3}.*"))
+				rsValue = (sValue + " " + sDay); // add day tailing if year leading
+			else if (sValue.matches(".*?[12][0-9]{3}"))
+				rsValue = (sDay + " " + sValue); // add day leading if year tailing
+			else return sDate;
+			
+			//	finally ...
+			return DateTimeUtils.parseTextDate(StringUtils.normalizeString(rsValue));
+		}
 		else if (VOLUME_DESIGNATOR_ANNOTATION_TYPE.equals(type) || ISSUE_DESIGNATOR_ANNOTATION_TYPE.equals(type)) {
 			sValue = sValue.replaceAll("\\s", "");
 			sValue = removeLeadingZeros(sValue);
@@ -557,7 +1053,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				sValue = removeLeadingZeros(sValue);
 				if (StringUtils.isRomanNumber(sValue))
 					sValue = ("" + StringUtils.parseRomanNumber(sValue));
-				return (sValue.matches("[1-9][0-9]*") ? sValue : null);
+				return (sValue.matches("e?[1-9][0-9]*") ? sValue : null);
 			}
 			else if (sValue.indexOf('-') == sValue.lastIndexOf('-')) {
 				String[] valueParts = sValue.split("\\s*\\-\\s*");
@@ -620,6 +1116,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		JOURNAL_NAME_ANNOTATION_TYPE,
 		VOLUME_DESIGNATOR_ANNOTATION_TYPE,
 		ISSUE_DESIGNATOR_ANNOTATION_TYPE,
+		NUMERO_DESIGNATOR_ANNOTATION_TYPE,
 		PUBLISHER_ANNOTATION_TYPE,
 		LOCATION_ANNOTATION_TYPE,
 		EDITOR_ANNOTATION_TYPE,
@@ -655,13 +1152,14 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		//	return a web based view controller
 		public WebDocumentView getWebDocumentView(String baseUrl) {
+			checkRefDataSources();
 			return new WebDocumentView(this, baseUrl) {
 				private RefData ref;
 				private HashMap attributesToValues = new HashMap();
 				protected void preProcess(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp) {
 					
 					//	get bibliographic data from document
-					this.ref = getRefData(doc, this.attributesToValues);
+					this.ref = getRefData(doc, this.attributesToValues, true);
 				}
 				protected void postProcess(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp) {
 					
@@ -724,7 +1222,8 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 								//	add Validate, Search (if we have a RefBank uplink), OK, Cancel, and Reset buttons
 								this.writeLine("<div class=\"bibDataButtons\" style=\"text-align: center;\">");
 								this.writeLine("<button class=\"bibDataButton\" onclick=\"return validateRefData();\">Validate</button>");
-								if (refBankClient != null)
+//								if (refBankClient != null)
+								if (refDataSources != null)
 									this.writeLine("<button class=\"bibDataButton\" onclick=\"return searchRefData();\">Search</button>");
 								this.writeLine("<button class=\"bibDataButton\" onclick=\"return submitRefData('OK');\">OK</button>");
 								this.writeLine("<button class=\"bibDataButton\" onclick=\"return submitRefData('C');\">Cancel</button>");
@@ -759,7 +1258,8 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 							this.writeLine("}");
 							
 							//	add search functions
-							if (refBankClient != null) {
+//							if (refBankClient != null) {
+							if (refDataSources != null) {
 								this.writeLine("var searchRefDataOverlay = null;");
 								this.writeLine("var searchRefDataDialog = null;");
 								this.writeLine("var searchRefDataLabel = null;");
@@ -940,7 +1440,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		//	get bibliographic data from document
 		HashMap attributesToValues = new HashMap();
-		RefData ref = this.getRefData(doc, attributesToValues);
+		RefData ref = this.getRefData(doc, attributesToValues, allowPrompt);
 		
 		//	open meta data for editing if allowed to
 		if (allowPrompt) {
@@ -970,7 +1470,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		this.storeRefData(doc, ref, attributesToValues, !allowPrompt);
 	}
 	
-	private RefData getRefData(ImDocument doc, HashMap attributesToValues) {
+	private RefData getRefData(ImDocument doc, HashMap attributesToValues, boolean willPrompt) {
 		
 		//	put attributes from document in BibRef object
 		RefData ref = BibRefUtils.modsAttributesToRefData(doc);
@@ -978,6 +1478,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		//	use document style template if given
 		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
 		DocumentStyle metaDataStyle = docStyle.getSubset("docMeta");
+		boolean useDataSources = metaDataStyle.getBooleanProperty("useDataSources", false);
 		int metaDataMaxFromStartPageId = metaDataStyle.getIntProperty("maxPageId", 0);
 		int metaDataMaxFromEndPageId = metaDataStyle.getIntProperty("maxFromEndPageId", 0);
 		ImPage[] pages = doc.getPages();
@@ -1031,23 +1532,18 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				ref.setIdentifier(this.refIdTypes[t], ref.getIdentifier(this.refIdTypes[t]).replaceAll("\\s", ""));
 		}
 		
-		//	check existing reference type, and facilitate re-classification if there are errors
-		if (ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE)) {
-			String[] refErrors = this.refTypeSystem.checkType(ref);
-			if (refErrors != null)
-				ref.removeAttribute(PUBLICATION_TYPE_ATTRIBUTE);
+		//	extract author details
+		if ((this.authorDetails != null) && (this.authorDetails.length != 0)) {
+			DocumentStyle authorDetailsStyle = metaDataStyle.getSubset(AUTHOR_ANNOTATION_TYPE + ".details");
+			ArrayList extractedAuthorNames = ((ArrayList) attributesToValues.get(AUTHOR_ANNOTATION_TYPE));
+			if ((extractedAuthorNames != null) && (extractedAuthorNames.size() != 0)) {
+				ExtractedAttributeValue[] docAuthors = ((ExtractedAttributeValue[]) extractedAuthorNames.toArray(new ExtractedAttributeValue[extractedAuthorNames.size()]));
+				for (int d = 0; d < this.authorDetails.length; d++) {
+					if (!AuthorData.AUTHOR_NAME_ATTRIBUTE.equals(this.authorDetails[d]))
+						extractAuthorDetail(docAuthors, this.authorDetails[d], !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(this.authorDetails[d]), pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, authorDetailsStyle, ref, attributesToValues, System.out);
+				}
+			}
 		}
-		
-		//	try and classify existing reference
-		if (!ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE)) {
-			String type = this.refTypeSystem.classify(ref);
-			if (type != null)
-				ref.setAttribute(PUBLICATION_TYPE_ATTRIBUTE, type);
-		}
-		
-		//	transfer PDF URL is given
-		if (doc.hasAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) && (doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) instanceof String) && !ref.hasAttribute(PUBLICATION_URL_ANNOTATION_TYPE))
-			ref.setAttribute(PUBLICATION_URL_ANNOTATION_TYPE, ((String) doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE)));
 		
 		//	try to find title in document head if not already given
 		if (!ref.hasAttribute(TITLE_ANNOTATION_TYPE)) {
@@ -1064,9 +1560,100 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				ref.setAttribute(PAGINATION_ANNOTATION_TYPE, (firstPageNumber + "-" + lastPageNumber));
 		} catch (NumberFormatException nfe) {}
 		
+		//	transfer PDF URL is given
+		if (doc.hasAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) && (doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) instanceof String) && !ref.hasAttribute(PUBLICATION_URL_ANNOTATION_TYPE))
+			ref.setAttribute(PUBLICATION_URL_ANNOTATION_TYPE, ((String) doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE)));
+		
+		//	check existing reference type, and facilitate re-classification if there are errors
+		if (ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE)) {
+			String[] refErrors = this.refTypeSystem.checkType(ref);
+			if (refErrors != null)
+				ref.removeAttribute(PUBLICATION_TYPE_ATTRIBUTE);
+		}
+		
+		//	try and classify existing reference
+		if (!ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE)) {
+			String type = this.refTypeSystem.classify(ref);
+			if (type != null)
+				ref.setAttribute(PUBLICATION_TYPE_ATTRIBUTE, type);
+		}
+		
+		//	this one is all set
+		if (ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE))
+			return ref;
+		
+		//	this one will be taken care of by user, or we're not allowed to use our data sources
+		if (!useDataSources || willPrompt)
+			return ref;
+		
+		//	use web lookup if we have something to work with
+		System.out.println("Completing metadata via data source lookup");
+		Vector dsRefs = this.searchRefData(ref);
+		if ((dsRefs == null) || dsRefs.isEmpty()) {
+			System.out.println(" ==> no references found");
+			return ref;
+		}
+		
+		//	use what we found (best match tends to come first anyway)
+		RefDataListElement dsRes = ((RefDataListElement) dsRefs.get(0));
+		System.out.println(" ==> found " + dsRes.toString());
+		RefData dsRef = dsRes.ref;
+		for (int a = 0; a < lookupTransferAttributeNames.length; a++) {
+			if (ref.hasAttribute(lookupTransferAttributeNames[a]))
+				continue;
+			if (!dsRef.hasAttribute(lookupTransferAttributeNames[a]))
+				continue;
+			System.out.println(" - importing " + lookupTransferAttributeNames[a]);
+			if (AUTHOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a]) || AUTHOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a])) {
+				String[] dsRefAvs = dsRef.getAttributeValues(lookupTransferAttributeNames[a]);
+				for (int v = 0; v < dsRefAvs.length; v++) {
+					if (v == 0)
+						ref.setAttribute(lookupTransferAttributeNames[a], dsRefAvs[v]);
+					else ref.addAttribute(lookupTransferAttributeNames[a], dsRefAvs[v]);
+				}
+				System.out.println("   ==> " + dsRef.getAttributeValueString(lookupTransferAttributeNames[a], " & "));
+			}
+			else {
+				ref.setAttribute(lookupTransferAttributeNames[a], dsRef.getAttribute(lookupTransferAttributeNames[a]));
+				System.out.println("   ==> " + dsRef.getAttribute(lookupTransferAttributeNames[a]));
+			}
+		}
+		String[] dsRefIts = dsRef.getIdentifierTypes();
+		for (int i = 0; i < dsRefIts.length; i++) {
+			if (ref.getIdentifier(dsRefIts[i]) == null)
+				ref.setIdentifier(dsRefIts[i], dsRef.getIdentifier(dsRefIts[i]));
+		}
+		
+		//	check for errors one last time
+		String type = this.refTypeSystem.classify(ref);
+		if (type != null)
+			ref.setAttribute(PUBLICATION_TYPE_ATTRIBUTE, type);
+		
 		//	finally ...
 		return ref;
 	}
+	
+	private static final String[] lookupTransferAttributeNames = {
+		AUTHOR_ANNOTATION_TYPE,
+		YEAR_ANNOTATION_TYPE,
+		PUBLICATION_DATE_ANNOTATION_TYPE,
+		TITLE_ANNOTATION_TYPE,
+		
+		JOURNAL_NAME_ANNOTATION_TYPE,
+		VOLUME_DESIGNATOR_ANNOTATION_TYPE,
+		ISSUE_DESIGNATOR_ANNOTATION_TYPE,
+		NUMERO_DESIGNATOR_ANNOTATION_TYPE,
+		
+		PUBLISHER_ANNOTATION_TYPE,
+		LOCATION_ANNOTATION_TYPE,
+		
+		VOLUME_TITLE_ANNOTATION_TYPE,
+		EDITOR_ANNOTATION_TYPE,
+		
+		PAGINATION_ANNOTATION_TYPE,
+		
+		PUBLICATION_URL_ANNOTATION_TYPE
+	};
 	
 	private void storeRefData(ImDocument doc, RefData ref, HashMap attributesToValues, boolean auto) {
 		
@@ -1095,6 +1682,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		//	annotate attribute values in document head
 		annotateAttributeValues(ref, ref.getAttributeNames(), extractableFieldNames, false, doc, attributesToValues, auto);
 		annotateAttributeValues(ref, ref.getIdentifierTypes(), this.refIdTypes, true, doc, attributesToValues, auto);
+		
+		//	annotate author details
+		String[] refAuthorNames = ref.getAttributeValues(AUTHOR_ANNOTATION_TYPE);
+		System.out.println(Arrays.toString(refAuthorNames));
+		System.out.println(Arrays.toString(this.authorDetails));
+		annotateAuthorDetailValues(ref, refAuthorNames, ref.getAuthorAttributeNames(), this.authorDetails, doc, attributesToValues, auto);
 		
 		//	annotate document reference
 		annotateDocReference(doc, ref);
@@ -1363,7 +1956,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		maxFromStartPageId = attributeStyle.getIntProperty("maxPageId", maxFromStartPageId);
 		for (int p = 0; (p <= maxFromStartPageId) && (p < pages.length); p++) {
 			int dpi = pages[p].getImageDPI();
-			if (extractAttribute(name, isIdentifier, pages[p], dpi, attributeStyle, isMultiValue, ref, attributeValues)) {
+			if (extractAttribute(name, isIdentifier, pages[p], dpi, attributeStyle, isMultiValue, ref, attributeValues, System.out)) {
 				attributesToValues.put(name, attributeValues);
 				return true;
 			}
@@ -1373,7 +1966,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		maxFromEndPageId = attributeStyle.getIntProperty("maxFromEndPageId", maxFromEndPageId);
 		for (int p = (pages.length - maxFromEndPageId); p < pages.length; p++) {
 			int dpi = pages[p].getImageDPI();
-			if (extractAttribute(name, isIdentifier, pages[p], dpi, attributeStyle, isMultiValue, ref, attributeValues)) {
+			if (extractAttribute(name, isIdentifier, pages[p], dpi, attributeStyle, isMultiValue, ref, attributeValues, System.out)) {
 				attributesToValues.put(name, attributeValues);
 				return true;
 			}
@@ -1387,7 +1980,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return false;
 	}
 	
-	private static boolean extractAttribute(String name, boolean isIdentifier, ImPage page, int dpi, DocumentStyle attributeStyle, boolean isMultiValue, RefData ref, ArrayList attributeValues) {
+	private static boolean extractAttribute(String name, boolean isIdentifier, ImPage page, int dpi, DocumentStyle attributeStyle, boolean isMultiValue, RefData ref, ArrayList attributeValues, PrintStream log) {
 		
 		//	attribute already set, get annotations and we're done
 		if ((ref != null) && (ref.getAttribute(name) != null)) {
@@ -1400,47 +1993,73 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				String value = ImUtils.getString(annots[a].getFirstWord(), annots[a].getLastWord(), true);
 				if (isIdentifier)
 					value = value.replaceAll("\\s", "");
-				System.out.println("Got existing " + name + " from " + annotType + ": " + value);
+				log.println("Got existing " + name + " from " + annotType + ": " + value);
 				String sValue = sanitizeAttributeValue(name, value, isIdentifier);
 				if (sValue == null)
 					sValue = ref.getAttribute(name);
 				attributeValues.add(new ExtractedAttributeValue(name, value, StringUtils.normalizeString(value), sValue, getSpannedWords(annots[a].getFirstWord(), annots[a].getLastWord())));
 			}
 			if (attributeValues.isEmpty())
-				System.out.println("Existing " + name + " not found from " + annotType);
+				log.println("Existing " + name + " not found from " + annotType);
 			return false;
 		}
-		System.out.println("Extracting " + name + ":");
+		log.println("Extracting " + name + ":");
 		
 		//	check for fixed value
 		String fixedValue = attributeStyle.getProperty("fixedValue");
 		if (fixedValue != null) {
-			System.out.println(" ==> fixed to " + fixedValue);
+			log.println(" ==> fixed to " + fixedValue);
 			if (ref != null)
 				ref.setAttribute(name, fixedValue);
 			return false;
 		}
 		
-		//	get extraction parameters
+		//	get extraction area
 		BoundingBox area = attributeStyle.getBoxProperty("area", null, dpi);
+		if (area == null) {
+			log.println(" ==> deactivated");
+			return false;
+		}
+		
+		//	get words from area
+		ImWord[] words = page.getWordsInside(area);
+		log.println(" - got " + words.length + " words in area");
+		if (words.length == 0)
+			return false;
+		
+		//	extract based on identified words
+		return extractAttributeValue(name, isIdentifier, words, attributeStyle, isMultiValue, ref, attributeValues, log);
+	}
+	
+	private static boolean extractAttributeValue(String name, boolean isIdentifier, ImWord[] words, DocumentStyle attributeStyle, boolean isMultiValue, RefData ref, ArrayList extractedValues, PrintStream log) {
+		
+		/* TODO Maybe compile styles parameter sets into MetaDataAttributeExtractor objects:
+- akin to defined heading styles in document structure detection
+  ==> ALSO, add extraction logging PrintStream argument to matching method of latter ...
+  ==> ... and provide log output dialog as in document metadata parameter group descriptions
+- saves reading and parsing parameters multiple times
+- can be cached by document style and attribute name
+- bundles parameters in single method arguments
+- can provide instance methods for value extraction ...
+- ... removing need to pass extraction parameters as method arguments
+  ==> allow specifying custom values via arguments, though
+    ==> facilitates passing computed author detail bounding box for proximity association
+      ==> maybe intersect that with instance stored bounding box
+- should not take up all too much memory
+		 */
+		
+		//	get extraction parameters
 		boolean isBold = attributeStyle.getBooleanProperty("isBold", false);
 		boolean isItalics = attributeStyle.getBooleanProperty("isItalics", false);
 		boolean isAllCaps = attributeStyle.getBooleanProperty("isAllCaps", false);
 		int fontSize = attributeStyle.getIntProperty("fontSize", -1);
 		int minFontSize = attributeStyle.getIntProperty("minFontSize", ((fontSize == -1) ? 0 : fontSize));
 		int maxFontSize = attributeStyle.getIntProperty("maxFontSize", ((fontSize == -1) ? 72 : fontSize));
+		boolean singleLineValues = (isMultiValue && attributeStyle.getBooleanProperty("singleLineValues", false));
+		String[] filterPatternStrings = attributeStyle.getListProperty("filterPatterns", null, " ");
+		Pattern[] filterPatterns = ((filterPatternStrings == null) ? null : new Pattern[filterPatternStrings.length]);
 		String contextPattern = attributeStyle.getProperty("contextPattern", null);
 		String valuePattern = attributeStyle.getProperty("valuePattern", null);
-		if (area == null) {
-			System.out.println(" ==> deactivated");
-			return false;
-		}
-		
-		//	get words from area
-		ImWord[] words = page.getWordsInside(area);
-		System.out.println(" - got " + words.length + " words in area");
-		if (words.length == 0)
-			return false;
 		
 		//	filter words based on font size and style
 		ArrayList wordList = new ArrayList();
@@ -1463,12 +2082,13 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 		if (wordList.size() < words.length)
 			words = ((ImWord[]) wordList.toArray(new ImWord[wordList.size()]));
-		System.out.println(" - got " + words.length + " matching style and font size");
+		log.println(" - got " + words.length + " matching style and font size");
 		if (words.length == 0)
 			return false;
 		
 		//	order and concatenate words
-		//	TODO use sortIntoLines() instead if we have many individual words (graphics label false positive, etc.)
+		//	TODO_not use sortIntoLines() instead if we have many individual words (graphics label false positive, etc.)
+		//	==> better use page header areas to get such stuff into one stream, don't belong to main text anyway
 		Arrays.sort(words, ImUtils.textStreamOrder);
 		StringBuffer wordStringBuilder = new StringBuffer();
 		ArrayList wordAtChar = new ArrayList();
@@ -1479,11 +2099,11 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			if ((w+1) == words.length)
 				break;
 			if (words[w].getNextWord() != words[w+1]) {
-				wordStringBuilder.append(" ");
+				wordStringBuilder.append(singleLineValues ? "\n" : " ");
 				wordAtChar.add(words[w]);
 			}
 			else if (words[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END) {
-				wordStringBuilder.append(" ");
+				wordStringBuilder.append(singleLineValues ? "\n" : " ");
 				wordAtChar.add(words[w]);
 			}
 			else if ((words[w].getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED) && (wordStringBuilder.length() != 0)) {
@@ -1492,106 +2112,269 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			}
 			else if (words[w].getNextRelation() == ImWord.NEXT_RELATION_SEPARATE) {
 				if (words[w].bounds.bottom <= words[w+1].centerY) {
-					wordStringBuilder.append(" ");
+					wordStringBuilder.append(singleLineValues ? "\n" : " ");
 					wordAtChar.add(words[w]);
 				}
 				else if (words[w].bounds.top > words[w+1].centerY) {
+					wordStringBuilder.append(singleLineValues ? "\n" : " ");
+					wordAtChar.add(words[w]);
+				}
+//				else if ((words[w].bounds.right < words[w+1].bounds.left) && Gamta.insertSpace(words[w].getString(), words[w+1].getString())) {
+				else if (isSpace(words[w], words[w+1], false) && Gamta.insertSpace(words[w].getString(), words[w+1].getString())) {
 					wordStringBuilder.append(" ");
 					wordAtChar.add(words[w]);
 				}
-				else if ((words[w].bounds.right < words[w+1].bounds.left) && Gamta.insertSpace(words[w].getString(), words[w+1].getString())) {
-					wordStringBuilder.append(" ");
-					wordAtChar.add(words[w]);
-				}
-				else if (StringUtils.DASHES.contains(words[w].getString()) != StringUtils.DASHES.contains(words[w+1].getString())) {
+//				else if (StringUtils.DASHES.contains(words[w].getString()) != StringUtils.DASHES.contains(words[w+1].getString())) {
+				else if (isSpace(words[w], words[w+1], true) && (StringUtils.DASHES.contains(words[w].getString()) != StringUtils.DASHES.contains(words[w+1].getString()))) {
 					wordStringBuilder.append(" ");
 					wordAtChar.add(words[w]);
 				}
 			}
 		}
 		String wordString = wordStringBuilder.toString();
-		System.out.println(" - word string is " + wordString);
+		log.println(" - word string is " + wordString);
 		
 		//	normalize string for pattern matching
-		String nWordString = StringUtils.normalizeString(wordString);
-		System.out.println(" - normalized word string is " + nWordString);
+		String nWordString;
+		if (singleLineValues && (wordString.indexOf('\n') != -1)) {
+			StringVector wordLines = new StringVector();
+			wordLines.parseAndAddElements(wordString, "\n");
+			for (int l = 0; l < wordLines.size(); l++)
+				wordLines.setElementAt(StringUtils.normalizeString(wordLines.get(l)), l);
+			nWordString = wordLines.concatStrings("\n");
+		}
+		else nWordString = StringUtils.normalizeString(wordString);
+		log.println(" - normalized word string is " + nWordString);
 		
 		//	nothing further to extract, we're done
 		if ((contextPattern == null) && (valuePattern == null)) {
-			System.out.println(" ==> set to " + wordString);
-			String sWordString = sanitizeAttributeValue(name, wordString, isIdentifier);
-			if (ref != null)
-				ref.setAttribute(name, ((sWordString == null) ? wordString : sWordString));
-			attributeValues.add(new ExtractedAttributeValue(name, wordString, nWordString, sWordString, getAttributeWords(wordAtChar, 0, wordAtChar.size())));
-			return true;
-		}
-		
-		//	use context narrowing pattern
-		if (contextPattern != null) try {
-			Matcher matcher = Pattern.compile(contextPattern).matcher(nWordString);
-			if (matcher.find()) {
-				wordString = wordString.substring(matcher.start(), matcher.end());
-				nWordString = matcher.group();
-				wordAtChar = new ArrayList(wordAtChar.subList(matcher.start(), matcher.end()));
-				System.out.println(" - context pattern cut to " + wordString);
-			}
-			else {
-				System.out.println(" ==> context pattern mismatch");
-				return false;
-			}
-		}
-		catch (Exception e) {
-			System.out.println(" - context pattern error: " + e.getMessage());
-			return false;
-		}
-		
-		//	set plain attribute
-		if (valuePattern == null) {
-			System.out.println(" ==> set to " + wordString);
-			String sWordString = sanitizeAttributeValue(name, wordString, isIdentifier);
-			if (ref != null)
-				ref.setAttribute(name, ((sWordString == null) ? wordString : sWordString));
-			attributeValues.add(new ExtractedAttributeValue(name, wordString, nWordString, sWordString, getAttributeWords(wordAtChar, 0, wordAtChar.size())));
-			return true;
-		}
-		
-		//	extract attribute value(s) via pattern
-		else try {
-			Matcher matcher = Pattern.compile(valuePattern).matcher(nWordString);
-			while (matcher.find()) {
+			if (singleLineValues && (wordString.indexOf('\n') != -1)) {
 				if (isMultiValue) {
-					System.out.println(" ==> value pattern added " + wordString.substring(matcher.start(), matcher.end()));
-					String singleValue = wordString.substring(matcher.start(), matcher.end());
-					String nSingleValue = matcher.group();
-					String sSingleValue = sanitizeAttributeValue(name, singleValue, isIdentifier);
-					if (ref != null)
-						ref.addAttribute(name, ((sSingleValue == null) ? singleValue : sSingleValue));
-					attributeValues.add(new ExtractedAttributeValue(name, singleValue, nSingleValue, sSingleValue, getAttributeWords(wordAtChar, matcher.start(), matcher.end())));
+					String[] wordStringParts = wordString.split("\\n");
+					int wordStringPartStart = 0;
+					for (int p = 0; p < wordStringParts.length; p++) {
+						log.println(" ==> single-line added " + wordStringParts[p]);
+						String singleValue = wordStringParts[p];
+						String nSingleValue = StringUtils.normalizeString(wordStringParts[p]);
+						String sSingleValue = sanitizeAttributeValue(name, singleValue, isIdentifier);
+						if (useAttributeValue(nSingleValue, filterPatternStrings, filterPatterns, log)) {
+							if (ref != null)
+								ref.addAttribute(name, ((sSingleValue == null) ? singleValue : sSingleValue));
+							extractedValues.add(new ExtractedAttributeValue(name, singleValue, nSingleValue, sSingleValue, getAttributeWords(wordAtChar, wordStringPartStart, (wordStringPartStart + wordStringParts[p].length()))));
+						}
+						wordStringPartStart += wordStringParts[p].length();
+						wordStringPartStart += "\n".length();
+					}
 				}
 				else {
-					System.out.println(" ==> value pattern set to " + wordString.substring(matcher.start(), matcher.end()));
-					String value = wordString.substring(matcher.start(), matcher.end());
-					String nValue = matcher.group();
-					String sValue = sanitizeAttributeValue(name, value, isIdentifier);
-					if (ref != null)
-						ref.setAttribute(name, ((sValue == null) ? value : sValue));
-					attributeValues.add(new ExtractedAttributeValue(name, value, nValue, sValue, getAttributeWords(wordAtChar, matcher.start(), matcher.end())));
-					return true;
+					wordString = wordString.substring(0, wordString.indexOf('\n')).trim();
+					log.println(" - single-line cut to " + wordString);
+					nWordString = StringUtils.normalizeString(wordString);
+					log.println(" - normalized word now string is " + nWordString);
+					log.println(" ==> set to " + wordString);
+					String sWordString = sanitizeAttributeValue(name, wordString, isIdentifier);
+					if (useAttributeValue(nWordString, filterPatternStrings, filterPatterns, log)) {
+						if (ref != null)
+							ref.setAttribute(name, ((sWordString == null) ? wordString : sWordString));
+						extractedValues.add(new ExtractedAttributeValue(name, wordString, nWordString, sWordString, getAttributeWords(wordAtChar, 0, wordAtChar.size())));
+					}
 				}
 			}
-			if ((ref != null) && ref.hasAttribute(name))
-				return true;
-			else if (attributeValues.size() != 0)
-				return true;
 			else {
-				System.out.println(" ==> value pattern mismatch");
+				log.println(" ==> set to " + wordString);
+				String sWordString = sanitizeAttributeValue(name, wordString, isIdentifier);
+				if (useAttributeValue(nWordString, filterPatternStrings, filterPatterns, log)) {
+					if (ref != null)
+						ref.setAttribute(name, ((sWordString == null) ? wordString : sWordString));
+					extractedValues.add(new ExtractedAttributeValue(name, wordString, nWordString, sWordString, getAttributeWords(wordAtChar, 0, wordAtChar.size())));
+				}
+			}
+			return (extractedValues.size() != 0);
+		}
+		
+		//	adjust patterns for single-line values
+		if (singleLineValues) {
+			contextPattern = adjustWHitespaceMatchers(contextPattern, "context", log);
+			valuePattern = adjustWHitespaceMatchers(valuePattern, "value", log);
+		}
+		
+		//	extract multi value attributes
+		if (isMultiValue) {
+			
+			//	use context pattern
+			if (contextPattern != null) try {
+				Matcher contextMatcher = Pattern.compile(contextPattern).matcher(nWordString);
+				int contextMatches = 0;
+				while (contextMatcher.find()) {
+					contextMatches++;
+					String cWordString = wordString.substring(contextMatcher.start(), contextMatcher.end());
+					String cnWordString = contextMatcher.group();
+					ArrayList cWordAtChar = new ArrayList(wordAtChar.subList(contextMatcher.start(), contextMatcher.end()));
+					log.println(" - context pattern matched to " + cnWordString);
+					addSingleAttributeValue(name, isIdentifier, isMultiValue, ref, extractedValues, cWordString, cnWordString, cWordAtChar, valuePattern, filterPatternStrings, filterPatterns, log);
+				}
+				if (extractedValues.isEmpty()) {
+					if (contextMatches == 0) // value patern problems are reported individually
+						log.println(" ==> context pattern mismatch");
+					return false;
+				}
+				else return true;
+			}
+			catch (Exception e) {
+				log.println(" - context pattern error: " + e.getMessage());
+//				e.printStackTrace(System.out);
+				return false;
+			}
+			
+			//	use value pattern alone
+			try {
+				//	TODO_not maybe automatically add boundary matchers for single-line values ???
+				//	==> but then, the '.' wildcard doesn't match line breaks by default, so their presence should do
+				//	TODOne replace '\s' matchers (which _do_ match line breaks) with '\x20' matchers for single-line values 
+				Matcher valueMatcher = Pattern.compile(valuePattern).matcher(nWordString);
+				while (valueMatcher.find())
+					addSinglePatternMatch(name, isIdentifier, isMultiValue, ref, extractedValues, wordString, nWordString, wordAtChar, valueMatcher, filterPatternStrings, filterPatterns, log);
+				if ((ref != null) && ref.hasAttribute(name))
+					return true;
+				else if (extractedValues.size() != 0)
+					return true;
+				else {
+					log.println(" ==> value pattern mismatch");
+					return false;
+				}
+			}
+			catch (Exception e) {
+				log.println(" - value pattern error: " + e.getMessage());
+//				e.printStackTrace(System.out);
+				return false;
+			}
+		}
+			
+		//	use context narrowing pattern
+		if (contextPattern != null) try {
+			Matcher contextMatcher = Pattern.compile(contextPattern).matcher(nWordString);
+			if (contextMatcher.find()) {
+				wordString = wordString.substring(contextMatcher.start(), contextMatcher.end());
+				nWordString = contextMatcher.group();
+				wordAtChar = new ArrayList(wordAtChar.subList(contextMatcher.start(), contextMatcher.end()));
+				log.println(" - context pattern cut to " + wordString);
+			}
+			else {
+				log.println(" ==> context pattern mismatch");
 				return false;
 			}
 		}
 		catch (Exception e) {
-			System.out.println(" - value pattern error: " + e.getMessage());
+			log.println(" - context pattern error: " + e.getMessage());
+//			e.printStackTrace(System.out);
 			return false;
 		}
+		
+		//	extract single value from whatever we have
+		return addSingleAttributeValue(name, isIdentifier, isMultiValue, ref, extractedValues, wordString, nWordString, wordAtChar, valuePattern, filterPatternStrings, filterPatterns, log);
+	}
+	
+	private static boolean isSpace(ImWord word1, ImWord word2, boolean forDash) {
+		int wordDist = (word2.bounds.left - word1.bounds.right);
+		if (wordDist <= 0)
+			return false;
+		if (forDash && (wordDist > 1))
+			return true;
+		int wordHeight = ((word1.bounds.getHeight() + word2.bounds.getHeight()) / 2);
+		return ((wordHeight * 1) <= (wordDist * 10)); // 10% should be OK as an estimate lower bound, and with some safety margin, at least for born-digital text (0.25 is smallest defaulting space width)
+	}
+	
+	private static boolean useAttributeValue(String value, String[] filterPatternStrings, Pattern[] filterPatterns, PrintStream log) {
+		if (filterPatternStrings == null)
+			return true;
+		for (int p = 0; p < filterPatterns.length; p++) {
+			if (filterPatterns[p] == null) try {
+				filterPatterns[p] = Pattern.compile(filterPatternStrings[p]);
+			}
+			catch (Exception e) {
+				log.println(" - ignoring erroneous filter pattern: " + e.getMessage());
+//				e.printStackTrace(System.out);
+			}
+			if (filterPatterns[p] != null) {
+				Matcher m = filterPatterns[p].matcher(value);
+				if (m.find() && (m.start() == 0)) {
+					log.println(" ==> filtered by pattern " + filterPatternStrings[p]);
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+	
+	private static String adjustWHitespaceMatchers(String pattern, String type, PrintStream log) {
+		if (pattern == null)
+			return pattern;
+		boolean escaped = false;
+		StringBuffer slPattern = new StringBuffer();
+		for (int c = 0; c < pattern.length(); c++) {
+			char ch = pattern.charAt(c);
+			if (escaped) {
+				escaped = false;
+				if (ch == 's')
+					slPattern.append("x20");
+				else slPattern.append(ch);
+			}
+			else if (ch == '\\') {
+				escaped = true;
+				slPattern.append(ch);
+			}
+			else slPattern.append(ch);
+		}
+		pattern = slPattern.toString();
+		log.println(" - " + type + " pattern adjusted to " + pattern);
+		return pattern;
+	}
+	
+	private static boolean addSingleAttributeValue(String name, boolean isIdentifier, boolean isMultiValue, RefData ref, ArrayList attributeValues, String wordString, String nWordString, ArrayList wordAtChar, String valuePattern, String[] filterPatternStrings, Pattern[] filterPatterns, PrintStream log) {
+		
+		//	no value pattern, use plain string
+		if (valuePattern == null) {
+			log.println(" ==> " + (isMultiValue? "added" : "set to") +  " " + wordString);
+			String sWordString = sanitizeAttributeValue(name, wordString, isIdentifier);
+			if (useAttributeValue(nWordString, filterPatternStrings, filterPatterns, log)) {
+				if (ref != null)
+					ref.setAttribute(name, ((sWordString == null) ? wordString : sWordString));
+				attributeValues.add(new ExtractedAttributeValue(name, wordString, nWordString, sWordString, getAttributeWords(wordAtChar, 0, wordAtChar.size())));
+				return true;
+			}
+			else return false;
+		}
+		
+		//	use value pattern
+		else try {
+			Matcher valueMatcher = Pattern.compile(valuePattern).matcher(nWordString);
+			if (valueMatcher.find())
+				return addSinglePatternMatch(name, isIdentifier, isMultiValue, ref, attributeValues, wordString, nWordString, wordAtChar, valueMatcher, filterPatternStrings, filterPatterns, log);
+			else {
+				log.println(" ==> value pattern mismatch");
+				return false;
+			}
+		}
+		catch (Exception e) {
+			log.println(" - value pattern error: " + e.getMessage());
+//			e.printStackTrace(System.out);
+			return false;
+		}
+	}
+	
+	private static boolean addSinglePatternMatch(String name, boolean isIdentifier, boolean isMultiValue, RefData ref, ArrayList attributeValues, String wordString, String nWordString, ArrayList wordAtChar, Matcher valueMatcher, String[] filterPatternStrings, Pattern[] filterPatterns, PrintStream log) {
+		log.println(" ==> value pattern matched " + valueMatcher.group());
+		log.println("        ==> actually " + (isMultiValue? "added" : "set to") +  " " + wordString.substring(valueMatcher.start(), valueMatcher.end()));
+		String singleValue = wordString.substring(valueMatcher.start(), valueMatcher.end());
+		String nSingleValue = valueMatcher.group();
+		String sSingleValue = sanitizeAttributeValue(name, singleValue, isIdentifier);
+		if (useAttributeValue(nWordString, filterPatternStrings, filterPatterns, log)) {
+			if (ref != null)
+				ref.addAttribute(name, ((sSingleValue == null) ? singleValue : sSingleValue));
+			attributeValues.add(new ExtractedAttributeValue(name, singleValue, nSingleValue, sSingleValue, getAttributeWords(wordAtChar, valueMatcher.start(), valueMatcher.end())));
+			return true;
+		}
+		return false;
 	}
 	
 	private static ImWord[] getAttributeWords(ArrayList wordAtChar, int from, int to) {
@@ -1613,7 +2396,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return ((ImWord[]) spannedWords.toArray(new ImWord[spannedWords.size()]));
 	}
 	
-	private static class ExtractedAttributeValue implements Comparable {
+	private static class ExtractedAttributeValue extends AbstractAttributed implements Comparable, ImAnnotation {
 		final String name;
 		final String rValue;
 		final String nValue;
@@ -1621,14 +2404,18 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		final ImWord[] words;
 		final ImWord firstWord;
 		final ImWord lastWord;
+		final TreeSet indexChars = new TreeSet();
 		ExtractedAttributeValue(String name, String rValue, String nValue, String sValue, ImWord[] words) {
 			this.name = name;
-			this.rValue = rValue;
-			this.nValue = nValue;
-			this.sValue = sValue;
+			this.rValue = trim(rValue);
+			this.nValue = trim(nValue);
+			this.sValue = trim(sValue);
 			this.words = words;
 			this.firstWord = this.words[0];
 			this.lastWord = this.words[this.words.length - 1];
+		}
+		private static String trim(String str) {
+			return ((str == null) ? null : str.trim());
 		}
 		boolean conflictsWith(ExtractedAttributeValue eav) {
 			if (eav == this)
@@ -1641,6 +2428,33 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				return false;
 			return true;
 		}
+		public String getType() {
+			return this.name;
+		}
+		public void setType(String type) {}
+		public String getLocalID() {
+			return (this.name + "@" + this.firstWord.getLocalID() + "-" + this.lastWord.getLocalID());
+		}
+		public ImDocument getDocument() {
+			return this.firstWord.getDocument();
+		}
+		public String getDocumentProperty(String propertyName) {
+			return this.firstWord.getDocumentProperty(propertyName);
+		}
+		public String getDocumentProperty(String propertyName, String defaultValue) {
+			return this.firstWord.getDocumentProperty(propertyName, defaultValue);
+		}
+		public String[] getDocumentPropertyNames() {
+			return this.firstWord.getDocumentPropertyNames();
+		}
+		public ImWord getFirstWord() {
+			return this.firstWord;
+		}
+		public void setFirstWord(ImWord firstWord) {}
+		public ImWord getLastWord() {
+			return this.lastWord;
+		}
+		public void setLastWord(ImWord lastWord) {}
 		public int compareTo(Object obj) {
 			ExtractedAttributeValue eav = ((ExtractedAttributeValue) obj);
 			if (eav == this)
@@ -1657,6 +2471,1002 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				return c;
 			return 0;
 		}
+	}
+	
+	private static boolean extractAuthorDetail(ImAnnotation[] docAuthors, String name, boolean isIdentifier, ImPage[] pages, int maxFromStartPageId, int maxFromEndPageId, DocumentStyle allDetailsStyle, RefData ref, HashMap attributesToValues, PrintStream log) {
+		
+		//	get attribute specific parameters
+		DocumentStyle detailStyle = allDetailsStyle.getSubset(name);
+		
+		//	collect match words
+		ArrayList attributeValues = new ArrayList(docAuthors.length);
+		
+		//	extract matches from page authors are annotated in
+		ImPage page = docAuthors[0].getDocument().getPage(docAuthors[0].getFirstWord().pageId);
+		if (extractAuthorDetail(docAuthors, name, isIdentifier, page, page.getImageDPI(), detailStyle, allDetailsStyle, ref, attributeValues, log)) {
+			attributesToValues.put((AUTHOR_ANNOTATION_TYPE + "-" + name), attributeValues);
+			return true;
+		}
+//		
+//		//	try extraction from document start first
+//		maxFromStartPageId = detailStyle.getIntProperty("maxPageId", maxFromStartPageId);
+//		for (int p = 0; (p <= maxFromStartPageId) && (p < pages.length); p++) {
+//			int dpi = pages[p].getImageDPI();
+//			if (extractAuthorDetail(docAuthors, name, isIdentifier, pages[p], dpi, detailStyle, allDetailsStyle, ref, attributeValues, log)) {
+//				attributesToValues.put(name, attributeValues);
+//				return true;
+//			}
+//		}
+//		
+//		//	try extraction from document end only second
+//		maxFromEndPageId = detailStyle.getIntProperty("maxFromEndPageId", maxFromEndPageId);
+//		for (int p = (pages.length - maxFromEndPageId); p < pages.length; p++) {
+//			int dpi = pages[p].getImageDPI();
+//			if (extractAuthorDetail(docAuthors, name, isIdentifier, pages[p], dpi, detailStyle, allDetailsStyle, ref, attributeValues, log)) {
+//				attributesToValues.put(name, attributeValues);
+//				return true;
+//			}
+//		}
+		
+		//	remember any existing values
+		if (attributeValues.size() != 0)
+			attributesToValues.put((AUTHOR_ANNOTATION_TYPE + "-" + name), attributeValues);
+		
+		//	nothing helped ...
+		return false;
+	}
+	
+	private static boolean extractAuthorDetail(ImAnnotation[] authorAnnots, String name, boolean isIdentifier, ImPage page, int dpi, DocumentStyle detailStyle, DocumentStyle allDetailsStyle, RefData ref, ArrayList extractedValues, PrintStream log) {
+		
+		//	get document authors
+		if (authorAnnots == null)
+			authorAnnots = page.getDocument().getAnnotations("docAuthor", page.pageId);
+		if (authorAnnots.length == 0) {
+			log.println("No document author annotations found");
+			return false;
+		}
+		
+		//	check for fixed value (this _can_ be the case for house journals)
+		String fixedValue = detailStyle.getProperty("fixedValue");
+		if (fixedValue != null) {
+			log.println(" ==> fixed to " + fixedValue);
+			if (ref != null)
+				for (int a = 0; a < authorAnnots.length; a++) {
+					String authorName;
+					String sAuthorName;
+					if (authorAnnots[a] instanceof ExtractedAttributeValue) {
+						authorName = ((ExtractedAttributeValue) authorAnnots[a]).rValue;
+						sAuthorName = ((ExtractedAttributeValue) authorAnnots[a]).sValue;
+					}
+					else {
+						authorName = ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true);
+						sAuthorName = sanitizeAttributeValue(AUTHOR_ANNOTATION_TYPE, authorName, false);
+					}
+					AuthorData authorData = ref.getAuthorData(sAuthorName);
+					if (authorData != null)
+						authorData.setAttribute(name, fixedValue);
+				}
+			return false;
+		}
+		
+//		//	author detail already set, get annotations and we're done
+//		//	NOT POSSIBLE HERE, WE ALSO NEED ASSOCIATIONS
+//		if ((ref != null) && (ref.getAttribute(name) != null)) {
+//			String annotType = ("docAuthor" + Character.toUpperCase(name.charAt(0)) + name.substring(1));
+//			ImAnnotation[] annots = page.getDocument().getAnnotations(annotType, page.pageId);
+//			for (int a = 0; a < annots.length; a++) {
+//				String value = ImUtils.getString(annots[a].getFirstWord(), annots[a].getLastWord(), true);
+//				if (isIdentifier)
+//					value = value.replaceAll("\\s", "");
+//				log.println("Got existing " + name + " from " + annotType + ": " + value);
+//				String sValue = sanitizeAttributeValue(name, value, isIdentifier);
+//				if (sValue == null)
+//					sValue = ref.getAttribute(name);
+//				attributeValues.add(new ExtractedAttributeValue(name, value, StringUtils.normalizeString(value), sValue, getSpannedWords(annots[a].getFirstWord(), annots[a].getLastWord())));
+//			}
+//			if (attributeValues.isEmpty())
+//				log.println("Existing " + name + " not found from " + annotType);
+//			return false;
+//		}
+		log.println("Extracting author " + name + ":");
+		
+		/* TODOne get association mechanism
+Specify maximum block or paragraph distance for proximity association
+- horizontally, measure for first word (rightward) or last word (leftward)
+- vertically, measure for all words (at least in topmost line)
+==> visualize accordingly in parameter group descriptions for template editor (most likely akin to block and column margins)
+		 */
+		String associationData = detailStyle.getProperty("indexChars", "");
+		
+		//	work author by author for proximity association
+		if ("BELOW".equals(associationData) || "RIGHT".equals(associationData) || "ABOVE".equals(associationData) || "LEFT".equals(associationData)) {
+			log.println(" - using proximity association " + associationData.toLowerCase() + " author names");
+			
+			//	get extraction area (default to page boundaries) and position
+			BoundingBox detailValueArea = detailStyle.getBoxProperty("area", page.bounds, dpi);
+			log.println(" - general extraction area is " + detailValueArea);
+			String detailValueAreaPositionHorizontal = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionHorizontal", null));
+			String detailValueAreaPositionVertical = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionVertical", null));
+			if ((detailValueAreaPositionHorizontal == null) && (detailValueAreaPositionVertical == null)) {
+				log.println(" - extraction area horizontal position is " + detailValueAreaPositionHorizontal);
+				detailValueAreaPositionHorizontal = "ABSOLUTE";
+				log.println("   ==> defaulted to " + detailValueAreaPositionHorizontal);
+				log.println(" - extraction area vertical position is " + detailValueAreaPositionVertical);
+				detailValueAreaPositionVertical = "ABSOLUTE";
+				log.println("   ==> defaulted to " + detailValueAreaPositionVertical);
+			}
+			else {
+				log.println(" - extraction area horizontal position is " + detailValueAreaPositionHorizontal);
+				if (detailValueAreaPositionHorizontal == null) {
+					if ("RIGHT".equals(associationData))
+						detailValueAreaPositionHorizontal = "RIGHT";
+					else if ("LEFT".equals(associationData))
+						detailValueAreaPositionHorizontal = "LEFT";
+					else detailValueAreaPositionHorizontal = "ABSOLUTE";
+					log.println("   ==> defaulted to " + detailValueAreaPositionHorizontal);
+				}
+				log.println(" - extraction area vertical position is " + detailValueAreaPositionVertical);
+				if (detailValueAreaPositionVertical == null) {
+					if ("BELOW".equals(associationData))
+						detailValueAreaPositionVertical = "DOWN";
+					else if ("ABOVE".equals(associationData))
+						detailValueAreaPositionVertical = "UP";
+					else detailValueAreaPositionVertical = "ABSOLUTE";
+					log.println("   ==> defaulted to " + detailValueAreaPositionVertical);
+				}
+			}
+			
+			//	get maximum distance (default to page height or width, depending on direction of association)
+			int detailValueMaxDistance = detailStyle.getIntProperty("maxDistanceFromAuthorAnnots", (("RIGHT".equals(associationData) || "LEFT".equals(associationData)) ? page.bounds.getWidth() : page.bounds.getHeight()), dpi);
+			log.println(" - maximum distance is " + detailValueMaxDistance);
+			
+			//	extract author name areas
+			BoundingBox[] authorBoxes = new BoundingBox[authorAnnots.length];
+			for (int a = 0; a < authorAnnots.length; a++) {
+				ArrayList authorWords = new ArrayList();
+				for (ImWord imw = authorAnnots[a].getFirstWord(); imw != null; imw = imw.getNextWord()) {
+					authorWords.add(imw);
+					if (imw == authorAnnots[a].getLastWord())
+						break;
+				}
+				authorBoxes[a] = ImLayoutObject.getAggregateBox((ImWord[]) authorWords.toArray(new ImWord[authorWords.size()]));
+				log.println(" - got bounds for " + ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true) + ": " + authorBoxes[a]);
+			}
+			
+			//	work author name by author name
+			BoundingBox[] vaBounds = getAuthorDetailValueAreas(authorAnnots, page, associationData, detailStyle, dpi, log);
+			int addedDetailCount = 0;
+			for (int a = 0; a < authorAnnots.length; a++) {
+				String authorName = ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true);
+				log.println(" - handling " + authorName + ":");
+				String sAuthorName = sanitizeAttributeValue(AUTHOR_ANNOTATION_TYPE, authorName, false);
+				log.println("   - normalized to " + sAuthorName);
+				AuthorData authorData = ((ref == null) ? null : ref.getAuthorData(sAuthorName));
+				
+				//	anything to work with?
+				if (vaBounds[a] == null)
+					continue;
+				
+				//	collect words
+				ImWord[] detailWords = page.getWordsInside(vaBounds[a]);
+				log.println("   - got " + detailWords.length + " words in area");
+				if (detailWords.length == 0)
+					continue;
+				
+				//	extract attribute value
+				ExtractedAttributeValue detailValue = extractAuthorDetailValue(name, detailWords, 0, detailWords.length, isIdentifier, detailStyle, log);
+				if (detailValue == null)
+					continue;
+				
+				//	store value
+				addedDetailCount++;
+				if (authorData != null)
+					authorData.setAttribute(name, (isIdentifier ? detailValue.sValue.replaceAll("\\s", "") : detailValue.sValue));
+				extractedValues.add(detailValue);
+			}
+			
+			//	indicate whether or not we actually found something
+			return (addedDetailCount != 0);
+		}
+		
+		//	work author by author for in-line association
+		else if ("INLINE-RIGHT".equals(associationData) || "INLINE-LEFT".equals(associationData)) {
+			log.println(" - using in-line association to " + associationData.substring("INLINE-".length()).toLowerCase() + " of author names");
+			
+			HashSet authorAnnotStartEndWords = new HashSet();
+			for (int a = 0; a < authorAnnots.length; a++) {
+				authorAnnotStartEndWords.add(authorAnnots[a].getFirstWord());
+				authorAnnotStartEndWords.add(authorAnnots[a].getLastWord());
+			}
+			
+			int addedDetailCount = 0;
+			for (int a = 0; a < authorAnnots.length; a++) {
+				String authorName = ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true);
+				log.println(" - handling " + authorName + ":");
+				String sAuthorName = sanitizeAttributeValue(AUTHOR_ANNOTATION_TYPE, authorName, false);
+				log.println("   - normalized to " + sAuthorName);
+				AuthorData authorData = ((ref == null) ? null : ref.getAuthorData(sAuthorName));
+				
+				ArrayList detailWords = new ArrayList();
+				if ("INLINE-RIGHT".equals(associationData)) {
+					for (ImWord imw = authorAnnots[a].getLastWord().getNextWord(); imw != null; imw = imw.getNextWord()) {
+						if (authorAnnotStartEndWords.contains(imw))
+							break;
+						detailWords.add(imw);
+						if (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+							break;
+					}
+				}
+				else if ("INLINE-LEFT".equals(associationData)) {
+					for (ImWord imw = authorAnnots[a].getFirstWord().getPreviousWord(); imw != null; imw = imw.getPreviousWord()) {
+						if (authorAnnotStartEndWords.contains(imw))
+							break;
+						detailWords.add(0, imw);
+						if (imw.getPreviousRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+							break;
+					}
+				}
+				log.println("   - got " + detailWords.size() + " words in area");
+				if (detailWords.isEmpty())
+					continue;
+				
+				ExtractedAttributeValue detailValue = extractAuthorDetailValue(name, ((ImWord[]) detailWords.toArray(new ImWord[detailWords.size()])), 0, detailWords.size(), isIdentifier, detailStyle, log);
+				if (detailValue == null)
+					continue;
+				
+				addedDetailCount++;
+				if (authorData != null)
+					authorData.setAttribute(name, (isIdentifier ? detailValue.sValue.replaceAll("\\s", "") : detailValue.sValue));
+				extractedValues.add(detailValue);
+			}
+			
+			//	indicate whether or not we actually found something
+			return (addedDetailCount != 0);
+		}
+		
+		//	work cumulatively for indexed association
+		else {
+			log.println(" - using index based association");
+			TreeSet indexChars = parseCharList(associationData, log);
+			log.println(" - index characters are " + indexChars);
+			TreeSet allIndexChars = parseCharList(allDetailsStyle.getProperty("indexChars", associationData), log);
+			log.println(" - accepted index characters are " + allIndexChars);
+			
+			/* Add parameter "indexPositionOnAuthorAnnots":
+- leading superscript
+- leading
+- tailing superscript
+- tailing
+==> somehow facilitate specifying this for all configured details in one place
+==> also specify list of index characters in central place
+  ==> and then, DON'T ... as they might differ between details (or association mechanism might differ altogether)
+			 */
+			String indexCharPositionOnAuthorAnnots = detailStyle.getProperty("indexCharPositionOnAuthorAnnots");
+			log.println(" - position of index characters on authors is " + indexCharPositionOnAuthorAnnots);
+			if (indexCharPositionOnAuthorAnnots == null)
+				return false;
+			
+			//	get author font size for superscript check
+			int authorFontSize = -1;
+			if (indexCharPositionOnAuthorAnnots.endsWith("-superscript")) {
+				int authorFontSizeSum = 0;
+				int authorFontSizeCount = 0;
+				for (int a = 0; a < authorAnnots.length; a++) {
+					int afs = getAverageFontSize(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true);
+					if (afs != -1) {
+						authorFontSizeSum += afs;
+						authorFontSizeCount++;
+					}
+				}
+				if (authorFontSizeCount == 0) {
+					log.println(" ==> could not determine author font size");
+					return false;
+				}
+				authorFontSize = ((authorFontSizeSum + (authorFontSizeCount / 2)) / authorFontSizeCount);
+				log.println(" - average font size of authors is " + authorFontSize + " (" + authorFontSizeSum + "/" + authorFontSizeCount + ")");
+			}
+			
+			//	index starts and ends of authors
+			HashSet authorAnnotStartEndWords = new HashSet();
+			for (int a = 0; a < authorAnnots.length; a++) {
+				authorAnnotStartEndWords.add(authorAnnots[a].getFirstWord());
+				authorAnnotStartEndWords.add(authorAnnots[a].getLastWord());
+			}
+			
+			/* Extracting index characters for authors
+- compute average font size of authors (superscript must be smaller)
+- start on successor of author annotation last word (or predecessor of author annotation first word)
+- stop at next author annotation boundary word (the above lookup set)
+- stop at paragraph break
+- bridge over commas and semicolons
+- collect words in set of index characters
+- stop at any other words
+			 */
+			//	find (superscript) index characters for authors (need to preserve order here)
+			LinkedHashSet[] authorIndexChars = new LinkedHashSet[authorAnnots.length];
+			log.println(" - getting index characters for authors:");
+			for (int a = 0; a < authorAnnots.length; a++) {
+				authorIndexChars[a] = new LinkedHashSet(2);
+				if (indexCharPositionOnAuthorAnnots.startsWith("leading")) {
+					for (ImWord imw = authorAnnots[a].getFirstWord().getPreviousWord(); imw != null; imw = imw.getPreviousWord()) {
+						if (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+							break; // need to stop only _after_ paragraph break
+						if (authorAnnotStartEndWords.contains(imw))
+							break;
+						if ((authorFontSize != -1) && (authorFontSize <= imw.getFontSize()))
+							continue;
+						String imwStr = imw.getString();
+						if (imwStr == null)
+							continue;
+						if (indexChars.contains(imwStr))
+							authorIndexChars[a].add(imwStr);
+						else if (!allIndexChars.contains(imwStr) && (",;".indexOf(imwStr) == -1))
+							break;
+					}
+				}
+				else if (indexCharPositionOnAuthorAnnots.startsWith("tailing")) {
+					for (ImWord imw = authorAnnots[a].getLastWord().getNextWord(); imw != null; imw = imw.getNextWord()) {
+						if (imw.getPreviousRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+							break; // need to stop only _after_ paragraph break
+						if (authorAnnotStartEndWords.contains(imw))
+							break;
+						if ((authorFontSize != -1) && (authorFontSize <= imw.getFontSize()))
+							continue;
+						String imwStr = imw.getString();
+						if (imwStr == null)
+							continue;
+						if (indexChars.contains(imwStr))
+							authorIndexChars[a].add(imwStr);
+						else if (!allIndexChars.contains(imwStr) && (",;".indexOf(imwStr) == -1))
+							break;
+					}
+				}
+				log.println("   - for " + ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true) + ": " + authorIndexChars[a]);
+			}
+			
+			/* Add parameter "indexPositionOnDetailValues":
+- leading superscript
+- leading
+- tailing superscript
+- tailing
+			 */
+			String indexCharPositionOnDetailValues = detailStyle.getProperty("indexCharPositionOnDetailValues");
+			log.println(" - position of index characters on values is " + indexCharPositionOnDetailValues);
+			if (indexCharPositionOnDetailValues == null)
+				return false;
+			
+			/* Add (and handle) parameter "detailValueSeparator":
+- "PARAGRAPH": detail value is whole paragraph, with potential line wraps
+- "LINE": detail value is single line, ending at line wraps (ImUtils.isTextFlowBreak())
+- "INDEX": detail value ends at (superscript) character in index character set (as well as paragraph break)
+- other characters specify separator(s) directly (separate with spaces)
+			 */
+			String detailValueSeparator = detailStyle.getProperty("detailValueSeparator");
+			log.println(" - value separator is " + detailValueSeparator);
+			if (detailValueSeparator == null)
+				return false;
+			
+			/*
+- add set of index chars to ExtractedAttributeValue class
+  - populate that set in former extractValues() method that extracts the index chars
+  - use that set in assigning detail values to authors
+			 */
+			BoundingBox detailValueArea = detailStyle.getBoxProperty("area", null, dpi);
+			log.println(" - value area is " + detailValueArea);
+			if (detailValueArea == null)
+				return false;
+			ArrayList detailValues = new ArrayList() {
+				public boolean add(Object e) {
+					return ((e == null) ? false : super.add(e));
+				}
+			};
+			if ("PARAGRAPH".equals(detailValueSeparator)) {
+				ImRegion[] paragraphs = page.getRegionsInside(ImRegion.PARAGRAPH_TYPE, detailValueArea, false);
+				Arrays.sort(paragraphs, ImUtils.topDownOrder);
+				for (int p = 0; p < paragraphs.length; p++) {
+					log.println(" - seeking paragraph " + paragraphs[p].bounds);
+					ImWord[] pWords = paragraphs[p].getWords();
+					Arrays.sort(pWords, ImUtils.textStreamOrder);
+					log.println("   - got " + pWords.length + " words");
+					boolean[] isSuperscript = null;
+					if (indexCharPositionOnDetailValues.endsWith("-superscript")) {
+						isSuperscript = getSuperscriptMarkers(pWords, true);
+						if (isSuperscript == null) {
+							log.println("   ==> could not determine paragraph font size");
+							continue;
+						}
+						log.println("   - superscript is " + Arrays.toString(isSuperscript));
+					}
+					detailValues.add(extractAuthorDetailValue(name, pWords, isSuperscript, 0, pWords.length, isIdentifier, indexCharPositionOnDetailValues, indexChars, detailStyle, log));
+				}
+			}
+			else if ("LINE".equals(detailValueSeparator)) {
+				ImRegion[] lines = page.getRegionsInside(ImRegion.LINE_ANNOTATION_TYPE, detailValueArea, false);
+				Arrays.sort(lines, ImUtils.topDownOrder);
+				for (int l = 0; l < lines.length; l++) {
+					log.println(" - seeking line " + lines[l].bounds);
+					ImWord[] lWords = lines[l].getWords();
+					Arrays.sort(lWords, ImUtils.textStreamOrder);
+					log.println("   - got " + lWords.length + " words");
+					boolean[] isSuperscript = null;
+					if (indexCharPositionOnDetailValues.endsWith("-superscript")) {
+						isSuperscript = getSuperscriptMarkers(lWords, false);
+						if (isSuperscript == null) {
+							log.println("   ==> could not determine line font size");
+							continue;
+						}
+						log.println("   - superscript is " + Arrays.toString(isSuperscript));
+					}
+					detailValues.add(extractAuthorDetailValue(name, lWords, isSuperscript, 0, lWords.length, isIdentifier, indexCharPositionOnDetailValues, indexChars, detailStyle, log));
+				}
+			}
+			else if ("INDEX".equals(detailValueSeparator)) {
+				ImRegion[] paragraphs = page.getRegionsInside(ImRegion.PARAGRAPH_TYPE, detailValueArea, false);
+				Arrays.sort(paragraphs, ImUtils.topDownOrder);
+				for (int p = 0; p < paragraphs.length; p++) {
+					log.println(" - seeking paragraph " + paragraphs[p].bounds);
+					ImWord[] pWords = paragraphs[p].getWords();
+					Arrays.sort(pWords, ImUtils.textStreamOrder);
+					log.println("   - got " + pWords.length + " words overall");
+					boolean[] isSuperscript = null;
+					if (indexCharPositionOnDetailValues.endsWith("-superscript")) {
+						isSuperscript = getSuperscriptMarkers(pWords, true);
+						if (isSuperscript == null) {
+							log.println("   ==> could not determine paragraph font size");
+							continue;
+						}
+						log.println("   - superscript is " + Arrays.toString(isSuperscript));
+					}
+					boolean[] isIndexChar = new boolean[pWords.length];
+					Arrays.fill(isIndexChar, false);
+					for (int w = 0; w < pWords.length; w++) {
+						if ((isSuperscript != null) && !isSuperscript[w])
+							continue;
+						String imwStr = pWords[w].getString();
+						if (imwStr == null)
+							continue;
+						if (indexChars.contains(imwStr))
+							isIndexChar[w] = true;
+						else if ((",;".indexOf(imwStr) != -1) && (w != 0) && isIndexChar[w-1])
+							isIndexChar[w] = true;
+					}
+					if (indexCharPositionOnDetailValues.startsWith("leading")) {
+						for (int w = 0; w < pWords.length;) {
+							if (isIndexChar[w]) {
+								int sw = w;
+								while ((w < pWords.length) && isIndexChar[w])
+									w++; // consume (block of) index chars
+								while ((w < pWords.length) && !isIndexChar[w])
+									w++; // consume value
+								log.println("   - extracting value from " + sw + " to " + w);
+								detailValues.add(extractAuthorDetailValue(name, pWords, isSuperscript, sw, w, isIdentifier, indexCharPositionOnDetailValues, indexChars, detailStyle, log));
+							}
+							else w++;
+						}
+					}
+					else if (indexCharPositionOnDetailValues.startsWith("tailing")) {
+						for (int w = 0; w < pWords.length;) {
+							if (!isIndexChar[w]) {
+								int sw = w;
+								while ((w < pWords.length) && !isIndexChar[w])
+									w++; // consume value
+								while ((w < pWords.length) && isIndexChar[w])
+									w++; // consume (block of) index chars
+								log.println("   - extracting value from " + sw + " to " + w);
+								detailValues.add(extractAuthorDetailValue(name, pWords, isSuperscript, sw, w, isIdentifier, indexCharPositionOnDetailValues, indexChars, detailStyle, log));
+							}
+							else w++;
+						}
+					}
+				}
+			}
+			else {
+				TreeSet valueSeparators = parseCharList(detailValueSeparator, log);
+				log.println(" - value separators " + valueSeparators);
+				
+				ImRegion[] paragraphs = page.getRegionsInside(ImRegion.PARAGRAPH_TYPE, detailValueArea, false);
+				Arrays.sort(paragraphs, ImUtils.topDownOrder);
+				for (int p = 0; p < paragraphs.length; p++) {
+					log.println(" - seeking paragraph " + paragraphs[p].bounds);
+					ImWord[] pWords = paragraphs[p].getWords();
+					Arrays.sort(pWords, ImUtils.textStreamOrder);
+					log.println("   - got " + pWords.length + " words");
+					boolean[] isSuperscript = null;
+					if (indexCharPositionOnDetailValues.endsWith("-superscript")) {
+						isSuperscript = getSuperscriptMarkers(pWords, true);
+						if (isSuperscript == null) {
+							log.println("   ==> could not determine paragraph font size");
+							continue;
+						}
+						log.println("   - superscript is " + Arrays.toString(isSuperscript));
+					}
+					int sw = -1;
+					for (int w = 0; w < pWords.length; w++) {
+						String imwStr = pWords[w].getString();
+						if (imwStr == null)
+							continue;
+						if (valueSeparators.contains(imwStr)) {
+							if (sw != -1) {
+								log.println("   - extracting value from " + sw + " to " + w);
+								detailValues.add(extractAuthorDetailValue(name, pWords, isSuperscript, sw, w, isIdentifier, indexCharPositionOnDetailValues, indexChars, detailStyle, log));
+							}
+							sw = -1; // start over after separator
+						}
+						else if (sw == -1)
+							sw = w;
+					}
+					if (sw != -1) {
+						log.println("   - extracting value from " + sw + " to " + pWords.length);
+						detailValues.add(extractAuthorDetailValue(name, pWords, isSuperscript, sw, pWords.length, isIdentifier, indexCharPositionOnDetailValues, indexChars, detailStyle, log));
+					}
+				}
+			}
+			
+			//	index values by index chars
+			log.println(" - indexing extracted values");
+			TreeMap detailValuesByIndexChars = new TreeMap();
+			for (int v = 0; v < detailValues.size(); v++) {
+				ExtractedAttributeValue detailValue = ((ExtractedAttributeValue) detailValues.get(v));
+				log.println("   - " + detailValue.rValue + ": " + detailValue.indexChars);
+				for (Iterator icit = detailValue.indexChars.iterator(); icit.hasNext();) {
+					String indexChar = ((String) icit.next());
+					ArrayList indexCharValues = ((ArrayList) detailValuesByIndexChars.get(indexChar));
+					if (indexCharValues == null) {
+						indexCharValues = new ArrayList(2);
+						detailValuesByIndexChars.put(indexChar, indexCharValues);
+					}
+					indexCharValues.add(detailValue);
+				}
+			}
+			
+			boolean useFirstDetailValue = detailStyle.getBooleanProperty("useFirstDetailValue", false);
+			log.println(" - first value restriction per index characters is " + useFirstDetailValue);
+			boolean useFirstAuthorValue = detailStyle.getBooleanProperty("useFirstAuthorValue", false);
+			log.println(" - first value restriction per author is " + useFirstAuthorValue);
+			
+			//	assign details to authors
+			log.println(" - assigning values to authors");
+			LinkedHashSet addedDetailValues = new LinkedHashSet();
+			for (int a = 0; a < authorAnnots.length; a++) {
+				if (authorIndexChars[a].isEmpty())
+					continue;
+				String authorName = ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true);
+				log.println(" - handling " + authorName + ":");
+				String sAuthorName = sanitizeAttributeValue(AUTHOR_ANNOTATION_TYPE, authorName, false);
+				log.println("   - normalized to " + sAuthorName);
+				AuthorData authorData = ((ref == null) ? null : ref.getAuthorData(sAuthorName));
+				log.println("   - index characters are " + authorIndexChars[a]);
+				ArrayList authorValues = new ArrayList();
+				for (Iterator icit = authorIndexChars[a].iterator(); icit.hasNext();) {
+					String indexChar = ((String) icit.next());
+					ArrayList indexCharValues = ((ArrayList) detailValuesByIndexChars.get(indexChar));
+					if (indexCharValues == null)
+						continue;
+//					String value;
+//					if ((indexCharValues.size() == 1) || useFirstDetailValue)
+//						value = ((ExtractedAttributeValue) indexCharValues.get(0)).sValue;
+//					else {
+//						StringBuffer valueStr = new StringBuffer(((ExtractedAttributeValue) indexCharValues.get(0)).sValue);
+//						for (int v = 1; v < indexCharValues.size(); v++) {
+//							valueStr.append(" & ");
+//							valueStr.append(((ExtractedAttributeValue) indexCharValues.get(v)).sValue);
+//						}
+//						value = valueStr.toString();
+//					}
+//					if (isIdentifier)
+//						value = value.replaceAll("\\s", "");
+//					log.println("   - assigning " + value);
+//					if (authorData != null)
+//						authorData.setAttribute(name, value);
+//					addedDetailValues.addAll(indexCharValues);
+					if (useFirstDetailValue) {
+						authorValues.add(indexCharValues.get(0));
+						log.println("     - adding " + ((ExtractedAttributeValue) indexCharValues.get(0)).sValue);
+						addedDetailValues.add(indexCharValues.get(0));
+					}
+					else {
+						authorValues.addAll(indexCharValues);
+						for (int v = 0; v < indexCharValues.size(); v++)
+							log.println("     - adding " + ((ExtractedAttributeValue) indexCharValues.get(v)).sValue);
+						addedDetailValues.addAll(indexCharValues);
+					}
+				}
+				if (authorValues.isEmpty()) {
+					log.println("   - no values found for index characters " + authorIndexChars[a]);
+					continue;
+				}
+				String value;
+				if ((authorValues.size() == 1) || useFirstAuthorValue)
+					value = ((ExtractedAttributeValue) authorValues.get(0)).sValue;
+				else {
+					StringBuffer valueStr = new StringBuffer(((ExtractedAttributeValue) authorValues.get(0)).sValue);
+					for (int v = 1; v < authorValues.size(); v++) {
+						valueStr.append(" & ");
+						valueStr.append(((ExtractedAttributeValue) authorValues.get(v)).sValue);
+					}
+					value = valueStr.toString();
+				}
+				if (isIdentifier)
+					value = value.replaceAll("\\s", "");
+				log.println("   - assigning " + value);
+				if (authorData != null)
+					authorData.setAttribute(name, value);
+			}
+			extractedValues.addAll(addedDetailValues);
+			
+			//	indicate whether or not we actually found something
+			return (addedDetailValues.size() != 0);
+			
+			/*
+ALSO, add (optional) QC rule sets checking author details ...
+... and add respective parameters to style templates
+
+ALSO, most likely create new version of Default.imagine configuration before finishing the above things
+==> makes current progress (fixes in RefParse, reference tagger, TreeFAT, etc.) available
+==> makes at least manual affiliation extraction available
+			 */
+			
+			/*
+- "PARAGRAPH": detail value is whole paragraph, with potential line wraps
+  - TEST: EJT (affiliations and LSIDs, also for distinguishing the two, mainly for telling affiliations (that are far too diverse for a good value pattern) from LSIDs)
+    ==> maybe hard code fact that affiliation has many title case words to help with weighting (detail name is constant, anyway, after all)
+- "LINE": detail value is single line, ending at line wraps (ImUtils.isTextFlowBreak())
+  - TEST: EJT author LSID block merged to single paragraph for test
+- "INDEX": detail value ends at (superscript) character in index character set (as well as paragraph break)
+  - TEST: affiliations in Journal of Virology-2014-Corman-11297.full.pdf.imf (that corona virus paper)
+- other characters specify separator(s) directly (separate with spaces)
+  - TEST: semicolon for affiliations in Journal of Virology-2014-Corman-11297.full.pdf.imf (that corona virus paper)
+			 */
+		}
+	}
+	
+	private static TreeSet parseCharList(String charString, PrintStream log) {
+		String[] chars = charString.trim().split("\\s+");
+		TreeSet charSet = new TreeSet();
+		for (int c = 0; c < chars.length; c++) {
+			if (chars[c].contains("\\")) {
+				String uChar = unescapeString(chars[c]);
+				if (chars[c].equals(uChar))
+					log.println("Could not parse character " + chars[c]);
+				else chars[c] = uChar;
+			}
+			charSet.add(chars[c]);
+		}
+		return charSet;
+	}
+	
+	private static String unescapeString(String str) {
+		StringBuffer unescaped = new StringBuffer(str.length());
+		for (int c = 0; c < str.length(); c++) {
+			char ch = str.charAt(c);
+			if (ch != '\\') {
+				unescaped.append(ch);
+				continue;
+			}
+			if (str.startsWith("\\u", c) && ((c + "uFFFF".length()) < str.length())) try {
+				unescaped.append((char) Integer.parseInt(str.substring((c + "\\u".length()), (c + "\\uFFFF".length())), 16));
+				c += "uFFFF".length(); // loop increment handles backslash proper
+				continue;
+			} catch (RuntimeException re) {}
+			if (str.startsWith("\\x", c) && ((c + "xFF".length()) < str.length())) try {
+				unescaped.append((char) Integer.parseInt(str.substring((c + "\\x".length()), (c + "\\xFF".length())), 16));
+				c += "xFF".length(); // loop increment handles backslash proper
+				continue;
+			} catch (RuntimeException re) {}
+			unescaped.append(ch);
+		}
+		return unescaped.toString();
+	}
+	
+	private static BoundingBox[] getAuthorDetailValueAreas(ImAnnotation[] authorAnnots, ImPage page, String associationData, DocumentStyle detailStyle, int dpi, PrintStream log) {
+		BoundingBox[] vaBounds = new BoundingBox[authorAnnots.length];
+		
+		//	get extraction area (default to page boundaries) and position
+		BoundingBox detailValueArea = detailStyle.getBoxProperty("area", page.bounds, dpi);
+		if (log != null) log.println(" - general extraction area is " + detailValueArea);
+		String detailValueAreaPositionHorizontal = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionHorizontal", null));
+		String detailValueAreaPositionVertical = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionVertical", null));
+		if ((detailValueAreaPositionHorizontal == null) && (detailValueAreaPositionVertical == null)) {
+			if (log != null) log.println(" - extraction area horizontal position is " + detailValueAreaPositionHorizontal);
+			detailValueAreaPositionHorizontal = "ABSOLUTE";
+			if (log != null) log.println("   ==> defaulted to " + detailValueAreaPositionHorizontal);
+			if (log != null) log.println(" - extraction area vertical position is " + detailValueAreaPositionVertical);
+			detailValueAreaPositionVertical = "ABSOLUTE";
+			if (log != null) log.println("   ==> defaulted to " + detailValueAreaPositionVertical);
+		}
+		else {
+			if (log != null) log.println(" - extraction area horizontal position is " + detailValueAreaPositionHorizontal);
+			if (detailValueAreaPositionHorizontal == null) {
+				if ("RIGHT".equals(associationData))
+					detailValueAreaPositionHorizontal = "RIGHT";
+				else if ("LEFT".equals(associationData))
+					detailValueAreaPositionHorizontal = "LEFT";
+				else detailValueAreaPositionHorizontal = "ABSOLUTE";
+				if (log != null) log.println("   ==> defaulted to " + detailValueAreaPositionHorizontal);
+			}
+			if (log != null) log.println(" - extraction area vertical position is " + detailValueAreaPositionVertical);
+			if (detailValueAreaPositionVertical == null) {
+				if ("BELOW".equals(associationData))
+					detailValueAreaPositionVertical = "DOWN";
+				else if ("ABOVE".equals(associationData))
+					detailValueAreaPositionVertical = "UP";
+				else detailValueAreaPositionVertical = "ABSOLUTE";
+				if (log != null) log.println("   ==> defaulted to " + detailValueAreaPositionVertical);
+			}
+		}
+		
+		//	get maximum distance (default to page height or width, depending on direction of association)
+		int detailValueMaxDistance = detailStyle.getIntProperty("maxDistanceFromAuthorAnnots", (("RIGHT".equals(associationData) || "LEFT".equals(associationData)) ? page.bounds.getWidth() : page.bounds.getHeight()), dpi);
+		if (log != null) log.println(" - maximum distance is " + detailValueMaxDistance);
+		
+		//	extract author name areas
+		BoundingBox[] authorBoxes = new BoundingBox[authorAnnots.length];
+		for (int a = 0; a < authorAnnots.length; a++) {
+			ArrayList authorWords = new ArrayList();
+			for (ImWord imw = authorAnnots[a].getFirstWord(); imw != null; imw = imw.getNextWord()) {
+				authorWords.add(imw);
+				if (imw == authorAnnots[a].getLastWord())
+					break;
+			}
+			authorBoxes[a] = ImLayoutObject.getAggregateBox((ImWord[]) authorWords.toArray(new ImWord[authorWords.size()]));
+			if (log != null) log.println(" - got bounds for " + ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true) + ": " + authorBoxes[a]);
+		}
+		
+		//	work author name by author name
+		for (int a = 0; a < authorAnnots.length; a++) {
+			String authorName = ImUtils.getString(authorAnnots[a].getFirstWord(), authorAnnots[a].getLastWord(), true);
+			if (log != null) log.println(" - handling " + authorName + ":");
+			String sAuthorName = sanitizeAttributeValue(AUTHOR_ANNOTATION_TYPE, authorName, false);
+			if (log != null) log.println("   - normalized to " + sAuthorName);
+			
+			//	initialize extraction boundaries depending on direction of association
+			int vaLeft;
+			int vaRight;
+			int vaTop;
+			int vaBottom;
+			if ("BELOW".equals(associationData)) {
+				if ("RIGHT".equals(detailValueAreaPositionHorizontal))
+					vaLeft = authorBoxes[a].left;
+				else if ("CENTER".equals(detailValueAreaPositionHorizontal))
+					vaLeft = (((authorBoxes[a].left + authorBoxes[a].right) / 2) - (detailValueArea.getWidth() / 2));
+				else if ("LEFT".equals(detailValueAreaPositionHorizontal))
+					vaLeft = (authorBoxes[a].right - detailValueArea.getWidth());
+				else vaLeft = detailValueArea.left;
+				if ("RIGHT".equals(detailValueAreaPositionHorizontal))
+					vaRight = (authorBoxes[a].left + detailValueArea.getWidth());
+				else if ("CENTER".equals(detailValueAreaPositionHorizontal))
+					vaRight = (((authorBoxes[a].left + authorBoxes[a].right) / 2) + (detailValueArea.getWidth() / 2));
+				else if ("LEFT".equals(detailValueAreaPositionHorizontal))
+					vaRight = authorBoxes[a].right;
+				else vaRight = detailValueArea.right;
+				if ("ABSOLUTE".equals(detailValueAreaPositionVertical)) {
+					vaTop = Math.max(detailValueArea.top, authorBoxes[a].bottom);
+					vaBottom = Math.min(detailValueArea.bottom, (authorBoxes[a].bottom + detailValueMaxDistance));
+				}
+				else {
+					vaTop = authorBoxes[a].bottom;
+					vaBottom = (authorBoxes[a].bottom + detailValueArea.getHeight());
+				}
+			}
+			else if ("RIGHT".equals(associationData)) {
+				if ("ABSOLUTE".equals(detailValueAreaPositionHorizontal)) {
+					vaLeft = Math.max(detailValueArea.right, authorBoxes[a].right);
+					vaRight = Math.min(detailValueArea.right, (authorBoxes[a].right + detailValueMaxDistance));
+				}
+				else {
+					vaLeft = authorBoxes[a].right;
+					vaRight = (authorBoxes[a].right + detailValueArea.getWidth());
+				}
+				if ("DOWN".equals(detailValueAreaPositionVertical))
+					vaTop = authorBoxes[a].top;
+				else if ("CENTER".equals(detailValueAreaPositionVertical))
+					vaTop = (((authorBoxes[a].top + authorBoxes[a].bottom) / 2) - (detailValueArea.getHeight() / 2));
+				else if ("UP".equals(detailValueAreaPositionVertical))
+					vaTop = (authorBoxes[a].bottom - detailValueArea.getHeight());
+				else vaTop = authorBoxes[a].top;
+				if ("DOWN".equals(detailValueAreaPositionVertical))
+					vaBottom = (authorBoxes[a].top + detailValueArea.getHeight());
+				else if ("CENTER".equals(detailValueAreaPositionVertical))
+					vaBottom = (((authorBoxes[a].top + authorBoxes[a].bottom) / 2) + (detailValueArea.getHeight() / 2));
+				else if ("UP".equals(detailValueAreaPositionVertical))
+					vaBottom = authorBoxes[a].bottom;
+				else vaBottom = detailValueArea.bottom;
+			}
+			else if ("ABOVE".equals(associationData)) {
+				if ("RIGHT".equals(detailValueAreaPositionHorizontal))
+					vaLeft = authorBoxes[a].left;
+				else if ("CENTER".equals(detailValueAreaPositionHorizontal))
+					vaLeft = (((authorBoxes[a].left + authorBoxes[a].right) / 2) - (detailValueArea.getWidth() / 2));
+				else if ("LEFT".equals(detailValueAreaPositionHorizontal))
+					vaLeft = (authorBoxes[a].right - detailValueArea.getWidth());
+				else vaLeft = detailValueArea.left;
+				if ("RIGHT".equals(detailValueAreaPositionHorizontal))
+					vaRight = (authorBoxes[a].left + detailValueArea.getWidth());
+				else if ("CENTER".equals(detailValueAreaPositionHorizontal))
+					vaRight = (((authorBoxes[a].left + authorBoxes[a].right) / 2) + (detailValueArea.getWidth() / 2));
+				else if ("LEFT".equals(detailValueAreaPositionHorizontal))
+					vaRight = authorBoxes[a].right;
+				else vaRight = detailValueArea.right;
+				if ("ABSOLUTE".equals(detailValueAreaPositionVertical)) {
+					vaTop = Math.max(detailValueArea.top, (authorBoxes[a].top - detailValueMaxDistance));
+					vaBottom = Math.min(detailValueArea.bottom, authorBoxes[a].top);
+				}
+				else {
+					vaTop = (authorBoxes[a].top - detailValueArea.getHeight());
+					vaBottom = authorBoxes[a].top;
+				}
+			}
+			else if ("LEFT".equals(associationData)) {
+				if ("ABSOLUTE".equals(detailValueAreaPositionHorizontal)) {
+					vaLeft = Math.max(detailValueArea.left, (authorBoxes[a].left - detailValueMaxDistance));
+					vaRight = Math.min(detailValueArea.right, authorBoxes[a].left);
+				}
+				else {
+					vaLeft = (authorBoxes[a].right - detailValueArea.getWidth());
+					vaRight = authorBoxes[a].right;
+				}
+				if ("DOWN".equals(detailValueAreaPositionVertical))
+					vaTop = authorBoxes[a].top;
+				else if ("CENTER".equals(detailValueAreaPositionVertical))
+					vaTop = (((authorBoxes[a].top + authorBoxes[a].bottom) / 2) - (detailValueArea.getHeight() / 2));
+				else if ("UP".equals(detailValueAreaPositionVertical))
+					vaTop = (authorBoxes[a].bottom - detailValueArea.getHeight());
+				else vaTop = authorBoxes[a].top;
+				if ("DOWN".equals(detailValueAreaPositionVertical))
+					vaBottom = (authorBoxes[a].top + detailValueArea.getHeight());
+				else if ("CENTER".equals(detailValueAreaPositionVertical))
+					vaBottom = (((authorBoxes[a].top + authorBoxes[a].bottom) / 2) + (detailValueArea.getHeight() / 2));
+				else if ("UP".equals(detailValueAreaPositionVertical))
+					vaBottom = authorBoxes[a].bottom;
+				else vaBottom = detailValueArea.bottom;
+			}
+			else continue; // never gonna happen, but Java don't know
+			if (log != null) log.println("   - value area initialized to [" + vaLeft + "," + vaRight + "," + vaTop + "," + vaBottom + "]");
+			
+			//	use other authors as limits
+			for (int ca = 0; ca < authorBoxes.length; ca++) {
+				if (ca == a)
+					continue;
+				if (authorBoxes[ca].bottom < authorBoxes[a].top) // above current author
+					vaTop = Math.max(vaTop, authorBoxes[ca].bottom);
+				else if (authorBoxes[ca].top > authorBoxes[a].bottom) // below current author
+					vaBottom = Math.min(vaBottom, authorBoxes[ca].top);
+				else if (authorBoxes[ca].right < authorBoxes[a].left) // left of current author
+					vaLeft = Math.max(vaLeft, authorBoxes[ca].right);
+				else if (authorBoxes[ca].left > authorBoxes[a].right) // right of current author
+					vaRight = Math.min(vaRight, authorBoxes[ca].left);
+			}
+			if (log != null) log.println("   - value area intersection reduced to [" + vaLeft + "," + vaRight + "," + vaTop + "," + vaBottom + "]");
+			
+			//	create final bounding box
+			vaBounds[a] = new BoundingBox(vaLeft, vaRight, vaTop, vaBottom);
+		}
+		
+		//	finally ...
+		return vaBounds;
+	}
+	
+	private static boolean[] getSuperscriptMarkers(ImWord[] words, boolean multiLine) {
+		int fontSize = getAverageFontSize(words, true);
+		if (fontSize == -1)
+			return null;
+		boolean[] isSuperscript = new boolean[words.length];
+		Arrays.fill(isSuperscript, false);
+		boolean gotSuperscript = false;
+		for (int w = 0; w < words.length; w++) {
+			int fs = words[w].getFontSize();
+			if ((fs != -1) && (fs < fontSize)) {
+				isSuperscript[w] = true;
+				gotSuperscript = true;
+				continue;
+			}
+			String str = words[w].getString();
+			if (str == null)
+				continue;
+			for (int c = 0; c < str.length(); c++) {
+				char ch = str.charAt(c);
+				if (((ch < '\u2070') || (ch > '\u207F')) /* outside superscript Unicode block */ && ("*^°\u00B2\u00B3\u00B9".indexOf(ch) == -1) /* not a superscript character */) {
+					str = null;
+					break;
+				}
+			}
+			if (str != null) {
+				isSuperscript[w] = true;
+				gotSuperscript = true;
+			}
+		}
+		return (gotSuperscript ? isSuperscript : null);
+		/* TODO add alternative baseline check:
+  - compute weighted average baseline and middle line of author name proper ...
+  - ... and count sufficiently pronounced elevation above baseline (bottom closer to middle line than baseline) as superscript as well
+  ==> have to do this line by line
+		 */
+	}
+	
+	private static int getAverageFontSize(ImWord from, ImWord to, boolean weighted) {
+		int fontSizeSum = 0;
+		int fontSizeWeightSum = 0;
+		for (ImWord imw = from; imw != null; imw = imw.getNextWord()) {
+			int fs = imw.getFontSize();
+			if (fs != -1) {
+				int fsw = (weighted ? imw.getString().length() : 1);
+				fontSizeSum += (fs * fsw);
+				fontSizeWeightSum += fsw;
+			}
+			if (imw == to)
+				break;
+		}
+		return ((fontSizeWeightSum == 0) ? -1 : ((fontSizeSum + (fontSizeWeightSum / 2)) / fontSizeWeightSum));
+	}
+	
+	private static int getAverageFontSize(ImWord[] words, boolean weighted) {
+		int fontSizeSum = 0;
+		int fontSizeWeightSum = 0;
+		for (int w = 0; w < words.length; w++) {
+			int fs = words[w].getFontSize();
+			if (fs != -1) {
+				int fsw = (weighted ? words[w].getString().length() : 1);
+				fontSizeSum += (fs * fsw);
+				fontSizeWeightSum += fsw;
+			}
+		}
+		return ((fontSizeWeightSum == 0) ? -1 : ((fontSizeSum + (fontSizeWeightSum / 2)) / fontSizeWeightSum));
+	}
+	
+	private static ExtractedAttributeValue extractAuthorDetailValue(String name, ImWord[] words, boolean[] isSuperscript, int from, int to, boolean isIdentifier, String indexCharPosition, TreeSet indexChars, DocumentStyle detailStyle, PrintStream log) {
+		
+		//	find index chars (leading or tailing)
+		TreeSet valueIndexChars = new TreeSet();
+		if (indexCharPosition.startsWith("leading")) {
+			for (; from < to; from++) {
+				if ((isSuperscript != null) && !isSuperscript[from])
+					break;
+				String imwStr = words[from].getString();
+				if (imwStr == null)
+					continue;
+				if (indexChars.contains(imwStr))
+					valueIndexChars.add(imwStr);
+				else if (",;".indexOf(imwStr) == -1)
+					break;
+			}
+		}
+		else if (indexCharPosition.startsWith("tailing")) {
+			for (; from < to; to--) {
+				if ((isSuperscript != null) && !isSuperscript[to - 1])
+					break;
+				String imwStr = words[to - 1].getString();
+				if (imwStr == null)
+					continue;
+				if (indexChars.contains(imwStr))
+					valueIndexChars.add(imwStr);
+				else if (",;".indexOf(imwStr) == -1)
+					break;
+			}
+		}
+		log.println("   - index chars are " + valueIndexChars);
+		if (valueIndexChars.isEmpty())
+			return null;
+		
+		//	extract actual value
+		ExtractedAttributeValue value = extractAuthorDetailValue(name, words, from, to, isIdentifier, detailStyle, log);
+		if (value != null)
+			value.indexChars.addAll(valueIndexChars);
+		return value;
+	}
+	
+	private static ExtractedAttributeValue extractAuthorDetailValue(String name, ImWord[] words, int from, int to, boolean isIdentifier, DocumentStyle detailStyle, PrintStream log) {
+		if (to <= from)
+			return null;
+		if ((from != 0) || (to < words.length)) {
+			ImWord[] valueWords = new ImWord[to - from];
+			System.arraycopy(words, from, valueWords, 0, valueWords.length);
+			words = valueWords;
+		}
+		log.println(" - got " + words.length + " words in area");
+		
+		ArrayList detailValues = new ArrayList(1);
+		extractAttributeValue(name, isIdentifier, words, detailStyle, false, null, detailValues, log);
+		return (detailValues.isEmpty() ? null : ((ExtractedAttributeValue) detailValues.get(0)));
 	}
 	
 	private void setDocumentAttributes(ImDocument doc, RefData ref) {
@@ -1736,116 +3546,16 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return true;
 	}
 	
-	private static void annotateAttributeValues(RefData ref, String[] refAttributeNames, String[] allAttributeNames, boolean isIdentifierTypes, ImDocument doc, HashMap attributesToValues, boolean auto) {
+	private static void annotateAttributeValues(RefData ref, String[] refAttributeNames, String[] allAttributeNames, boolean isIdentifierType, ImDocument doc, HashMap attributesToValues, boolean auto) {
 		HashSet cleanupAttributeNames = new HashSet(Arrays.asList(allAttributeNames));
 		ImDocumentRoot wrappedDoc = null;
 		for (int an = 0; an < refAttributeNames.length; an++) {
-			if (isIdentifierTypes && "".equals(refAttributeNames[an]))
+			if (isIdentifierType ? "".equals(refAttributeNames[an]) : "ID".equals(refAttributeNames[an]))
 				continue; // have to skip over wildcard ID type
-			String refAttributeName = ((isIdentifierTypes ? "ID-" : "") + refAttributeNames[an]);
-			cleanupAttributeNames.remove(refAttributeNames[an]); // no cleanup required here
-			System.out.println("Annotating " + refAttributeName + ":");
-			
-			//	get existing annotations
-			String valueAnnotType = ((isIdentifierTypes ? "docId" : "doc") + Character.toUpperCase(refAttributeNames[an].charAt(0)) + refAttributeNames[an].substring(1));
-			ArrayList valueAnnots = new ArrayList(Arrays.asList(doc.getAnnotations(valueAnnotType)));
-			System.out.println(" - got " + valueAnnots.size() + " existing " + valueAnnotType);
-			
-			//	get extracted values (creating working copy)
-			ArrayList extractedValues = new ArrayList();
-			if (attributesToValues.containsKey(refAttributeName))
-				extractedValues.addAll((ArrayList) attributesToValues.get(refAttributeName));
-			System.out.println(" - got " + extractedValues.size() + " extracted values");
-			
-			//	process reference values
-			ArrayList refValues = new ArrayList(Arrays.asList(ref.getAttributeValues(refAttributeName)));
-			System.out.println(" - got " + refValues.size() + " values from reference");
-			for (int v = 0; v < refValues.size(); v++) {
-				String refValue = ((String) refValues.get(v));
-				System.out.println("   - handling " + refValue + ":");
-				ImAnnotation refValueAnnot = null;
-				
-				//	if we have an existing annotation, we're all set
-				for (int a = 0; a < valueAnnots.size(); a++) {
-					ImAnnotation valueAnnot = ((ImAnnotation) valueAnnots.get(a));
-					String annotValue = ImUtils.getString(valueAnnot.getFirstWord(), valueAnnot.getLastWord(), true);
-					if (isIdentifierTypes)
-						annotValue = annotValue.replaceAll("\\s", "");
-					if (annotValue.equalsIgnoreCase(refValue)) {
-						refValueAnnot = valueAnnot;
-						valueAnnots.remove(a--); // no need to remove this one later on
-						System.out.println("     ==> found raw value matching annotation");
-						break; // we're done here
-					}
-					String nAnnotValue = StringUtils.normalizeString(annotValue);
-					if (nAnnotValue.equalsIgnoreCase(refValue)) {
-						refValueAnnot = valueAnnot;
-						valueAnnots.remove(a--); // no need to remove this one later on
-						System.out.println("     ==> found normalized value matching annotation");
-						break; // we're done here
-					}
-					String sAnnotValue = sanitizeAttributeValue(refAttributeName, annotValue, false);
-					if (sAnnotValue == null)
-						sAnnotValue = sanitizeString(annotValue, (AUTHOR_ANNOTATION_TYPE.equals(refAttributeName) || EDITOR_ANNOTATION_TYPE.equals(refAttributeName)), false);
-					if (sAnnotValue.equalsIgnoreCase(refValue)) {
-						refValueAnnot = valueAnnot;
-						valueAnnots.remove(a--); // no need to remove this one later on
-						System.out.println("     ==> found sanitized value matching annotation");
-						break; // we're done here
-					}
-				}
-				if (refValueAnnot != null) {
-					refValues.remove(v--); // no need to go for this value any further
-					wrappedDoc = null; // invalidate XML wrapper
-					for (int e = 0; e < extractedValues.size(); e++) {
-						ExtractedAttributeValue extractedValue = ((ExtractedAttributeValue) extractedValues.get(e));
-						if (extractedValue.firstWord != refValueAnnot.getFirstWord())
-							continue;
-						if (extractedValue.lastWord != refValueAnnot.getLastWord())
-							continue;
-						extractedValues.remove(e--); // no need to hold on to this one if we already have the annotation
-					}
-					continue; // we're done with this one
-				}
-				System.out.println("     --> matching annotation not found");
-				
-				//	if we have an extracted value, we can annotate from there
-				for (int e = 0; e < extractedValues.size(); e++) {
-					ExtractedAttributeValue extractedValue = ((ExtractedAttributeValue) extractedValues.get(e));
-					if (extractedValue.rValue.equalsIgnoreCase(refValue)) {}
-					else if (extractedValue.nValue.equalsIgnoreCase(refValue)) {}
-					else if ((extractedValue.sValue != null) && extractedValue.sValue.equalsIgnoreCase(refValue)) {}
-					else continue;
-					refValueAnnot = doc.addAnnotation(extractedValue.firstWord, extractedValue.lastWord, valueAnnotType); // annotate
-					System.out.println("     ==> annotated matching extracted value as " + valueAnnotType);
-					break; // we're done here
-				}
-				if (refValueAnnot != null) {
-					refValues.remove(v--); // no need to go for this value any further
-					wrappedDoc = null; // invalidate XML wrapper
-					continue; // we're done with this one
-				}
-				System.out.println("     --> matching extracted value not found");
-			}
-			
-			//	remove spurious annotations
-			for (int n = 0; n < valueAnnots.size(); n++) {
-				doc.removeAnnotation((ImAnnotation) valueAnnots.get(n));
-				wrappedDoc = null; // invalidate XML wrapper
-			}
-			System.out.println(" - cleaned up " + valueAnnots.size() + " spurious " + valueAnnotType);
-			
-			//	anything left to annotate?
-			if (refValues.isEmpty())
-				continue; // we're done with this attribute
-			System.out.println(" - annotating " + refValues.size() + " remaining values from reference");
-			
-			//	(re)create wrapper only on demand
-			if (wrappedDoc == null)
-				wrappedDoc = new ImDocumentRoot(doc.getPage(doc.getFirstPageId()), (ImDocumentRoot.NORMALIZATION_LEVEL_WORDS | ImDocumentRoot.NORMALIZE_CHARACTERS));
-			
-			//	annotate any remaining values
-			annotateAttributeValues(refAttributeName, refValues, valueAnnotType, wrappedDoc);
+			String refAttributeName = ((isIdentifierType ? "ID-" : "") + refAttributeNames[an]);
+			String[] refAttributeValues = ref.getAttributeValues(refAttributeName);
+			String valueAnnotType = ((isIdentifierType ? "docId" : "doc") + Character.toUpperCase(refAttributeNames[an].charAt(0)) + refAttributeNames[an].substring(1));
+			wrappedDoc = annotateAttributeValues(refAttributeName, refAttributeValues, isIdentifierType, valueAnnotType, attributesToValues, cleanupAttributeNames, doc, wrappedDoc);
 		}
 		
 		//	nothing to clean up (we're strictly adding in automated mode)
@@ -1855,12 +3565,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		//	clean up any annotations of removed attributes
 		for (Iterator canit = cleanupAttributeNames.iterator(); canit.hasNext();) {
 			String cleanupAttributeName = ((String) canit.next());
-			if (isIdentifierTypes && "".equals(cleanupAttributeName))
+			if (isIdentifierType && "".equals(cleanupAttributeName))
 				continue; // have to skip over wildcard ID type
 			System.out.println("Cleaning up " + cleanupAttributeName + ":");
 			
 			//	get existing annotations
-			String valueAnnotType = ((isIdentifierTypes ? "docId" : "doc") + Character.toUpperCase(cleanupAttributeName.charAt(0)) + cleanupAttributeName.substring(1));
+			String valueAnnotType = ((isIdentifierType ? "docId" : "doc") + Character.toUpperCase(cleanupAttributeName.charAt(0)) + cleanupAttributeName.substring(1));
 			ImAnnotation[] valueAnnots = doc.getAnnotations(valueAnnotType);
 			System.out.println(" - got " + valueAnnots.length + " existing " + valueAnnotType);
 			
@@ -1873,12 +3583,169 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 	}
 	
+	private static void annotateAuthorDetailValues(RefData ref, String[] refAuthorNames, String[] refAttributeNames, String[] allAttributeNames, ImDocument doc, HashMap attributesToValues, boolean auto) {
+		HashSet cleanupAttributeNames = new HashSet(Arrays.asList(allAttributeNames));
+		ImDocumentRoot wrappedDoc = null;
+		for (int an = 0; an < refAttributeNames.length; an++) {
+			if (AuthorData.AUTHOR_NAME_ATTRIBUTE.equals(refAttributeNames[an]))
+				continue;
+			cleanupAttributeNames.remove(refAttributeNames[an]);
+			String refAttributeName = (AUTHOR_ANNOTATION_TYPE + "-" + refAttributeNames[an]);
+//			String[] refAttributeValues = new String[refAuthorNames.length];
+			ArrayList refAttribValues = new ArrayList();
+			for (int a = 0; a < refAuthorNames.length; a++) {
+				String adv = ref.getAuthorAttribute(refAuthorNames[a], refAttributeNames[an]);
+//				refAttributeValues[a] = ((adv == null) ? "" : adv);
+				if (adv == null)
+					continue;
+				if (adv.indexOf(" & ") == -1)
+					refAttribValues.add(adv);
+				else refAttribValues.addAll(Arrays.asList(adv.split("\\s\\&\\s")));
+			}
+			String[] refAttributeValues = ((String[]) refAttribValues.toArray(new String[refAttribValues.size()]));
+			System.out.println(refAttributeName + ": " + Arrays.toString(refAttributeValues));
+			String valueAnnotType = ("docAuthor" + Character.toUpperCase(refAttributeNames[an].charAt(0)) + refAttributeNames[an].substring(1));
+			wrappedDoc = annotateAttributeValues(refAttributeName, refAttributeValues, !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(refAttributeNames[an]), valueAnnotType, attributesToValues, cleanupAttributeNames, doc, wrappedDoc);
+		}
+		
+		//	nothing to clean up (we're strictly adding in automated mode)
+		if (auto || cleanupAttributeNames.isEmpty())
+			return;
+		
+		//	clean up any annotations of removed attributes
+		for (Iterator canit = cleanupAttributeNames.iterator(); canit.hasNext();) {
+			String cleanupAttributeName = ((String) canit.next());
+			if (AuthorData.AUTHOR_NAME_ATTRIBUTE.equals(cleanupAttributeName))
+				continue;
+			System.out.println("Cleaning up " + cleanupAttributeName + ":");
+			
+			//	get existing annotations
+			String valueAnnotType = ("docAuthor" + Character.toUpperCase(cleanupAttributeName.charAt(0)) + cleanupAttributeName.substring(1));
+			ImAnnotation[] valueAnnots = doc.getAnnotations(valueAnnotType);
+			System.out.println(" - got " + valueAnnots.length + " existing " + valueAnnotType);
+			
+			//	remove spurious annotations
+			for (int a = 0; a < valueAnnots.length; a++) {
+				doc.removeAnnotation(valueAnnots[a]);
+				wrappedDoc = null; // invalidate XML wrapper
+			}
+			System.out.println("   ==> done");
+		}
+	}
+	
+	private static ImDocumentRoot annotateAttributeValues(String refAttributeName, String[] refAttributeValues, boolean isIdentifierType, String valueAnnotType, HashMap attributesToValues, HashSet cleanupAttributeNames, ImDocument doc, ImDocumentRoot wrappedDoc) {
+		cleanupAttributeNames.remove(refAttributeName); // no cleanup required here
+		System.out.println("Annotating " + refAttributeName + ":");
+		
+		//	get existing annotations
+		ArrayList valueAnnots = new ArrayList(Arrays.asList(doc.getAnnotations(valueAnnotType)));
+		System.out.println(" - got " + valueAnnots.size() + " existing " + valueAnnotType);
+		
+		//	get extracted values (creating working copy)
+		ArrayList extractedValues = new ArrayList();
+		if (attributesToValues.containsKey(refAttributeName))
+			extractedValues.addAll((ArrayList) attributesToValues.get(refAttributeName));
+		System.out.println(" - got " + extractedValues.size() + " extracted values");
+		
+		//	process reference values
+		ArrayList refValues = new ArrayList(Arrays.asList(refAttributeValues));
+		System.out.println(" - got " + refValues.size() + " values from reference");
+		for (int v = 0; v < refValues.size(); v++) {
+			String refValue = ((String) refValues.get(v));
+			System.out.println("   - handling " + refValue + ":");
+			ImAnnotation refValueAnnot = null;
+			
+			//	if we have an existing annotation, we're all set
+			for (int a = 0; a < valueAnnots.size(); a++) {
+				ImAnnotation valueAnnot = ((ImAnnotation) valueAnnots.get(a));
+				String annotValue = ImUtils.getString(valueAnnot.getFirstWord(), valueAnnot.getLastWord(), true);
+				if (isIdentifierType)
+					annotValue = annotValue.replaceAll("\\s", "");
+				if (annotValue.equalsIgnoreCase(refValue)) {
+					refValueAnnot = valueAnnot;
+					valueAnnots.remove(a--); // no need to remove this one later on
+					System.out.println("     ==> found raw value matching annotation");
+					break; // we're done here
+				}
+				String nAnnotValue = StringUtils.normalizeString(annotValue);
+				if (nAnnotValue.equalsIgnoreCase(refValue)) {
+					refValueAnnot = valueAnnot;
+					valueAnnots.remove(a--); // no need to remove this one later on
+					System.out.println("     ==> found normalized value matching annotation");
+					break; // we're done here
+				}
+				String sAnnotValue = sanitizeAttributeValue(refAttributeName, annotValue, false);
+				if (sAnnotValue == null)
+					sAnnotValue = sanitizeString(annotValue, (AUTHOR_ANNOTATION_TYPE.equals(refAttributeName) || EDITOR_ANNOTATION_TYPE.equals(refAttributeName)), false);
+				if (sAnnotValue.equalsIgnoreCase(refValue)) {
+					refValueAnnot = valueAnnot;
+					valueAnnots.remove(a--); // no need to remove this one later on
+					System.out.println("     ==> found sanitized value matching annotation");
+					break; // we're done here
+				}
+			}
+			if (refValueAnnot != null) {
+				refValues.remove(v--); // no need to go for this value any further
+				wrappedDoc = null; // invalidate XML wrapper
+				for (int e = 0; e < extractedValues.size(); e++) {
+					ExtractedAttributeValue extractedValue = ((ExtractedAttributeValue) extractedValues.get(e));
+					if (extractedValue.firstWord != refValueAnnot.getFirstWord())
+						continue;
+					if (extractedValue.lastWord != refValueAnnot.getLastWord())
+						continue;
+					extractedValues.remove(e--); // no need to hold on to this one if we already have the annotation
+				}
+				continue; // we're done with this one
+			}
+			System.out.println("     --> matching annotation not found");
+			
+			//	if we have an extracted value, we can annotate from there
+			for (int e = 0; e < extractedValues.size(); e++) {
+				ExtractedAttributeValue extractedValue = ((ExtractedAttributeValue) extractedValues.get(e));
+				if (extractedValue.rValue.equalsIgnoreCase(refValue)) {}
+				else if (extractedValue.nValue.equalsIgnoreCase(refValue)) {}
+				else if ((extractedValue.sValue != null) && extractedValue.sValue.equalsIgnoreCase(refValue)) {}
+				else continue;
+				refValueAnnot = doc.addAnnotation(extractedValue.firstWord, extractedValue.lastWord, valueAnnotType); // annotate
+				System.out.println("     ==> annotated matching extracted value as " + valueAnnotType);
+				extractedValues.remove(e--); // no need to hold on to this one if we already have the annotation
+				break; // we're done here
+			}
+			if (refValueAnnot != null) {
+				refValues.remove(v--); // no need to go for this value any further
+				wrappedDoc = null; // invalidate XML wrapper
+				continue; // we're done with this one
+			}
+			System.out.println("     --> matching extracted value not found");
+		}
+		
+		//	remove spurious annotations
+		for (int n = 0; n < valueAnnots.size(); n++) {
+			doc.removeAnnotation((ImAnnotation) valueAnnots.get(n));
+			wrappedDoc = null; // invalidate XML wrapper
+		}
+		System.out.println(" - cleaned up " + valueAnnots.size() + " spurious " + valueAnnotType);
+		
+		//	anything left to annotate?
+		if (refValues.isEmpty())
+			return wrappedDoc; // we're done with this attribute
+		System.out.println(" - annotating " + refValues.size() + " remaining values from reference");
+		
+		//	(re)create wrapper only on demand
+		if (wrappedDoc == null)
+			wrappedDoc = new ImDocumentRoot(doc.getPage(doc.getFirstPageId()), (ImDocumentRoot.NORMALIZATION_LEVEL_WORDS | ImDocumentRoot.NORMALIZE_CHARACTERS));
+		
+		//	annotate any remaining values
+		annotateAttributeValues(refAttributeName, refValues, valueAnnotType, wrappedDoc);
+		return wrappedDoc;
+	}
+	
 	private static void annotateAttributeValues(String attributeName, ArrayList values, String valueAnnotType, ImDocumentRoot wrappedDoc) {
 		
 		//	create attribute value dictionary
 		StringVector valueDict = new StringVector(false);
 		for (int v = 0; v < values.size(); v++) {
-			String value = ((String) values.get(v));
+			String value = StringUtils.normalizeString((String) values.get(v));
 			if (PAGINATION_ANNOTATION_TYPE.equals(attributeName))
 				valueDict.addElementIgnoreDuplicates(value.replaceAll("\\-", " - "));
 			else {
@@ -1891,9 +3758,15 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			}
 		}
 		System.out.println("Annotating " + values.size() + " " + attributeName + " as " + valueAnnotType);
+		for (int v = 0; v < valueDict.size(); v++) {
+			String value = valueDict.get(v);
+			TokenSequence valueTokens = Gamta.newTokenSequence(value, wrappedDoc.getTokenizer());
+			valueDict.addElementIgnoreDuplicates(TokenSequenceUtils.concatTokens(valueTokens, true, true));
+		}
+		System.out.println(" - normalized to " + valueDict.size() + " values");
 		
 		//	annotate attribute values (each one only once, though)
-		Annotation[] valueAnnots = Gamta.extractAllContained(wrappedDoc, valueDict);
+		Annotation[] valueAnnots = Gamta.extractAllContained(wrappedDoc, valueDict, true, false, true);
 		TreeSet annotatedValues = new TreeSet(String.CASE_INSENSITIVE_ORDER);
 		for (int a = 0; a < valueAnnots.length; a++) 
 			if (annotatedValues.add(valueAnnots[a].getValue())) {
@@ -1906,7 +3779,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	private RefData editRefData(final ImDocument doc, RefData ref, final HashMap attributesToValues) {
 		final String docName = ((String) doc.getAttribute(DOCUMENT_NAME_ATTRIBUTE));
 		final JDialog refEditDialog = DialogFactory.produceDialog(("Get Meta Data for Document" + ((docName == null) ? "" : (" " + docName))), true);
-		final BibRefEditorPanel refEditorPanel = new BibRefEditorPanel(refTypeSystem, refIdTypes, ref);
+		String refType = refTypeSystem.classify(ref);
+		if (refType == null)
+			refType = refTypeDefault;
+		if (refType != null)
+			ref.setAttribute(PUBLICATION_TYPE_ATTRIBUTE, refType);
+		final BibRefEditorPanel refEditorPanel = new BibRefEditorPanel(this.refTypeSystem, this.refIdTypes, this.authorDetails, ref);
 		final boolean[] cancelled = {false};
 		
 		JButton extract = new JButton("Extract");
@@ -1915,7 +3793,14 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			ImDocumentRoot wrappedDoc = null;
 			public void actionPerformed(ActionEvent ae) {
 				if (this.wrappedDoc == null)
-					this.wrappedDoc = new ImDocumentRoot(doc.getPage(doc.getFirstPageId()), ImDocumentRoot.NORMALIZATION_LEVEL_WORDS);
+					for (int p = 0; p < doc.getPageCount(); p++) {
+						ImPage page = doc.getPage(doc.getFirstPageId() + p);
+						ImWord[] pageWords = page.getWords();
+						if (pageWords.length == 0)
+							continue;
+						this.wrappedDoc = new ImDocumentRoot(doc.getPage(doc.getFirstPageId() + p), ImDocumentRoot.NORMALIZATION_LEVEL_WORDS);
+						break;
+					}
 				RefData ref = refEditorPanel.getRefData();
 				if (fillFromDocument(refEditDialog, docName, this.wrappedDoc, ref, attributesToValues)) {
 					if (doc.hasAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) && (doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) instanceof String) && !ref.hasAttribute(PUBLICATION_URL_ANNOTATION_TYPE))
@@ -1927,7 +3812,9 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		JButton search = new JButton("Search");
 		search.setToolTipText("Search RefBank for meta data, using current input as query");
-		if (refBankClient == null)
+		checkRefDataSources();
+//		if (this.refBankClient == null)
+		if (this.refDataSources == null)
 			search = null;
 		else search.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent ae) {
@@ -2067,7 +3954,8 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 					extractButtons[f].setBibRefType(brt);
 			}
 			
-			//	TODO add button 'Reference' to select whole reference at once, run it through RefParse, and then use all attributes found
+			//	TODO_not add button 'Reference' to select whole reference at once, run it through RefParse, and then use all attributes found
+			//	WOULD DRAG THIS WHOLE THING UNDER GPL ...
 			
 			JPanel functionPanel = new JPanel(new BorderLayout(), true);
 			functionPanel.add(new JLabel("Publication Type: ", JLabel.RIGHT), BorderLayout.WEST);
@@ -2127,18 +4015,6 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				this.addActionListener(this);
 			}
 			public void actionPerformed(ActionEvent ae) {
-//				String value = textArea.getSelectedText().trim();
-//				if (value.length() != 0) {
-//					String sValue = sanitizeString(value, (AUTHOR_ANNOTATION_TYPE.equals(this.attribute) || EDITOR_ANNOTATION_TYPE.equals(this.attribute)), this.attribute.startsWith("ID-"));
-//					if (AUTHOR_ANNOTATION_TYPE.equals(this.attribute) || EDITOR_ANNOTATION_TYPE.equals(this.attribute)) {
-//						flipNameParts(sValue, value);
-//						ref.addAttribute(this.attribute, sValue);
-//					}
-//					else ref.setAttribute(this.attribute, sValue);
-//					refModified = true;
-//					this.setToolTipText(this.getText() + ": " + ref.getAttributeValueString(this.attribute, " & "));
-//					this.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createRaisedBevelBorder(), BorderFactory.createLineBorder(Color.GREEN)));
-//				}
 				
 				//	get raw selection
 				int valueStart = Math.min(textArea.getCaret().getDot(), textArea.getCaret().getMark());
@@ -2309,7 +4185,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	private Vector searchRefData(RefData query) {
 		
 		//	can we search?
-		if (this.refBankClient == null)
+//		if (this.refBankClient == null)
+//			return null;
+		this.checkRefDataSources();
+		if (this.refDataSources == null)
 			return null;
 		
 		//	get search data
@@ -2326,10 +4205,21 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			year = null;
 		}
 		
-		//	get identifiers
-		String[] extIdTypes = query.getIdentifierTypes();
-		String extIdType = (((extIdTypes == null) || (extIdTypes.length == 0)) ? null : extIdTypes[0]);
-		String extId = ((extIdType == null) ? null : query.getIdentifier(extIdType));
+		//	get identifiers (preferring DOI if present)
+//		String[] extIdTypes = query.getIdentifierTypes();
+//		String extIdType = (((extIdTypes == null) || (extIdTypes.length == 0)) ? null : extIdTypes[0]);
+//		String extId = ((extIdType == null) ? null : query.getIdentifier(extIdType));
+		String extIdType;
+		String extId;
+		if (query.getIdentifier("DOI") != null) {
+			extIdType = "DOI";
+			extId = query.getIdentifier("DOI");
+		}
+		else {
+			String[] extIdTypes = query.getIdentifierTypes();
+			extIdType = (((extIdTypes == null) || (extIdTypes.length == 0)) ? null : extIdTypes[0]);
+			extId = ((extIdType == null) ? null : query.getIdentifier(extIdType));
+		}
 		
 		//	got something to search for?
 		if ((extId == null) && (author == null) && (title == null) && (year == null) && (origin == null))
@@ -2337,18 +4227,36 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		//	perform search
 		Vector refs = new Vector();
-		try {
-			BibRefIterator brit = this.refBankClient.findRefs(null, author, title, ((year == null) ? -1 : Integer.parseInt(year)), origin, extId, extIdType, 0, false);
-			while (brit.hasNextRef()) {
-				BibRef ps = brit.getNextRef();
-				String rs = ps.getRefParsed();
-				if (rs == null)
-					continue;
-				try {
-					refs.add(new RefDataListElement(BibRefUtils.modsXmlToRefData(SgmlDocumentReader.readDocument(new StringReader(rs)))));
-				} catch (IOException ioe) { /* never gonna happen, but Java don't know ... */ }
-			}
-		} catch (IOException ioe) { /* let's not bother with exceptions for now, just return null ... */ }
+//		try {
+//			BibRefIterator brit = this.refBankClient.findRefs(null, author, title, ((year == null) ? -1 : Integer.parseInt(year)), origin, extId, extIdType, 0, false);
+//			while (brit.hasNextRef()) {
+//				BibRef ps = brit.getNextRef();
+//				String rs = ps.getRefParsed();
+//				if (rs == null)
+//					continue;
+//				try {
+//					refs.add(new RefDataListElement(BibRefUtils.modsXmlToRefData(SgmlDocumentReader.readDocument(new StringReader(rs)))));
+//				} catch (IOException ioe) { /* never gonna happen, but Java don't know ... */ }
+//			}
+//		} catch (IOException ioe) { /* let's not bother with exceptions for now, just return null ... */ }
+		Properties searchData = new Properties();
+		if ((extId != null) && (extIdType != null))
+			searchData.setProperty(("ID-" + extIdType), extId);
+		else {
+			if (author != null)
+				searchData.setProperty(AUTHOR_ANNOTATION_TYPE, author);
+			if (year != null)
+				searchData.setProperty(YEAR_ANNOTATION_TYPE, year);
+			if (title != null)
+				searchData.setProperty(TITLE_ANNOTATION_TYPE, title);
+			if (origin != null)
+				searchData.setProperty(JOURNAL_NAME_OR_PUBLISHER_ANNOTATION_TYPE, origin);
+		}
+		for (int s = 0; s < this.refDataSources.length; s++) try {
+			RefData[] sRefs = this.refDataSources[s].findRefData(searchData);
+			for (int r = 0; r < sRefs.length; r++)
+				refs.add(new RefDataListElement(sRefs[r]));
+		} catch (IOException ioe) { /* let's not bother with exceptions for now, just ignore them ... */ }
 		
 		//	finally ...
 		return refs;
@@ -2397,12 +4305,14 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	private class RefDataListElement {
 		final RefData ref;
 		final String displayString;
+		final String sourceString;
 		RefDataListElement(RefData ref) {
 			this.ref = ref;
 			this.displayString = BibRefUtils.toRefString(this.ref);
+			this.sourceString = ref.getAttribute(BibRefDataSource.REFERENCE_DATA_SOURCE_ATTRIBUTE);
 		}
 		public String toString() {
-			return this.displayString;
+			return (((this.sourceString == null) ? "" : ("[" + this.sourceString + "]: ")) + this.displayString);
 		}
 	}
 	
@@ -2532,6 +4442,13 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	
 	//	!!! TEST ONLY !!!
 	public static void main(String[] args) throws Exception {
+//		if (true) {
+//			System.out.println(parseCharList("\\u0043 \\x61 t", System.out));
+//			System.out.println(parseCharList("\\u004G \\x61 t", System.out));
+//			System.out.println(parseCharList("\\u0043\\x61t", System.out));
+//			return;
+//		}
+//		
 //		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Testdaten/PdfExtract/zt00109.o.pdf.imf")));
 		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Testdaten/PdfExtract/zt00619.o.pdf.imf")));
 //		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Testdaten/PdfExtract/zt00872.pdf.imf")));

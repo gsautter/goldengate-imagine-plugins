@@ -54,7 +54,7 @@
 	<property name="jar.textstreams" value="${dist.home}/Plugins/TextStreamActionProvider.jar" />
 	
 	<!-- path to the .jar file that shall be created -->
-	<property name="jar.docerrors" value="${dist.home}/Plugins/DocumentErrorManager.jar" />
+	<!--property name="jar.docerrors" value="${dist.home}/Plugins/DocumentErrorManager.jar" /-->
 	
 	<!-- path to the .jar file that shall be created -->
 	<property name="jar.docmeatdata" value="${dist.home}/Plugins/DocumentMetaDataEditor.jar" />

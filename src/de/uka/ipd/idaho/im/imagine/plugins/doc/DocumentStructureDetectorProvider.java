@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -28,12 +28,20 @@
 package de.uka.ipd.idaho.im.imagine.plugins.doc;
 
 import java.awt.BasicStroke;
+import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.Shape;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.geom.Rectangle2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -50,9 +58,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.WindowConstants;
+
 import de.uka.ipd.idaho.easyIO.settings.Settings;
 import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.Gamta;
+import de.uka.ipd.idaho.gamta.TokenSequence;
+import de.uka.ipd.idaho.gamta.Tokenizer;
 import de.uka.ipd.idaho.gamta.util.CountingSet;
 import de.uka.ipd.idaho.gamta.util.ParallelJobRunner;
 import de.uka.ipd.idaho.gamta.util.ParallelJobRunner.ParallelFor;
@@ -62,22 +78,35 @@ import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
 import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterDescription;
 import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterGroupDescription;
+import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.TestableElement;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
 import de.uka.ipd.idaho.goldenGate.plugins.PluginDataProviderFileBased;
+import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImLayoutObject;
 import de.uka.ipd.idaho.im.ImObject;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
+import de.uka.ipd.idaho.im.ImSupplement;
+import de.uka.ipd.idaho.im.ImSupplement.Figure;
+import de.uka.ipd.idaho.im.ImSupplement.Graphics;
 import de.uka.ipd.idaho.im.ImWord;
+import de.uka.ipd.idaho.im.analysis.Imaging;
+import de.uka.ipd.idaho.im.analysis.Imaging.AnalysisImage;
 import de.uka.ipd.idaho.im.analysis.PageAnalysis;
 import de.uka.ipd.idaho.im.analysis.PageAnalysis.BlockLayout;
 import de.uka.ipd.idaho.im.analysis.PageAnalysis.BlockMetrics;
+import de.uka.ipd.idaho.im.analysis.PageAnalysis.LineMetrics;
+import de.uka.ipd.idaho.im.analysis.PageImageAnalysis;
+import de.uka.ipd.idaho.im.analysis.PageImageAnalysis.Region;
+import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.gamta.ImTokenSequence;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractImageMarkupToolProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.DisplayExtensionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener;
 import de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider;
+import de.uka.ipd.idaho.im.imagine.plugins.basic.RegionActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.tables.TableActionProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.tables.TableDetectorProvider;
 import de.uka.ipd.idaho.im.imagine.plugins.util.CaptionCitationHandler;
@@ -87,6 +116,7 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtension;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtensionGraphics;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImUtils;
+import de.uka.ipd.idaho.stringUtils.StringUtils;
 import de.uka.ipd.idaho.stringUtils.StringVector;
 import de.uka.ipd.idaho.stringUtils.regExUtils.RegExUtils;
 
@@ -97,8 +127,9 @@ import de.uka.ipd.idaho.stringUtils.regExUtils.RegExUtils;
  * 
  * @author sautter
  */
-public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolProvider implements ImagingConstants, ReactionProvider {
+public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolProvider implements ImagingConstants, ReactionProvider, GoldenGateImagineDocumentListener {
 	private boolean debug = false;
+	private static final String TEXT_ORIENTATION_CENTERED_STRICT = "centered_strict";
 //	private static final boolean detectTablesSimpleDefault = true;
 //	private boolean detectTablesSimple = detectTablesSimpleDefault;
 	
@@ -113,6 +144,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	private Pattern[] footnoteStartPatterns = new Pattern[0];
 	
 	private CaptionCitationHandler captionCitationHandler;
+	
+	private RegionActionProvider regionActionProvider;
 	
 	private TableActionProvider tableActionProvider;
 	private TableDetectorProvider tableDetectorProvider;
@@ -229,6 +262,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			this.footnoteStartPatterns = ((Pattern[]) footnoteStartPatterns.toArray(new Pattern[footnoteStartPatterns.size()]));
 		} catch (IOException ioe) {}
 		
+		//	get region action provider
+		if (this.parent == null)
+			this.regionActionProvider = new RegionActionProvider();
+		else this.regionActionProvider = ((RegionActionProvider) this.parent.getPlugin(RegionActionProvider.class.getName()));
+		
 		//	get table action provider
 		if (this.parent == null)
 			this.tableActionProvider = new TableActionProvider();
@@ -283,6 +321,18 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setParamDescription("minSignificantVerticalDist", "The minimum significant vertical distance between two accumulation point to be considered distinct (in pixels at 72 DPI); the more accurate document layout is, the lower this value can be, i.e., higher values are mostly needed for scans.");
 		pgd.setParamLabel("normSpaceWidth", "Normalized Space Width");
 		pgd.setParamDescription("normSpaceWidth", "The normalized width of a non-stretched space, relative to line height.");
+		pgd.setParamLabel("splitLinePatterns", "Split Line Patterns");
+		pgd.setParamDescription("splitLinePatterns", "<HTML>Patterns matching lines above or below which to enforce a paragraph split. These patterns are plain regular expression patterns prefixed with layout based matching parameters enclosed in curly brackets. There are the following parameters:<UL>" +
+				"<LI><TT>PO</TT>: paragraph orientation in blocks the pattern applies to, either (combination) of L (left), R (right), J (justified), or C (centered), omission indicates wildcard; example: <TT>{PO:LJ} matches lines in blocks with left or justified text orientation</TT></LI>" +
+				"<LI><TT>FS</TT>: font size of lines the pattern applies to, either a single number or a dash separated range, omission indicates wildcard; example: <TT>{FS:10-12}</TT> matches lines with font size between 10 and 12 (inclusive)</LI>" +
+				"<LI><TT>FP</TT>: font properties of lines the pattern applies to, either (combination) of B (bold), I (italics), or C (all-caps), omission indicates wildcard; example: <TT>{FP:B}</TT> matches lines in bold</LI>" +
+				"<LI><TT>SFP</TT>: font properties of the start of lines the pattern applies to, either (combination) of B (bold), I (italics), or C (all-caps), omission indicates wildcard; example: <TT>{SFP:B}</TT> matches lines with a bold start</LI>" +
+				"<LI><TT>MBL</TT>: maximum number of lines in blocks the pattern applies to, omission indicates wildcard; example: <TT>{MBL:7}</TT> matches lines in blocks with up to 7 lines (inclusive)</LI>" +
+				"<LI><TT>MAXPID</TT>: maximum page ID of lines the pattern applies to, omission indicates wildcard; example: <TT>{MAXPID:1}</TT> matches lines on pages up to 1 (inclusive)</LI>" +
+				"<LI><TT>MINPID</TT>: minimum page ID of lines the pattern applies to, omission indicates wildcard; example: <TT>{MINPID:2}</TT> matches lines on pages from 2 onward (inclusive)</LI>" +
+				"<LI><TT>SD</TT>: split direction to apply to mathing lines, A (above), B (below), or AB (both); example: <TT>{SD:A}</TT> indicates a split above matching lines</LI>" +
+				"<LI><TT>R</TT>: the reason of the split, i.e., a label for the pattern, to increase tractability; example: <TT>{R:Heading}</TT> labels a split as being due to a heading</LI>" +
+				"</UL></HTML>");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	caption layout and positioning
@@ -317,6 +367,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setParamDescription("plateStartPatterns", "One or more patterns matching the start of plate captions, right up to the figure number.");
 		pgd.setParamLabel("startIsBold", "Do Captions Start in Bold?");
 		pgd.setParamDescription("startIsBold", "Are caption starts set in bold face, i.e., bold up to and including the numbering?");
+		pgd.setParamLabel("startIsSeparateLine", "Do Captions have a Line Breaks after their Starts?");
+		pgd.setParamDescription("startIsSeparateLine", "Is there a line break separating caption starts from the main caption text, i.e., after the numbering? (setting this option to true requires start patterns to match entire caption start line)");
 		pgd.setParamLabel("startPatterns", "Start Patterns");
 		pgd.setParamDescription("startPatterns", "One or more patterns matching the start of any kind of captions, right up to the figure number; to be used alternatively to the four patterns dedicated to figures, tables, and plates and their parts.");
 		pgd.setParamLabel("tableStartPatterns", "Table Caption Start Patterns");
@@ -329,6 +381,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setDescription("Parameters describing the styling of footnotes and where they can be located on a page.");
 		pgd.setParamLabel("area", "Footnote Area");
 		pgd.setParamDescription("area", "A bounding box marking the area on a page where footnotes can be located (normalized to 72 DPI).");
+		pgd.setParamLabel("separateBlock", "Are Footnotes in Separate Block?");
+		pgd.setParamDescription("separateBlock", "Are footnotes located in a block of their own, separate from other parts like the main text?");
 		pgd.setParamLabel("fontSize", "Font Size");
 		pgd.setParamDescription("fontSize", "The exact font size of footnotes (use minimum and maximum font size if variation present or to be expected).");
 		pgd.setParamLabel("maxFontSize", "Maximum Font Size");
@@ -337,6 +391,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setParamDescription("minFontSize", "The minimum font size of footnotes (use only if variation present or to be expected, otherwise use exact font size).");
 		pgd.setParamLabel("startPatterns", "Start Patterns");
 		pgd.setParamDescription("startPatterns", "One or more patterns matching the start of a footnote.");
+		//footnote.separateBlock
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	pages in general ...
@@ -345,6 +400,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setDescription("Parameters describing the layout of pages in general. The parameters that differ between even and odd pages should be entered in the respective sub groups instead. The same applies to parameters for the first page only (article headers, etc.).");
 		pgd.setParamLabel("headerAreas", "Header Areas");
 		pgd.setParamDescription("headerAreas", "One or more bounding boxes marking areas of the page that contain headers and footers (normalized to 72 DPI); text in such areas will be cut out of the main document text.");
+		pgd.setParamLabel("columnAreas", "Column Areas");
+		pgd.setParamDescription("columnAreas", "One or more bounding boxes marking individual text columns (normalized to 72 DPI); column splits occur only between these bounding boxes, not inside.");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	... and the respective page number
@@ -367,6 +424,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setDescription("Parameters describing the layout of even-number pages. Parameters that are the same on both even and odd pages should be specified in the general layout group.");
 		pgd.setParamLabel("headerAreas", "Header Areas");
 		pgd.setParamDescription("headerAreas", "One or more bounding boxes marking areas of the page that contain headers and footers (normalized to 72 DPI); text in such areas will be cut out of the main document text.");
+		pgd.setParamLabel("columnAreas", "Column Areas");
+		pgd.setParamDescription("columnAreas", "One or more bounding boxes marking individual text columns (normalized to 72 DPI); column splits occur only between these bounding boxes, not inside.");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	... and the respective page number
@@ -389,6 +448,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setDescription("Parameters describing the layout of odd-number pages. Parameters that are the same on both even and odd pages should be specified in the general layout group.");
 		pgd.setParamLabel("headerAreas", "Header Areas");
 		pgd.setParamDescription("headerAreas", "One or more bounding boxes marking areas of the page that contain headers and footers (normalized to 72 DPI); text in such areas will be cut out of the main document text.");
+		pgd.setParamLabel("columnAreas", "Column Areas");
+		pgd.setParamDescription("columnAreas", "One or more bounding boxes marking individual text columns (normalized to 72 DPI); column splits occur only between these bounding boxes, not inside.");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	... and the respective page number
@@ -411,10 +472,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setDescription("Parameters describing the layout of the first page. Parameters that are the same on both even and odd pages should be specified in the general layout group. This group is specifically intended to deal with additional decoration and headers frequently found on the start pages of journal articles.");
 		pgd.setParamLabel("headerAreas", "Header Areas");
 		pgd.setParamDescription("headerAreas", "One or more bounding boxes marking areas of the page that contain headers and footers (normalized to 72 DPI); text in such areas will be cut out of the main document text.");
+		pgd.setParamLabel("columnAreas", "Column Areas");
+		pgd.setParamDescription("columnAreas", "One or more bounding boxes marking individual text columns (normalized to 72 DPI); column splits occur only between these bounding boxes, not inside.");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	... and the respective page number
-		pgd = new ParameterGroupDescription("layout.page.first");
+		pgd = new ParameterGroupDescription("layout.page.first.number");
 		pgd.setLabel("First Page Number");
 		pgd.setDescription("Parameters describing the layout and location of the page number on the first page. Parameters that are the same on both even and odd pages should be specified in the general layout group.");
 		pgd.setParamLabel("area", "Page Number Area");
@@ -452,51 +515,165 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		//	headings in general ...
 		pgd = new ParameterGroupDescription("style.heading");
 		pgd.setLabel("Headings In General");
-		pgd.setDescription("Parameters describing headings in general, in particular the number of heading levels.");
-		pgd.setParamLabel("levels", "Heading Levels");
-		pgd.setParamDescription("levels", "The heading levels, i.e., a space-separated list of the level numbers, starting with 1.");
+		pgd.setDescription("Parameters describing headings in general, in particular the number of heading groups at different levels.");
+		pgd.setParamLabel("groups", "Heading Groups");
+		pgd.setParamDescription("groups", "The heading groups to use, i.e., a space-separated list of the group numbers, starting with 1.");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
-		//	... and level-specific
-		String[] alignments = {ImRegion.TEXT_ORIENTATION_LEFT, ImRegion.TEXT_ORIENTATION_RIGHT, ImRegion.TEXT_ORIENTATION_CENTERED, ImRegion.TEXT_ORIENTATION_JUSTIFIED};
-		for (int l = 1; l <= 7; l++) {
-			pgd = new TestableParameterGroupDescription("style.heading." + l);
-			pgd.setLabel("Level " + l + " Headings");
-			pgd.setDescription("Parameters describing headings of level " + l + ".");
+		//	... and level-specific ...
+		String[] alignments = {ImRegion.TEXT_ORIENTATION_LEFT, ImRegion.TEXT_ORIENTATION_RIGHT, ImRegion.TEXT_ORIENTATION_CENTERED, TEXT_ORIENTATION_CENTERED_STRICT, ImRegion.TEXT_ORIENTATION_JUSTIFIED};
+		String[] levels = {"1", "2", "3", "4", "5"};
+		String[] lineBreakMergeModes = {"never", "group", "level-downwards", "level-upwards", "level"};
+		for (int g = 1; g <= 9; g++) {
+			pgd = new TestableParameterGroupDescription("style.heading." + g);
+			pgd.setLabel("Group " + g + " Headings");
+			pgd.setDescription("Parameters describing headings of group " + g + ".");
+			pgd.setParamLabel("level", "Heading Level");
+			pgd.setParamDescription("level", ("The logical level of paragraphs matched as headings of group " + g + " (defaults to " + g + " if not selected)."));
+			pgd.setParamDefaultValue("level", ("" + g));
+			pgd.setParamRequired("level");
+			pgd.setParamValues("level", levels);
 			pgd.setParamLabel("alignment", "Paragraph Alignment");
-			pgd.setParamDescription("alignment", ("The alignment of paragraphs representing headings of level " + l + "."));
+			pgd.setParamDescription("alignment", ("The alignment of paragraphs representing headings of group " + g + "."));
 			pgd.setParamValues("alignment", alignments);
+			pgd.setParamLabel("alignmentInBlock", "Locally Measure Paragraph Alignment in Block?");
+			pgd.setParamDescription("alignmentInBlock", ("Measure the alignment of paragraphs representing headings of group " + g + " against the text block instead of the whole column?"));
+			pgd.setParamLabel("lineBreakMergeMode", "Merge Across Line Breaks");
+			pgd.setParamDescription("lineBreakMergeMode", "Indicates how to merge headings in this group with others across line breaks (if merging with other heading groups on same level, more restrictive one of the two merge modes counts)");
+			pgd.setParamValues("lineBreakMergeMode", lineBreakMergeModes);
+			pgd.setParamValueLabel("lineBreakMergeMode", "never", "Never");
+			pgd.setParamValueLabel("lineBreakMergeMode", "group", "With Headings in Same Group");
+			pgd.setParamValueLabel("lineBreakMergeMode", "level-downwards", "With Headings at Same Level (Downwards Only)");
+			pgd.setParamValueLabel("lineBreakMergeMode", "level-upwards", "With Headings at Same Level (Upwards Only)");
+			pgd.setParamValueLabel("lineBreakMergeMode", "level", "With Headings at Same Level");
+			pgd.setParamLabel("canHaveIndent", "First Line Indented?");
+			pgd.setParamDescription("canHaveIndent", ("Is the first line in headings of group " + g + " indented (relevant unless alignment is 'centered')?"));
 			pgd.setParamLabel("containsAllCaps", "Contains All-Caps?");
-			pgd.setParamDescription("containsAllCaps", ("Do headings of level " + l + " necessarily include words in all-caps?"));
+			pgd.setParamDescription("containsAllCaps", ("Do headings of group " + g + " necessarily include words in all-caps?"));
+			pgd.setParamLabel("containsSmallCaps", "Contains Small-Caps?");
+			pgd.setParamDescription("containsSmallCaps", ("Do headings of group " + g + " necessarily include words in small-caps (requires presence of two font sizes)?"));
 			pgd.setParamLabel("containsBold", "Contains Bold?");
-			pgd.setParamDescription("containsBold", ("Do headings of level " + l + " necessarily include words in bold face?"));
+			pgd.setParamDescription("containsBold", ("Do headings of group " + g + " necessarily include words in bold face?"));
 			pgd.setParamLabel("containsItalics", "Contains Italics?");
-			pgd.setParamDescription("containsItalics", ("Do headings of level " + l + " necessarily include words in italics?"));
+			pgd.setParamDescription("containsItalics", ("Do headings of group " + g + " necessarily include words in italics?"));
 			pgd.setParamLabel("startIsAllCaps", "Start In All-Caps?");
-			pgd.setParamDescription("startIsAllCaps", ("Do headings of level " + l + " necessarily start with words in all-caps?"));
+			pgd.setParamDescription("startIsAllCaps", ("Do headings of group " + g + " necessarily start with words in all-caps?"));
+			pgd.setParamLabel("startIsSmallCaps", "Start In Small-Caps?");
+			pgd.setParamDescription("startIsSmallCaps", ("Do headings of group " + g + " necessarily start with words in small-caps (requires presence of two font sizes)?"));
 			pgd.setParamLabel("startIsBold", "Start In Bold?");
-			pgd.setParamDescription("startIsBold", ("Do headings of level " + l + " necessarily start with words in bold face?"));
+			pgd.setParamDescription("startIsBold", ("Do headings of group " + g + " necessarily start with words in bold face?"));
+			pgd.setParamLabel("startIsItalics", "Start In Italics?");
+			pgd.setParamDescription("containsItalics", ("Do headings of group " + g + " necessarily start with words in italics?"));
 			pgd.setParamLabel("isAllCaps", "Completely All-Caps?");
-			pgd.setParamDescription("isAllCaps", ("Are headings of level " + l + " completely in all-caps?"));
+			pgd.setParamDescription("isAllCaps", ("Are headings of group " + g + " completely in all-caps?"));
+			pgd.setParamLabel("isSmallCaps", "Completely Small-Caps?");
+			pgd.setParamDescription("isSmallCaps", ("Are headings of group " + g + " completely in small-caps (requires presence of two font sizes)?"));
 			pgd.setParamLabel("isBold", "Completely Bold?");
-			pgd.setParamDescription("isBold", ("Are headings of level " + l + " completely in bold face?"));
+			pgd.setParamDescription("isBold", ("Are headings of group " + g + " completely in bold face?"));
+			pgd.setParamLabel("isItalics", "Completely In Italics?");
+			pgd.setParamDescription("containsItalics", ("Are headings of group " + g + " completely in italics?"));
+			pgd.setParamLabel("ignoreParentheses", "Ignore Parts in Parentheses in Font Style Assessment?");
+			pgd.setParamDescription("ignoreParentheses", ("Ignore parts in parentheses on enforcing bold and all-caps font style?"));
 			pgd.setParamLabel("isNonBlock", "Can Share Block?");
-			pgd.setParamDescription("isNonBlock", ("Can headings of level " + l + " be in one text block together with subsequent document text, or do these headings always sit in a text block of their own?"));
+			pgd.setParamDescription("isNonBlock", ("Can headings of group " + g + " be in one text block together with subsequent document text, or do these headings always sit in a text block of their own?"));
+			pgd.getParameterDescription("isNonBlock").addExcludedParameter("false", "alignmentInBlock");
 			pgd.setParamLabel("fontSize", "Font Size");
-			pgd.setParamDescription("fontSize", ("The exact font size of headings of level " + l + " (use minimum and maximum font size if variation present or to be expected)."));
+			pgd.setParamDescription("fontSize", ("The exact font size of headings of group " + g + " (use minimum and maximum font size if variation present or to be expected)."));
 			pgd.setParamLabel("maxFontSize", "Maximum Font Size");
-			pgd.setParamDescription("maxFontSize", ("The maximum font size of headings of level " + l + " (use only if variation present or to be expected, otherwise use exact font size)."));
+			pgd.setParamDescription("maxFontSize", ("The maximum font size of headings of group " + g + " (use only if variation present or to be expected, otherwise use exact font size)."));
 			pgd.setParamLabel("minFontSize", "Minimum Font Size");
-			pgd.setParamDescription("minFontSize", ("The minimum font size of headings of level " + l + " (use only if variation present or to be expected, otherwise use exact font size)."));
+			pgd.setParamDescription("minFontSize", ("The minimum font size of headings of group " + g + " (use only if variation present or to be expected, otherwise use exact font size)."));
 			pgd.setParamLabel("maxLineCount", "Maximum Number Of Lines");
-			pgd.setParamDescription("maxLineCount", ("The maximum number of lines contained in headings of level " + l + "."));
+			pgd.setParamDescription("maxLineCount", ("The maximum number of lines contained in headings of group " + g + "."));
 			pgd.setParamLabel("startPatterns", "Start Patterns");
-			pgd.setParamDescription("startPatterns", ("One or more regular expression patterns matching the starts of headings of level " + l + "; best suited to matching on numbered headings."));
+			pgd.setParamDescription("startPatterns", ("One or more regular expression patterns matching the starts of headings of group " + g + "; best suited to matching on numbered headings."));
+			pgd.setParamLabel("filterPatterns", "Filter Patterns");
+			pgd.setParamDescription("filterPatterns", ("One or more regular expression patterns matching the starts of lines to exclude from heading group " + g + "; best suited to filtering out certain lines from a group of headings that use too similar font properties."));
+			DocumentStyle.addParameterGroupDescription(pgd);
+		}
+		
+		//	... as well as for in-line headings
+		for (int g = 1; g <= 3; g++) {
+			pgd = new TestableParameterGroupDescription("style.heading.inLine." + g);
+			pgd.setLabel("Group " + g + " In-Line Headings");
+			pgd.setDescription("Parameters describing in-line headings of group " + g + ".");
+			pgd.setParamLabel("containsAllCaps", "Contains All-Caps?");
+			pgd.setParamDescription("containsAllCaps", ("Do in-line headings of group " + g + " necessarily include words in all-caps?"));
+			pgd.setParamLabel("containsSmallCaps", "Contains Small-Caps?");
+			pgd.setParamDescription("containsSmallCaps", ("Do in-line headings of group " + g + " necessarily include words in small-caps (requires presence of two font sizes)?"));
+			pgd.setParamLabel("containsBold", "Contains Bold?");
+			pgd.setParamDescription("containsBold", ("Do in-line headings of group " + g + " necessarily include words in bold face?"));
+			pgd.setParamLabel("containsItalics", "Contains Italics?");
+			pgd.setParamDescription("containsItalics", ("Do in-line headings of group " + g + " necessarily include words in italics?"));
+			pgd.setParamLabel("startIsAllCaps", "Start In All-Caps?");
+			pgd.setParamDescription("startIsAllCaps", ("Do in-line headings of group " + g + " necessarily start with words in all-caps?"));
+			pgd.setParamLabel("startIsSmallCaps", "Start In Small-Caps?");
+			pgd.setParamDescription("startIsSmallCaps", ("Do in-line headings of group " + g + " necessarily start with words in small-caps (requires presence of two font sizes)?"));
+			pgd.setParamLabel("startIsBold", "Start In Bold?");
+			pgd.setParamDescription("startIsBold", ("Do in-line headings of group " + g + " necessarily start with words in bold face?"));
+			pgd.setParamLabel("startIsItalics", "Start In Italics?");
+			pgd.setParamDescription("containsItalics", ("Do in-line headings of group " + g + " necessarily start with words in italics?"));
+			pgd.setParamLabel("isAllCaps", "Completely All-Caps?");
+			pgd.setParamDescription("isAllCaps", ("Are in-line headings of group " + g + " completely in all-caps?"));
+			pgd.setParamLabel("isSmallCaps", "Completely Small-Caps?");
+			pgd.setParamDescription("isSmallCaps", ("Are in-line headings of group " + g + " completely in small-caps (requires presence of two font sizes)?"));
+			pgd.setParamLabel("isBold", "Completely Bold?");
+			pgd.setParamDescription("isBold", ("Are in-line headings of group " + g + " completely in bold face?"));
+			pgd.setParamLabel("isItalics", "Completely In Italics?");
+			pgd.setParamDescription("containsItalics", ("Are in-line headings of group " + g + " completely in italics?"));
+			pgd.setParamLabel("ignoreParentheses", "Ignore Parts in Parentheses in Font Style Assessment?");
+			pgd.setParamDescription("ignoreParentheses", ("Ignore parts in parentheses on enforcing bold and all-caps font style?"));
+			pgd.setParamLabel("fontSize", "Font Size");
+			pgd.setParamDescription("fontSize", ("The exact font size of in-line headings of group " + g + " (use minimum and maximum font size if variation present or to be expected)."));
+			pgd.setParamLabel("maxFontSize", "Maximum Font Size");
+			pgd.setParamDescription("maxFontSize", ("The maximum font size of in-line headings of group " + g + " (use only if variation present or to be expected, otherwise use exact font size)."));
+			pgd.setParamLabel("minFontSize", "Minimum Font Size");
+			pgd.setParamDescription("minFontSize", ("The minimum font size of in-line headings of group " + g + " (use only if variation present or to be expected, otherwise use exact font size)."));
+			pgd.setParamLabel("minBlockLineCount", "Minimum Number Of Lines in Block");
+			pgd.setParamDescription("minBlockLineCount", ("The minimum number of lines in a block containing in-line headings of group " + g + "."));
+			pgd.setParamLabel("startPatterns", "Start Patterns");
+			pgd.setParamDescription("startPatterns", ("One or more regular expression patterns matching the starts of in-line headings of group " + g + "."));
+			pgd.setParamLabel("filterPatterns", "Filter Patterns");
+			pgd.setParamDescription("filterPatterns", ("One or more regular expression patterns matching the starts of lines to exclude as in-line headings of group " + g + "; best suited to filtering out certain lines as in-line headings if start patterns are rather general."));
 			DocumentStyle.addParameterGroupDescription(pgd);
 		}
 	}
 	
-	private static class TestableParameterGroupDescription extends ParameterGroupDescription implements DisplayExtension {
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#exit()
+	 */
+	public void exit() {
+		TestableParameterGroupDescription.closeAttributeExtractionLogDisplay(null);
+	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentOpened(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentOpened(ImDocument doc, Object source, ProgressMonitor pm) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSelected(de.uka.ipd.idaho.im.ImDocument)
+	 */
+	public void documentSelected(ImDocument doc) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaving(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentSaving(ImDocument doc, Object dest, ProgressMonitor pm) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentSaved(de.uka.ipd.idaho.im.ImDocument, java.lang.Object, de.uka.ipd.idaho.gamta.util.ProgressMonitor)
+	 */
+	public void documentSaved(ImDocument doc, Object dest, ProgressMonitor pm) {}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImagineDocumentListener#documentClosed(java.lang.String)
+	 */
+	public void documentClosed(String docId) {
+		TestableParameterGroupDescription.closeAttributeExtractionLogDisplay(docId);
+	}
+	
+	private static class TestableParameterGroupDescription extends ParameterGroupDescription implements DisplayExtension, TestableElement {
 		TestableParameterGroupDescription(String pnp) {
 			super(pnp);
 		}
@@ -512,8 +689,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			//	collect any highlights, and set color
 			ArrayList shapes = new ArrayList();
 			Color color = null;
-			if (this.parameterNamePrefix.startsWith("style.heading.")) {
-				this.addHeadingShapes(page, docStyle, shapes);
+			if (this.parameterNamePrefix.startsWith("style.heading.inLine.")) {
+				this.addInLineHeadingShapes(page, docStyle, shapes, idmp);
+				color = idmp.getAnnotationColor(EMPHASIS_TYPE);
+			}
+			else if (this.parameterNamePrefix.startsWith("style.heading.")) {
+				this.addHeadingShapes(page, docStyle, shapes, idmp);
 				color = idmp.getAnnotationColor(HEADING_TYPE);
 			}
 			else if ("layout.caption".equals(this.parameterNamePrefix)) {
@@ -541,9 +722,24 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}};
 			return degs;
 		}
-		private void addHeadingShapes(ImPage page, DocumentStyle docStyle, ArrayList shapes) {
-			int level = Integer.parseInt(this.parameterNamePrefix.substring("style.heading.".length()));
-			HeadingStyleDefined hsd = new HeadingStyleDefined(level, docStyle.getSubset("style.heading"));
+		private void addHeadingShapes(ImPage page, DocumentStyle docStyle, ArrayList shapes, ImDocumentMarkupPanel idmp) {
+			int group = Integer.parseInt(this.parameterNamePrefix.substring("style.heading.".length()));
+			HeadingStyleDefined hsd = HeadingStyleDefined.getHeadingStyle(group, docStyle.getSubset("style.heading"));
+			if (hsd == null)
+				return;
+			
+			//	set up match logging
+			String docId = ((idmp == null) ? ((page.getDocument() == null) ? null : page.getDocument().docId) : idmp.document.docId);
+			ByteArrayOutputStream logBaos = new ByteArrayOutputStream();
+			PrintStream log;
+			try {
+				log = new PrintStream(logBaos, true, "UTF-8");
+			}
+			catch (UnsupportedEncodingException uee) {
+				log = new PrintStream(logBaos, true); // never gonna happen, but Java is dumb !!!
+			}
+			
+			//	get matching lines
 			ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 			for (int b = 0; b < pageBlocks.length; b++) {
 				ImRegion[] blockParentColumns = page.getRegionsIncluding(ImRegion.COLUMN_ANNOTATION_TYPE, pageBlocks[b].bounds, false);
@@ -555,8 +751,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				
 				//	measure line positions
 				ImWord[][] lineWords = new ImWord[blockLines.length][];
-				boolean[] lineIsFlushLeft = new boolean[blockLines.length];
-				boolean[] lineIsFlushRight = new boolean[blockLines.length];
+				int[] lineLeftColDists = new int[blockLines.length];
+				int[] lineRightColDists = new int[blockLines.length];
+				int[] lineLeftBlockDists = new int[blockLines.length];
+				int[] lineRightBlockDists = new int[blockLines.length];
 				for (int l = 0; l < blockLines.length; l++) {
 					lineWords[l] = getLargestTextStreamWords(blockLines[l].getWords());
 					if (lineWords[l].length == 0)
@@ -566,10 +764,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						continue;
 					
 					//	assess line position and length (center alignment against surrounding column to catch short blocks)
-					int leftDist = (blockLines[l].bounds.left - blockParentColumnBounds.left);
-					lineIsFlushLeft[l] = ((leftDist * 25) < page.getImageDPI());
-					int rightDist = (blockParentColumnBounds.right - blockLines[l].bounds.right);
-					lineIsFlushRight[l] = ((rightDist * 25) < page.getImageDPI());
+					lineLeftColDists[l] = (blockLines[l].bounds.left - blockParentColumnBounds.left);
+					lineRightColDists[l] = (blockParentColumnBounds.right - blockLines[l].bounds.right);
+					lineLeftBlockDists[l] = (blockLines[l].bounds.left - pageBlocks[b].bounds.left);
+					lineRightBlockDists[l] = (pageBlocks[b].bounds.right - blockLines[l].bounds.right);
 					
 					//	no use looking for headings more than 3 lines down the block
 					if (l == 3)
@@ -588,7 +786,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						continue;
 					
 					//	check against to-visualize style
-					if (hsd.matches(blockLines[l], lineWords[l], l, blockLines.length, lineIsFlushLeft[l], lineIsFlushRight[l]))
+					if (hsd.matches(page, blockLines[l], lineWords[l], l, blockLines.length, lineLeftColDists[l], lineRightColDists[l], lineLeftBlockDists[l], lineRightBlockDists[l], log))
 						lineHeadingStyles[l] = hsd;
 				}
 				
@@ -614,9 +812,59 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					shapes.add(new Rectangle2D.Float(hb.left, hb.top, hb.getWidth(), hb.getHeight()));
 				}
 			}
+			
+			//	display matching protocol
+			displayAttributeExtractionLog(docId, this.parameterNamePrefix, logBaos.toByteArray());
+		}
+		private void addInLineHeadingShapes(ImPage page, DocumentStyle docStyle, ArrayList shapes, ImDocumentMarkupPanel idmp) {
+			int group = Integer.parseInt(this.parameterNamePrefix.substring("style.heading.inLine.".length()));
+			InLineHeadingStyle ilhs = InLineHeadingStyle.getInLineHeadingStyle(group, docStyle.getSubset("style.heading.inLine"));
+			if (ilhs == null)
+				return;
+			
+			//	set up match logging
+			String docId = ((idmp == null) ? ((page.getDocument() == null) ? null : page.getDocument().docId) : idmp.document.docId);
+			ByteArrayOutputStream logBaos = new ByteArrayOutputStream();
+			PrintStream log;
+			try {
+				log = new PrintStream(logBaos, true, "UTF-8");
+			}
+			catch (UnsupportedEncodingException uee) {
+				log = new PrintStream(logBaos, true); // never gonna happen, but Java is dumb !!!
+			}
+			
+			//	work block by block
+			ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+			for (int b = 0; b < pageBlocks.length; b++) {
+				ImRegion[] blockLines = pageBlocks[b].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+				if (blockLines.length == 0)
+					continue;
+				
+				//	work line by line
+				Arrays.sort(blockLines, ImUtils.topDownOrder);
+				for (int l = 0; l < blockLines.length; l++) {
+					ImWord[] lineWords = blockLines[l].getWords();
+					if (lineWords.length == 0)
+						continue;
+					Arrays.sort(lineWords, ImUtils.textStreamOrder);
+					ImWord inLineHeadingEnd = ilhs.getMatchEnd(page, blockLines[l], lineWords, blockLines.length, log);
+					if (inLineHeadingEnd == null)
+						continue;
+					for (int w = 0; w < lineWords.length; w++)
+						if (lineWords[w] == inLineHeadingEnd) {
+							BoundingBox hb = ImLayoutObject.getAggregateBox(lineWords, 0, (w+1));
+							shapes.add(new Rectangle2D.Float(hb.left, hb.top, hb.getWidth(), hb.getHeight()));
+							break;
+						}
+				}
+			}
+			
+			//	display matching protocol
+			displayAttributeExtractionLog(docId, this.parameterNamePrefix, logBaos.toByteArray());
 		}
 		private void addCaptionShapes(ImPage page, DocumentStyle style, ArrayList shapes) {
 			boolean startIsBold = style.getBooleanProperty("startIsBold", false);
+			boolean startIsSeparateLine = style.getBooleanProperty("startIsSeparateLine", false);
 			int fontSize = style.getIntProperty("fontSize", -1);
 			int minFontSize = style.getIntProperty("minFontSize", ((fontSize == -1) ? 0 : fontSize));
 			int maxFontSize = style.getIntProperty("maxFontSize", ((fontSize == -1) ? 72 : fontSize));
@@ -641,7 +889,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 			ImRegion[] pageParagraphs = page.getRegions(ImRegion.PARAGRAPH_TYPE);
 			for (int b = 0; b < pageBlocks.length; b++) {
-				HashMap blockCaptionsByBounds = markBlockCaptions(null, pageBlocks[b], pageParagraphs, startPatterns, new CaptionStartPattern[0], minFontSize, maxFontSize, startIsBold, ProgressMonitor.silent);
+				HashMap blockCaptionsByBounds = markBlockCaptions(null, pageBlocks[b], pageParagraphs, startPatterns, new CaptionStartPattern[0], minFontSize, maxFontSize, startIsBold, startIsSeparateLine, ProgressMonitor.silent);
 				if (blockCaptionsByBounds == null)
 					continue;
 				for (Iterator cbit = blockCaptionsByBounds.keySet().iterator(); cbit.hasNext();) {
@@ -678,6 +926,77 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		private static final Color matchLineColor = Color.BLUE;
 		private static final BasicStroke matchLineStroke = new BasicStroke(3);
 		private static final Color matchFillColor = new Color(matchLineColor.getRed(), matchLineColor.getGreen(), matchLineColor.getBlue(), 64);
+		public void test(Properties paramGroup) {
+			if (!this.parameterNamePrefix.startsWith("style.heading."))
+				return; // TODO find other elements with match logging
+			if (attributeExtractionLogDisplay == null)
+				attributeExtractionLogDisplay = new AttributeExtractionLogDisplay();
+			attributeExtractionLogDisplay.setVisible(true);
+			attributeExtractionLogDisplay.getDialog().toFront();
+			//	actual content will come from display extension update in our case
+		}
+		
+		private static final Color attributeMatchLineColor = Color.BLUE;
+		private static final BasicStroke attributeMatchLineStroke = new BasicStroke(3);
+		private static final Color attributeMatchFillColor = new Color(attributeMatchLineColor.getRed(), attributeMatchLineColor.getGreen(), attributeMatchLineColor.getBlue(), 64);
+		
+		//	TODO any reasons to bind this to a plug-in instance ???
+		private static AttributeExtractionLogDisplay attributeExtractionLogDisplay = null;
+		private static void displayAttributeExtractionLog(String docId, String attribute, byte[] logBytes) {
+			if (attributeExtractionLogDisplay == null)
+				return;
+			String log;
+			try {
+				log = new String(logBytes, "UTF-8");
+			}
+			catch (UnsupportedEncodingException uee) {
+				log = new String(logBytes);
+			}
+			attributeExtractionLogDisplay.setLog(docId, attribute, log);
+		}
+		static void closeAttributeExtractionLogDisplay(String docId) {
+			if (attributeExtractionLogDisplay == null)
+				return;
+			if ((docId != null) && !docId.equals(attributeExtractionLogDisplay.docId))
+				return;
+			attributeExtractionLogDisplay.dispose();
+		}
+		private static class AttributeExtractionLogDisplay extends DialogPanel {
+			private String docId;
+			private JTextArea log = new JTextArea();
+			AttributeExtractionLogDisplay() {
+				super("Heading Style Match Log", false);
+				
+				JScrollPane logBox = new JScrollPane(this.log);
+				logBox.getHorizontalScrollBar().setUnitIncrement(50);
+				logBox.getHorizontalScrollBar().setBlockIncrement(500);
+				logBox.getVerticalScrollBar().setUnitIncrement(50);
+				logBox.getVerticalScrollBar().setBlockIncrement(500);
+				this.add(logBox, BorderLayout.CENTER);
+				
+				JButton close = new JButton("Close");
+				close.setBorder(BorderFactory.createRaisedBevelBorder());
+				close.addActionListener(new ActionListener() {
+					public void actionPerformed(ActionEvent ae) {
+						dispose();
+					}
+				});
+				this.add(close, BorderLayout.SOUTH);
+				
+				this.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+				this.setSize(600, 800);
+				this.setLocationRelativeTo(null);
+			}
+			public void dispose() {
+				attributeExtractionLogDisplay = null;
+				super.dispose();
+			}
+			void setLog(String docId, String attribute, String log) {
+				this.docId = docId;
+				this.setTitle("Attribute Extraction Log - " + attribute);
+				this.log.setText(log);
+			}
+		}
 	}
 	
 	private static class MarginParameterDescription extends ParameterDescription implements DisplayExtension {
@@ -830,11 +1149,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		//	we're only interested in captions
 		if (!CAPTION_TYPE.equals(annotation.getType()))
 			return;
+		if (annotation.hasAttribute(IN_LINE_OBJECT_MARKER_ATTRIBUTE))
+			return;
 		
 		//	add any sub caption starts ...
 		if (addPlateSubCaptionPatternStarts(annotation, this.captionStartPatterns, null))
 			
-			//	... and have citation handler process any findings (get called for reaction before us ...)
+			//	... and have citation handler process any findings (gets called for reaction before us ...)
 			this.captionCitationHandler.annotationAdded(annotation, idmp, allowPrompt);
 	}
 	
@@ -884,13 +1205,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				spm.setProgress((p * 100) / pages.length);
 				
 				//	get header areas (default to general page layout if page class layout not given)
-				String layoutPrefix;
-				if (p == 0)
-					layoutPrefix = "first.";
-				else if ((p % 2) == 0) // first page is odd, so we need to decide 1-based, not 0-based
-					layoutPrefix = "odd.";
-				else layoutPrefix = "even."; // first page is odd, so we need to decide 1-based, not 0-based
-				pageHeaderAreas[p] = docLayout.getBoxListProperty(("page." + layoutPrefix + "headerAreas"), docLayout.getBoxListProperty(("page.headerAreas"), null, pageImageDpi), pageImageDpi);
+				pageHeaderAreas[p] = docLayout.getBoxListProperty(("page.headerAreas"), null, pageImageDpi);
+				//	first page is odd, so we need to decide 1-based, not 0-based
+				pageHeaderAreas[p] = docLayout.getBoxListProperty(("page." + (((p % 2) == 0) ? "odd" : "even") + ".headerAreas"), pageHeaderAreas[p], pageImageDpi);
+				if (p == 0) // get header areas for first page exclusive
+					pageHeaderAreas[p] = docLayout.getBoxListProperty("page.first.headerAreas", pageHeaderAreas[p], pageImageDpi);
 				
 				//	go collect header areas
 				pageData[p] = getPageData(pages[p], pageImageDpi, pageHeaderAreas[p], spm);
@@ -929,14 +1248,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			//	get page number area and font properties (default to general page layout if page class layout not given)
 			String layoutPrefix;
 			if (p == 0)
-				layoutPrefix = "first.";
+				layoutPrefix = "first";
 			else if ((p % 2) == 0) // first page is odd, so we need to decide 1-based, not 0-based
-				layoutPrefix = "odd.";
-			else layoutPrefix = "even."; // first page is odd, so we need to decide 1-based, not 0-based
-			BoundingBox pageNumberArea = docLayout.getBoxProperty(("page." + layoutPrefix + "number.area"), docLayout.getBoxProperty(("page.number.area"), null, pageImageDpi), pageImageDpi);
-			int pageNumberFontSize = docLayout.getIntProperty(("page." + layoutPrefix + "number.fontSize"), docLayout.getIntProperty(("page.number.fontSize"), -1));
-			boolean pageNumberIsBold = docLayout.getBooleanProperty(("page." + layoutPrefix + "number.isBold"), docLayout.getBooleanProperty(("page.number.isBold"), false));
-			pageNumberPartPattern = docLayout.getProperty(("page." + layoutPrefix + "number.pattern"), docLayout.getProperty(("page.number.pattern"), pageNumberPartPattern));
+				layoutPrefix = "odd";
+			else layoutPrefix = "even"; // first page is odd, so we need to decide 1-based, not 0-based
+			BoundingBox pageNumberArea = docLayout.getBoxProperty(("page." + layoutPrefix + ".number.area"), docLayout.getBoxProperty(("page.number.area"), null, pageImageDpi), pageImageDpi);
+			int pageNumberFontSize = docLayout.getIntProperty(("page." + layoutPrefix + ".number.fontSize"), docLayout.getIntProperty(("page.number.fontSize"), -1));
+			boolean pageNumberIsBold = docLayout.getBooleanProperty(("page." + layoutPrefix + ".number.isBold"), docLayout.getBooleanProperty(("page.number.isBold"), false));
+			pageNumberPartPattern = docLayout.getProperty(("page." + layoutPrefix + ".number.pattern"), docLayout.getProperty(("page.number.pattern"), pageNumberPartPattern));
 			
 			//	words from page top candidates
 			TreeSet topWords = new TreeSet(String.CASE_INSENSITIVE_ORDER);
@@ -1103,8 +1422,408 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setMaxProgress(40);
 		this.tableDetectorProvider.detectTables(doc, tableLayout, null, spm);
 		
+		//	split main text blocks off images if document born digital
+		if (documentBornDigital) {
+			spm.setStep(" - splitting main text blocks off images");
+			spm.setBaseProgress(40);
+			spm.setMaxProgress(45);
+			
+			//	find main text stream(s) of document (we need to record them all in case there is a break somewhere in the middle)
+			ImWord[] docTextStreamHeads = doc.getTextStreamHeads();
+			HashSet docMainTextStreamIDs = new HashSet();
+			for (int h = 0; h < docTextStreamHeads.length; h++) {
+				if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(docTextStreamHeads[h].getTextStreamType()))
+					continue;
+				HashSet textStreamPageIDs = new HashSet();
+				for (ImWord imw = docTextStreamHeads[h]; imw != null; imw = imw.getNextWord()) {
+					if ((imw.getNextWord() == null) || (imw.pageId != imw.getNextWord().pageId))
+						textStreamPageIDs.add(new Integer(imw.pageId));
+				}
+				if (textStreamPageIDs.size() > Math.max(Math.min(3, pages.length), (pages.length / 5)))
+					docMainTextStreamIDs.add(docTextStreamHeads[h].getTextStreamId());
+			}
+			
+			//	work page by page (cannot go parallel because text stream chaining needs to work linear)
+			for (int p = 0; p < pages.length; p++) {
+				spm.setProgress((p * 100) / pages.length);
+				ImRegion[] pageImages = pages[p].getRegions(ImRegion.IMAGE_TYPE);
+				if (pageImages.length == 0)
+					continue;
+				if (pageImages.length > 1)
+					Arrays.sort(pageImages, ImUtils.topDownOrder);
+				ImSupplement[] pageSupplements = pages[p].getSupplements();
+				for (int i = 0; i < pageImages.length; i++) {
+					pm.setInfo("Investigating image region at " + pageImages[i].pageId + "@" + pageImages[i].bounds);
+					
+					//	get words
+					ImWord[] imageWords = pageImages[i].getWords();
+					if (imageWords.length == 0) {
+						pm.setInfo(" ==> no words enclosed");
+						continue; // nothing to split
+					}
+					pm.setInfo(" - got " + imageWords.length + " enclosed words");
+					
+					//	get bounds of actual figure image(s) and graphics objects
+					Figure[] imageFigures = ImSupplement.getFiguresIn(pageSupplements, pageImages[i].bounds);
+					if (imageFigures.length == 0) {
+						pm.setInfo(" ==> figure supplements not found");
+						continue; // nothing to split around
+					}
+					BoundingBox imageFigureBounds;
+					if (imageFigures.length == 1)
+						imageFigureBounds = imageFigures[0].getBounds();
+					else {
+						BoundingBox[] figureBounds = new BoundingBox[imageFigures.length];
+						for (int f = 0; f < imageFigures.length; f++)
+							figureBounds[f] = imageFigures[f].getBounds();
+						imageFigureBounds = BoundingBox.aggregate(figureBounds);
+					}
+					pm.setInfo(" - got " + imageFigures.length + " figure supplements spanning " + imageFigureBounds);
+					Graphics[] imageGraphics = ImSupplement.getGraphicsIn(pageSupplements, pageImages[i].bounds);
+					if (imageGraphics.length != 0) {
+						BoundingBox imageGraphicsBounds;
+						if (imageGraphics.length == 1)
+							imageGraphicsBounds =  imageGraphics[0].getBounds();
+						else {
+							BoundingBox[] graphicsBounds = new BoundingBox[imageGraphics.length];
+							for (int g = 0; g < imageGraphics.length; g++)
+								graphicsBounds[g] = imageGraphics[g].getBounds();
+							imageGraphicsBounds = BoundingBox.aggregate(graphicsBounds);
+						}
+						pm.setInfo(" - got " + imageGraphics.length + " graphics supplements spanning " + imageGraphicsBounds);
+						imageFigureBounds = imageFigureBounds.union(imageGraphicsBounds);
+						pm.setInfo(" - got figure and graphics supplements spanning " + imageFigureBounds);
+					}
+					
+					//	collect words lying inside and outside figures
+					ArrayList insideFigureWords = new ArrayList();
+					ArrayList outsideFigureWords = new ArrayList();
+					for (int w = 0; w < imageWords.length; w++) {
+						
+						//	outside aggregate figure bounds
+						if (!imageFigureBounds.overlaps(imageWords[w].bounds)) {
+							outsideFigureWords.add(imageWords[w]);
+							continue;
+						}
+						
+						//	with single figure, the bounds mark a compact and continuous area
+						if (imageFigures.length == 1) {
+							insideFigureWords.add(imageWords[w]);
+							continue;
+						}
+						
+						//	test against individual figures and graphics
+						boolean wordOverlapsFigure = false;
+						if (!wordOverlapsFigure)
+							for (int f = 0; f < imageFigures.length; f++) {
+								if (imageWords[w].bounds.bottom <= imageFigures[f].getBounds().top)
+									continue;
+								if (imageFigures[f].getBounds().bottom <= imageWords[w].bounds.top)
+									continue;
+								wordOverlapsFigure = true;
+								break;
+							}
+						if (!wordOverlapsFigure)
+							for (int g = 0; g < imageGraphics.length; g++) {
+								if (imageWords[w].bounds.bottom <= imageGraphics[g].getBounds().top)
+									continue;
+								if (imageGraphics[g].getBounds().bottom <= imageWords[w].bounds.top)
+									continue;
+								wordOverlapsFigure = true;
+								break;
+							}
+						(wordOverlapsFigure ? insideFigureWords : outsideFigureWords).add(imageWords[w]);
+					}
+					
+					//	anything to split off?
+					if (outsideFigureWords.isEmpty()) {
+						pm.setInfo(" ==> all words located inside figure supplements");
+						continue;
+					}
+					pm.setInfo(" - got " + insideFigureWords.size() + " words inside figure supplements, " + outsideFigureWords.size() + " outside");
+					
+					/* TODO check if words outside image actually constitute text blocks:
+					 * - homogeneous font size
+					 * - alignment in proper lines (as opposed to scattered words)
+					 * - word distances similar to main text (as opposed to scattered words)
+					 * - word lengths beyond index letters
+					 */
+					
+					//	run blocking on image of figure region, but only render words, not figures
+					BufferedImage bi = new BufferedImage(pageImages[i].bounds.getWidth(), pageImages[i].bounds.getHeight(), BufferedImage.TYPE_BYTE_BINARY);
+					Graphics2D gr = bi.createGraphics();
+					gr.setColor(Color.WHITE);
+					gr.fillRect(0, 0, bi.getWidth(), bi.getHeight());
+					for (int w = 0; w < imageWords.length; w++)
+						for (int x = Math.max(0, (imageWords[w].bounds.left - pageImages[i].bounds.left)); x < Math.min(bi.getWidth(), (imageWords[w].bounds.right - pageImages[i].bounds.left)); x++) {
+							for (int y = Math.max(0, (imageWords[w].bounds.top - pageImages[i].bounds.top)); y < Math.min(bi.getHeight(), (imageWords[w].bounds.bottom - pageImages[i].bounds.top)); y++)
+								bi.setRGB(x, y, 0xFF000000);
+						}
+					AnalysisImage ai = Imaging.wrapImage(bi, null);
+					Region imageRegion = PageImageAnalysis.getPageRegion(ai, pages[p].getImageDPI(), Short.MAX_VALUE, (pages[p].getImageDPI() / 5), false, pm);
+					System.out.println(" - got " + imageRegion.getSubRegionCount() + " initial blocks inside image region:");
+					ArrayList imageBlocks = new ArrayList();
+					imageBlocks.add(imageRegion);
+					for (int b = 0; b < imageBlocks.size(); b++) {
+						imageRegion = ((Region) imageBlocks.get(b));
+						System.out.println("   - " + imageRegion.getBoundingBox());
+						if (imageRegion.isAtomic())
+							continue;
+						for (int r = 0; r < imageRegion.getSubRegionCount(); r++) {
+							System.out.println("     - " + imageRegion.getSubRegion(r).getBoundingBox());
+							imageBlocks.add(imageRegion.getSubRegion(r));
+						}
+						imageBlocks.remove(b--); // we've replaced this one with its sub regions
+					}
+					pm.setInfo(" - got " + imageBlocks.size() + " blocks inside image region");
+					if (imageBlocks.isEmpty())
+						continue;
+					
+					//	classify blocks into text and image regions, and translate bounding boxes
+					ArrayList imageTextBlockBoxes = new ArrayList();
+					ArrayList imageLabelBlockBoxes = new ArrayList();
+					pm.setInfo(" - classifying image blocks:");
+					for (int b = 0; b < imageBlocks.size(); b++) {
+						imageRegion = ((Region) imageBlocks.get(b));
+						BoundingBox imageBlockBox = imageRegion.getBoundingBox().translate(pageImages[i].bounds.left, pageImages[i].bounds.top);
+						pm.setInfo("   - " + imageBlockBox);
+						
+						//	outside aggregate figure bounds
+						if (!imageFigureBounds.overlaps(imageBlockBox)) {
+							imageTextBlockBoxes.add(imageBlockBox);
+							pm.setInfo("      ==> text block");
+							continue;
+						}
+						
+						//	with single figure, the bounds mark a compact and continuous area
+						if (imageFigures.length == 1) {
+							imageLabelBlockBoxes.add(imageBlockBox);
+							pm.setInfo("      ==> image block");
+							continue;
+						}
+						
+						//	test against individual figures
+						boolean blockOverlapsFigure = false;
+						for (int f = 0; f < imageFigures.length; f++) {
+							if (imageBlockBox.bottom <= imageFigures[f].getBounds().top)
+								continue;
+							if (imageFigures[f].getBounds().bottom <= imageBlockBox.top)
+								continue;
+							blockOverlapsFigure = true;
+							break;
+						}
+						(blockOverlapsFigure ? imageLabelBlockBoxes : imageTextBlockBoxes).add(imageBlockBox);
+						pm.setInfo("      ==> " + (blockOverlapsFigure ? "image" : "text") + " block");
+					}
+					
+					//	anything to split?
+					if (imageTextBlockBoxes.isEmpty())
+						continue;
+					if (imageTextBlockBoxes.size() > 1)
+						Collections.sort(imageTextBlockBoxes, new Comparator() {
+							public int compare(Object obj1, Object obj2) {
+								return (((BoundingBox) obj1).top - ((BoundingBox) obj2).top);
+							}
+						});
+					
+					//	wrap reduced image boxes around content of space between text blocks
+					ArrayList reducedImageBoxes = new ArrayList();
+					for (int tb = 0; tb <= imageTextBlockBoxes.size(); tb++) {
+						int imageBoxTop = ((tb == 0) ? pageImages[i].bounds.top : ((BoundingBox) imageTextBlockBoxes.get(tb-1)).bottom);
+						int imageBoxBottom = ((tb == imageTextBlockBoxes.size()) ? pageImages[i].bounds.bottom : ((BoundingBox) imageTextBlockBoxes.get(tb)).top);
+						int ibLeft = pageImages[i].bounds.right;
+						int ibRight = pageImages[i].bounds.left;
+						int ibTop = imageBoxBottom;
+						int ibBottom = imageBoxTop;
+						for (int f = 0; f < imageFigures.length; f++) {
+							BoundingBox imageFigureBox = imageFigures[f].getBounds();
+							if (imageBoxBottom <= imageFigureBox.top)
+								continue;
+							if (imageFigureBox.bottom <= imageBoxTop)
+								continue;
+							ibLeft = Math.min(ibLeft, imageFigureBox.left);
+							ibRight = Math.max(ibRight, imageFigureBox.right);
+							ibTop = Math.min(ibTop, imageFigureBox.top);
+							ibBottom = Math.max(ibBottom, imageFigureBox.bottom);
+						}
+						for (int lb = 0; lb < imageLabelBlockBoxes.size(); lb++) {
+							BoundingBox labelBlockBox = ((BoundingBox) imageLabelBlockBoxes.get(lb));
+							if (imageBoxBottom <= labelBlockBox.top)
+								continue;
+							if (labelBlockBox.bottom <= imageBoxTop)
+								continue;
+							ibLeft = Math.min(ibLeft, labelBlockBox.left);
+							ibRight = Math.max(ibRight, labelBlockBox.right);
+							ibTop = Math.min(ibTop, labelBlockBox.top);
+							ibBottom = Math.max(ibBottom, labelBlockBox.bottom);
+						}
+						if ((ibLeft < ibRight) && (ibTop < ibBottom))
+							reducedImageBoxes.add(new BoundingBox(ibLeft, ibRight, ibTop, ibBottom));
+					}
+					
+					//	remove image region
+					pages[p].removeRegion(pageImages[i]);
+					
+					//	mark reduced image region(s)
+					for (int ri = 0; ri < reducedImageBoxes.size(); ri++) {
+						ImRegion reducedImage = new ImRegion(pages[p], ((BoundingBox) reducedImageBoxes.get(ri)), ImRegion.IMAGE_TYPE);
+						pm.setInfo(" ==> marked reduced image at " + reducedImage.bounds);
+					}
+					
+					//	mark text blocks
+					ImWord imageFirstWord = null;
+					ImWord imageLastWord = null;
+					for (int b = 0; b < imageTextBlockBoxes.size(); b++) {
+						ImRegion textBlock = this.regionActionProvider.markBlock(pages[p], ((BoundingBox) imageTextBlockBoxes.get(b)));
+						if (textBlock == null)
+							continue;
+						pm.setInfo(" ==> marked text block at " + textBlock.bounds);
+						ImWord[] blockWords = textBlock.getWords();
+						Arrays.sort(blockWords, ImUtils.textStreamOrder);
+						if (imageFirstWord == null) {
+							imageFirstWord = blockWords[0];
+							imageFirstWord.setTextStreamType(ImWord.TEXT_STREAM_TYPE_MAIN_TEXT);
+						}
+						if (imageLastWord != null) {
+							imageLastWord.setNextWord(blockWords[0]);
+							imageLastWord.setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+						}
+						imageLastWord = blockWords[blockWords.length-1];
+					}
+					if ((imageFirstWord == null) || (imageLastWord == null))
+						continue; // failed to mark any block for some reason
+					pm.setInfo(" - first text block word is " + imageFirstWord.getString() + " at " + imageFirstWord.getLocalID());
+					pm.setInfo(" - last text block word is " + imageLastWord.getString() + " at " + imageLastWord.getLocalID());
+					
+					//	find predecessor and successor words of image region (for linking in text blocks)
+					ImWord imagePredecessor = null;
+					ImWord imageSuccessor = null;
+					pm.setInfo(" - seeking predecessor for " + imageFirstWord.getString() + " at " + imageFirstWord.getLocalID());
+					for (int lp = p; lp >= 0; lp--) {
+						ImWord[] textStreamHeads = pages[lp].getTextStreamHeads();
+						pm.setInfo("   - got " + textStreamHeads.length + " text stream heads in page " + pages[lp].pageId);
+						for (int h = 0; h < textStreamHeads.length; h++) {
+							if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(textStreamHeads[h].getTextStreamType()))
+								continue; // we're only after main text
+							if (!docMainTextStreamIDs.contains(textStreamHeads[h].getTextStreamId()))
+								continue; // skip over parentheses, etc., which only run for one or two pages
+							if ((lp == p) && (pageImages[i].bounds.includes(textStreamHeads[h].bounds, true)))
+								continue; // no use checking the head of the labels we are trying to splice in
+							
+							//	same page, use text stream head if above or to left of image, use its predecessor otherwise
+							pm.setInfo("   - checking " + textStreamHeads[h].getString() + " at " + textStreamHeads[h].getLocalID());
+							if (textStreamHeads[h].pageId == pages[p].pageId) {
+								ImRegion[] tshBlocks = pages[p].getRegionsIncluding(ImRegion.BLOCK_ANNOTATION_TYPE, textStreamHeads[h].bounds, true);
+								BoundingBox tshAlignmentCheckBox = ((tshBlocks.length == 0) ? textStreamHeads[h].bounds : tshBlocks[0].bounds);
+								if (pageImages[i].bounds.right < tshAlignmentCheckBox.left) {
+									if (textStreamHeads[h].getPreviousWord() == null) {
+										pm.setInfo("     ==> in block " + tshAlignmentCheckBox + " to right of image, and no predecessor");
+										continue; // this one is to the right on same page, and it starts there
+									}
+									else {
+										imagePredecessor  = textStreamHeads[h].getPreviousWord();
+										pm.setInfo("     ==> in block " + tshAlignmentCheckBox + " to right of image, using predecessor " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID());
+									}
+								}
+								else if ((pageImages[i].bounds.left < tshAlignmentCheckBox.right) && (pageImages[i].bounds.bottom < tshAlignmentCheckBox.top)) {
+									if (textStreamHeads[h].getPreviousWord() == null) {
+										pm.setInfo("     ==> in block " + tshAlignmentCheckBox + " below image, and no predecessor");
+										continue; // this one is below on same page
+									}
+									else {
+										imagePredecessor  = textStreamHeads[h].getPreviousWord();
+										pm.setInfo("     ==> in block " + tshAlignmentCheckBox + " below image, using predecessor " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID());
+									}
+								}
+								else {
+									imagePredecessor = textStreamHeads[h];
+									pm.setInfo("   - starting with " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID() + ", scanning towards image");
+									BoundingBox nextImwAlignmentCheckBox = tshAlignmentCheckBox;
+									while (imagePredecessor.getNextWord() != null) {
+										ImWord nextImw = imagePredecessor.getNextWord();
+										if (nextImw.pageId == pages[p].pageId) {
+											if (!nextImwAlignmentCheckBox.includes(nextImw.bounds, true)) {
+												ImRegion[] nextImwBlocks = pages[p].getRegionsIncluding(ImRegion.BLOCK_ANNOTATION_TYPE, nextImw.bounds, true);
+												nextImwAlignmentCheckBox = ((nextImwBlocks.length == 0) ? nextImw.bounds : nextImwBlocks[0].bounds);
+											}
+											if (pageImages[i].bounds.right < nextImwAlignmentCheckBox.left) {
+												pm.setInfo("     ==> stopped at " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID() + ", successor " + nextImw.getString() + " at " + nextImw.getLocalID() + " in block " + nextImwAlignmentCheckBox + " to right of image");
+												break; // successor is to the right on same page, we're there
+											}
+											if ((pageImages[i].bounds.left < nextImwAlignmentCheckBox.right) && (pageImages[i].bounds.bottom < nextImwAlignmentCheckBox.top)) {
+												pm.setInfo("     ==> stopped at " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID() + ", successor " + nextImw.getString() + " at " + nextImw.getLocalID() + " in block " + nextImwAlignmentCheckBox + " below image");
+												break; // successor is below on same page, we're there
+											}
+										}
+										else if (nextImw.pageId != pages[p].pageId) {
+											pm.setInfo("     ==> stopped at " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID() + ", successor " + nextImw.getString() + " at " + nextImw.getLocalID() + " on different page");
+											break; // successor is on subsequent page, we're there
+										}
+										imagePredecessor = imagePredecessor.getNextWord();
+									}
+								}
+							}
+							
+							//	preceding page, follow text stream until it reaches or jumps over current page (cannot enter current page before image, we would have found that word above)
+							else {
+								imagePredecessor  = textStreamHeads[h];
+								pm.setInfo("   - starting with " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID() + ", scanning towards image");
+								while ((imagePredecessor.getNextWord() != null) && (imagePredecessor.getNextWord().pageId == pages[lp].pageId))
+									imagePredecessor = imagePredecessor.getNextWord();
+								pm.setInfo("     ==> stopped at " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID());
+								if (imagePredecessor.getNextWord() == null)
+									pm.setInfo("         reached end of text stream");
+								else pm.setInfo("         successor " + imagePredecessor.getNextWord().getString() + " at " + imagePredecessor.getNextWord().getLocalID() + " below or to right of image, or on subsequent page");
+							}
+							if (imagePredecessor != null) 
+								break; // no need to look any further
+						}
+						if (imagePredecessor != null) {
+							imageSuccessor = imagePredecessor.getNextWord();
+							pm.setInfo("   ==> found predecessor of " + imageFirstWord.getString() + " at " + imageFirstWord.getLocalID() + ": " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID());
+							break; // no need to look any further
+						}
+					}
+					if (imagePredecessor == null) {
+						pm.setInfo(" - seeking successor for " + imageLastWord.getString() + " at " + imageLastWord.getLocalID());
+						for (int lp = p; lp < pages.length; lp++) {
+							ImWord[] textStreamHeads = pages[lp].getTextStreamHeads();
+							for (int h = 0; h < textStreamHeads.length; h++) {
+								if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(textStreamHeads[h].getTextStreamType()))
+									continue; // we're only after main text
+								if (!docMainTextStreamIDs.contains(textStreamHeads[h].getTextStreamId()))
+									continue; // skip over parentheses, etc., which only run for one or two pages
+								if ((lp == p) && (pageImages[i].bounds.includes(textStreamHeads[h].bounds, true)))
+									continue; // no use checking the head of the labels we are trying to splice in
+								
+								//	we can simply use this one (would have found it as a predecessor above if it wasn't in the right position)
+								imageSuccessor  = textStreamHeads[h];
+								break;
+							}
+							if (imageSuccessor != null) {
+								pm.setInfo("   ==> found successor of " + imageLastWord.getString() + " at " + imageLastWord.getLocalID() + ": " + imageSuccessor.getString() + " at " + imageSuccessor.getLocalID());
+								break; // no need to look any further
+							}
+						}
+					}
+					
+					//	splice text blocks into main text stream
+					if (imagePredecessor != null) {
+						pm.setInfo(" - found predecessor of " + imageFirstWord.getString() + " at " + imageFirstWord.getLocalID() + ": " + imagePredecessor.getString() + " at " + imagePredecessor.getLocalID());
+						imagePredecessor.setNextWord(imageFirstWord);
+						imagePredecessor.setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+					}
+					if (imageSuccessor != null) {
+						pm.setInfo(" - found successor of " + imageLastWord.getString() + " at " + imageLastWord.getLocalID() + ": " + imageSuccessor.getString() + " at " + imageSuccessor.getLocalID());
+						imageLastWord.setNextWord(imageSuccessor);
+						imageLastWord.setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+					}
+				}
+			}
+		}
+		
 		//	detect artifacts (blocks with word coverage below 10%, only for scanned documents)
-		if (!documentBornDigital) {
+		else {
 			spm.setStep(" - detecting OCR artifacts in images");
 			spm.setBaseProgress(40);
 			spm.setMaxProgress(45);
@@ -1151,11 +1870,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		//	detect caption paragraphs
 		//	TODO allow whole-block multi-paragraph captions via template parameter (default: false)
 		spm.setStep(" - detecting captions");
-		spm.setBaseProgress(documentBornDigital ? 40 : 45);
+		spm.setBaseProgress(45);
 		spm.setMaxProgress(50);
 		final HashMap[] pageCaptionsByBounds = new HashMap[pages.length];
 		Arrays.fill(pageCaptionsByBounds, null);
 		final boolean captionStartIsBold = docLayout.getBooleanProperty("caption.startIsBold", false);
+		final boolean captionStartIsSeparateLine = docLayout.getBooleanProperty("caption.startIsSeparateLine", false);
 		final int captionFontSize = docLayout.getIntProperty("caption.fontSize", -1);
 		final int captionMinFontSize = docLayout.getIntProperty("caption.minFontSize", ((captionFontSize == -1) ? 0 : captionFontSize));
 		final int captionMaxFontSize = docLayout.getIntProperty("caption.maxFontSize", ((captionFontSize == -1) ? 72 : captionFontSize));
@@ -1189,7 +1909,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				ImRegion[] pageBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 				ImRegion[] pageParagraphs = pages[pg].getRegions(ImRegion.PARAGRAPH_TYPE);
 				for (int b = 0; b < pageBlocks.length; b++) {
-					HashMap blockCaptionsByBounds = markBlockCaptions(doc, pageBlocks[b], pageParagraphs, captionStartPatterns, DocumentStructureDetectorProvider.this.captionStartPatterns, captionMinFontSize, captionMaxFontSize, captionStartIsBold, spm);
+					HashMap blockCaptionsByBounds = markBlockCaptions(doc, pageBlocks[b], pageParagraphs, captionStartPatterns, DocumentStructureDetectorProvider.this.captionStartPatterns, captionMinFontSize, captionMaxFontSize, captionStartIsBold, captionStartIsSeparateLine, spm);
 					if (blockCaptionsByBounds != null) {
 						if (pageCaptionsByBounds[pg] == null)
 							pageCaptionsByBounds[pg] = new HashMap();
@@ -1210,6 +1930,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setStep(" - detecting footnotes");
 		spm.setBaseProgress(50);
 		spm.setMaxProgress(55);
+		final boolean footnotesAreBlocks = docLayout.getBooleanProperty("footnote.separateBlock", false);
 		final int footnoteFontSize = docLayout.getIntProperty("footnote.fontSize", -1);
 		final int footnoteMinFontSize = docLayout.getIntProperty("footnote.minFontSize", ((footnoteFontSize == -1) ? 0 : footnoteFontSize));
 		final int footnoteMaxFontSize = docLayout.getIntProperty("footnote.maxFontSize", ((footnoteFontSize == -1) ? 72 : footnoteFontSize));
@@ -1226,54 +1947,52 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			public void doFor(int pg) throws Exception {
 				spm.setProgress((pg * 100) / pages.length);
 				BoundingBox footnoteArea = docLayout.getBoxProperty("footnote.area", pages[pg].bounds, pageImageDpi);
-				ImRegion[] pageParagraphs = pages[pg].getRegions(ImRegion.PARAGRAPH_TYPE);
-				boolean newFootnoteFound;
-				do {
-					newFootnoteFound = false;
-					for (int p = 0; p < pageParagraphs.length; p++) {
-						if (!footnoteArea.includes(pageParagraphs[p].bounds, false))
-							continue;
-						ImWord[] paragraphWords = getLargestTextStreamWords(pageParagraphs[p].getWords());
+				ImRegion[] pageBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+				Arrays.sort(pageBlocks, Collections.reverseOrder(ImUtils.topDownOrder)); // sort bottom-up
+				boolean[] nonFootnoteBelow = new boolean[pages[pg].bounds.right];
+				Arrays.fill(nonFootnoteBelow, false);
+				for (int b = 0; b < pageBlocks.length; b++) {
+					if (!footnoteArea.overlaps(pageBlocks[b].bounds))
+						continue;
+					if (footnotesAreBlocks && !footnoteArea.includes(pageBlocks[b].bounds, false))
+						continue;
+					spm.setInfo("Testing paragraphs in " + pageBlocks[b].bounds + " on page " + pages[pg].pageId + " for footnotes");
+					
+					ImRegion[] blockParagraphs = pages[pg].getRegionsInside(ImRegion.PARAGRAPH_TYPE, pageBlocks[b].bounds, false);
+					Arrays.sort(blockParagraphs, Collections.reverseOrder(ImUtils.topDownOrder)); // sort bottom-up
+					for (int p = 0; p < blockParagraphs.length; p++) {
+						if (!footnoteArea.includes(blockParagraphs[p].bounds, false))
+							break; // no footnote to come above non-footnote (we're going through them paragraphs bottom-up)
+						ImWord[] paragraphWords = getLargestTextStreamWords(blockParagraphs[p].getWords());
 						if (paragraphWords.length == 0)
 							continue;
 						Arrays.sort(paragraphWords, ImUtils.textStreamOrder);
 						if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(paragraphWords[0].getTextStreamType()))
 							continue;
-						spm.setInfo("Testing paragraph " + pageParagraphs[p].bounds + " on page " + pages[pg].pageId + " for footnote");
-						boolean nonFootnoteBelow = false;
-						for (int cp = 0; cp < pageParagraphs.length; cp++) {
-							if (cp == p)
-								continue;
-							if ((pageParagraphs[p].bounds.right < pageParagraphs[cp].bounds.left) || (pageParagraphs[cp].bounds.right < pageParagraphs[p].bounds.left))
-								continue;
-							if (pageParagraphs[cp].bounds.bottom < pageParagraphs[p].bounds.top)
-								continue;
-							ImWord[] cRegionWords = pageParagraphs[cp].getWords();
-							if (cRegionWords.length == 0)
-								continue;
-							Arrays.sort(cRegionWords, ImUtils.textStreamOrder);
-							if (!ImWord.TEXT_STREAM_TYPE_FOOTNOTE.equals(cRegionWords[0].getTextStreamType()) && !ImWord.TEXT_STREAM_TYPE_PAGE_TITLE.equals(cRegionWords[0].getTextStreamType()) && !ImWord.TEXT_STREAM_TYPE_ARTIFACT.equals(cRegionWords[0].getTextStreamType())) {
-								nonFootnoteBelow = true;
+						spm.setInfo(" - testing paragraph " + blockParagraphs[p].bounds + " on page " + pages[pg].pageId + " for footnote");
+						boolean onlyFootnotesBelow = true;
+						for (int c =  pageBlocks[b].bounds.left; c < pageBlocks[b].bounds.right; c++)
+							if (nonFootnoteBelow[c]) {
+								onlyFootnotesBelow = false;
+								spm.setInfo(" ==> found non-footnote below");
 								break;
 							}
-						}
-						if (nonFootnoteBelow) {
-							spm.setInfo(" ==> non-footnote below");
-							continue;
-						}
-						if (isFootnote(pageParagraphs[p], paragraphWords, docFontSize, footnoteStartPatterns, footnoteMinFontSize, footnoteMaxFontSize)) {
+						if (onlyFootnotesBelow && isFootnote(blockParagraphs[p], paragraphWords, docFontSize, footnoteStartPatterns, footnoteMinFontSize, footnoteMaxFontSize)) {
 							spm.setInfo(" ==> footnote detected");
 							synchronized (doc) {
 								ImUtils.makeStream(paragraphWords, ImWord.TEXT_STREAM_TYPE_FOOTNOTE, FOOTNOTE_TYPE);
 								ImUtils.orderStream(paragraphWords, ImUtils.leftRightTopDownOrder);
 							}
-							newFootnoteFound = true;
 						}
-						else spm.setInfo(" ==> not a footnote");
+						else {
+							spm.setInfo(" ==> not a footnote");
+							Arrays.fill(nonFootnoteBelow, pageBlocks[b].bounds.left, pageBlocks[b].bounds.right, true);
+							break; // no footnote to come above non-footnote (we're going through them paragraphs bottom-up)
+						}
 					}
-				} while (newFootnoteFound);
+				}
 			}
-		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
+		}, pages.length, ((this.debug || DEBUG_IS_FOOTNOTE) ? 1 : (pages.length / 8)));
 		
 		//	TODO detect in-text notes (paragraphs whose average font size is significantly smaller than main text) 
 		
@@ -1428,10 +2147,296 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 		}
 		
-		//	de-hyphenate line breaks within paragraphs
-		spm.setStep(" - de-hyphenating line breaks");
+		//	re-merge words in super-stretched lines
+		spm.setStep(" - repairing super-streched lines");
 		spm.setBaseProgress(65);
 		spm.setMaxProgress(68);
+		Tokenizer tokenizer = ((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER));
+		for (int pg = 0; pg < pages.length; pg++) {
+			spm.setProgress((pg * 100) / pages.length);
+			spm.setInfo("Checking paragraphs on page " + pages[pg].pageId);
+			ImRegion[] pageBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+			for (int b = 0; b < pageBlocks.length; b++) {
+				
+				//	get block metrics
+				BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(pageBlocks[b]);
+				if (blockMetrics == null)
+					continue; // let's not stumble over some weird artifact
+				if (blockMetrics.lines.length < 5)
+					continue; // too small a basis for reliable analysis
+				
+				//	compute block averages
+				int blockWordCount = 0;
+				int blockWordLengthSum = 0;
+				int blockWordDistCount = 0;
+				int blockWordDistSum = 0;
+				CountingSet blockWordDists = new CountingSet(new TreeMap());
+				int blockWordDistCountNs = 0;
+				int blockWordDistSumNs = 0;
+				CountingSet blockWordDistsNs = new CountingSet(new TreeMap());
+				int blockWordDistCountSp = 0;
+				int blockWordDistSumSp = 0;
+				CountingSet blockWordDistsSp = new CountingSet(new TreeMap());
+				int blockWordDistCountNsp = 0;
+				int blockWordDistSumNsp = 0;
+				CountingSet blockWordDistsNsp = new CountingSet(new TreeMap());
+				for (int l = 0; l < blockMetrics.lines.length; l++) {
+					LineMetrics lm = blockMetrics.lines[l];
+					String wordString = lm.words[0].getString();
+					if (Gamta.isWord(wordString) || Gamta.isNumber(wordString)) {
+						blockWordCount++;
+						blockWordLengthSum += wordString.length();
+					}
+					for (int w = 1; w < lm.words.length; w++) {
+						wordString = lm.words[w].getString();
+						if (Gamta.isWord(wordString) || Gamta.isNumber(wordString)) {
+							blockWordCount++;
+							blockWordLengthSum += wordString.length();
+						}
+						blockWordDistCount++;
+						blockWordDistSum += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+						blockWordDists.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						TokenSequence cWordTokens = tokenizer.tokenize(lm.words[w-1].getString() + lm.words[w].getString());
+						if (cWordTokens.size() < 2) {
+							blockWordDistCountNs++;
+							blockWordDistSumNs += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+							blockWordDistsNs.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						}
+						else if (Gamta.insertSpace(lm.words[w-1].getString(), lm.words[w].getString())) {
+							blockWordDistCountSp++;
+							blockWordDistSumSp += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+							blockWordDistsSp.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						}
+						else {
+							blockWordDistCountNsp++;
+							blockWordDistSumNsp += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+							blockWordDistsNsp.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						}
+					}
+				}
+				if ((blockWordCount == 0) || (blockWordDistCount == 0))
+					continue; // nothing to work with here
+				int blockAvgWordLength = ((blockWordLengthSum + (blockWordCount / 2)) / blockWordCount);
+				int blockAvgWordDist = ((blockWordDistSum + (blockWordDistCount / 2)) / blockWordDistCount);
+				int blockAvgWordDistNs = ((blockWordDistCountNs == 0) ? -1 : ((blockWordDistSumNs + (blockWordDistCountNs / 2)) / blockWordDistCountNs));
+				int blockAvgWordDistSp = ((blockWordDistCountSp == 0) ? -1 : ((blockWordDistSumSp + (blockWordDistCountSp / 2)) / blockWordDistCountSp));
+				int blockAvgWordDistNsp = ((blockWordDistCountNsp == 0) ? -1 : ((blockWordDistSumNsp + (blockWordDistCountNsp / 2)) / blockWordDistCountNsp));
+				spm.setInfo(" - average word length in block is " + blockAvgWordLength + " (" + blockWordLengthSum + "/" + blockWordCount + ")");
+				spm.setInfo(" - average word distance in block is " + blockAvgWordDist + " (" + blockWordDistSum + "/" + blockWordDistCount + ")");
+				spm.setInfo(" - word distances in block are " + blockWordDists);
+				spm.setInfo(" - average non-separating word distance in block is " + blockAvgWordDistNs + " (" + blockWordDistSumNs + "/" + blockWordDistCountNs + ")");
+				spm.setInfo(" - non-separating word distances in block are " + blockWordDistsNs);
+				spm.setInfo(" - average spaced word distance in block is " + blockAvgWordDistSp + " (" + blockWordDistSumSp + "/" + blockWordDistCountSp + ")");
+				spm.setInfo(" - spaced word distances in block are " + blockWordDistsSp);
+				spm.setInfo(" - average non-spaced word distance in block is " + blockAvgWordDistNsp + " (" + blockWordDistSumNsp + "/" + blockWordDistCountNsp + ")");
+				spm.setInfo(" - non-spaced word distances in block are " + blockWordDistsNsp);
+				
+				//	work through lines
+				for (int l = 0; l < blockMetrics.lines.length; l++) {
+					LineMetrics lm = blockMetrics.lines[l];
+					if (lm.words.length < 2)
+						continue; // nothing to work with here
+					spm.setInfo(" - checking line " + ImUtils.getString(lm.words, true));
+					int lineWordCount = 0;
+					int lineWordLengthSum = 0;
+					int lineMinWordLength = Integer.MAX_VALUE;
+					int lineMaxWordLength = 0;
+					int lineWordDistCount = 0;
+					int lineWordDistSum = 0;
+					CountingSet lineWordDists = new CountingSet(new TreeMap());
+					int nonSeparatingWordPairCount = 0;
+//					int lineWordDistCountNs = 0;
+//					int lineWordDistSumNs = 0;
+//					CountingSet lineWordDistsNs = new CountingSet(new TreeMap());
+//					int lineWordDistCountSp = 0;
+//					int lineWordDistSumSp = 0;
+//					CountingSet lineWordDistsSp = new CountingSet(new TreeMap());
+//					int lineWordDistCountNsp = 0;
+//					int lineWordDistSumNsp = 0;
+//					CountingSet lineWordDistsNsp = new CountingSet(new TreeMap());
+					String wordString = lm.words[0].getString();
+					if (Gamta.isWord(wordString) || Gamta.isNumber(wordString)) {
+						lineWordCount++;
+						lineWordLengthSum += wordString.length();
+						lineMinWordLength = Math.min(lineMinWordLength, wordString.length());
+						lineMaxWordLength = Math.max(lineMaxWordLength, wordString.length());
+					}
+					for (int w = 1; w < lm.words.length; w++) {
+						wordString = lm.words[w].getString();
+						if (Gamta.isWord(wordString) || Gamta.isNumber(wordString)) {
+							lineWordCount++;
+							lineWordLengthSum += wordString.length();
+							lineMinWordLength = Math.min(lineMinWordLength, wordString.length());
+							lineMaxWordLength = Math.max(lineMaxWordLength, wordString.length());
+						}
+						lineWordDistCount++;
+						lineWordDistSum += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+						lineWordDists.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						TokenSequence cWordTokens = tokenizer.tokenize(lm.words[w-1].getString() + lm.words[w].getString());
+						if (cWordTokens.size() < 2) {
+							nonSeparatingWordPairCount++;
+//							lineWordDistCountNs++;
+//							lineWordDistSumNs += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+//							lineWordDistsNs.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						}
+						else if (Gamta.insertSpace(lm.words[w-1].getString(), lm.words[w].getString())) {
+//							lineWordDistCountSp++;
+//							lineWordDistSumSp += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+//							lineWordDistsSp.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						}
+						else {
+//							lineWordDistCountNsp++;
+//							lineWordDistSumNsp += (lm.words[w].bounds.left - lm.words[w-1].bounds.right);
+//							lineWordDistsNsp.add(new Integer(lm.words[w].bounds.left - lm.words[w-1].bounds.right));
+						}
+					}
+					if ((lineWordCount == 0) || (lineWordDistCount == 0))
+						continue; // nothing to work with here
+					int lineAvgWordLength = ((lineWordLengthSum + (lineWordCount / 2)) / lineWordCount);
+					int lineAvgWordDist = ((lineWordDistSum + (lineWordDistCount / 2)) / lineWordDistCount);
+//					int lineAvgWordDistNs = ((lineWordDistCountNs == 0) ? -1 : ((lineWordDistSumNs + (lineWordDistCountNs / 2)) / lineWordDistCountNs));
+//					int lineAvgWordDistSp = ((lineWordDistCountSp == 0) ? bAvgWordDistSp : ((lineWordDistSumSp + (lineWordDistCountSp / 2)) / lineWordDistCountSp));
+//					int lineAvgWordDistNsp = ((lineWordDistCountNsp == 0) ? bAvgWordDistNsp : ((lineWordDistSumNsp + (lineWordDistCountNsp / 2)) / lineWordDistCountNsp));
+					spm.setInfo("   - average word length is " + lineAvgWordLength + " (" + lineWordLengthSum + "/" + lineWordCount + "), minimum is " + lineMinWordLength + ", maximum is " + lineMaxWordLength);
+					spm.setInfo("   - average word distance is " + lineAvgWordDist + " (" + lineWordDistSum + "/" + lineWordDistCount + ")");
+					spm.setInfo("   - word distances are " + lineWordDists);
+//					spm.setInfo("   - average non-separating word distance is " + lineAvgWordDistNs + " (" + lineWordDistSumNs + "/" + lineWordDistCountNs + ")");
+//					spm.setInfo("   - non-separating word distances are " + lineWordDistsNs);
+//					spm.setInfo("   - average spaced word distance is " + lineAvgWordDistSp + " (" + lineWordDistSumSp + "/" + lineWordDistCountSp + ")");
+//					spm.setInfo("   - spaced word distances are " + lineWordDistsSp);
+//					spm.setInfo("   - average non-spaced word distance is " + lineAvgWordDistNsp + " (" + lineWordDistSumNsp + "/" + lineWordDistCountNsp + ")");
+//					spm.setInfo("   - non-spaced word distances are " + lineWordDistsNsp);
+					if (lineAvgWordLength > 2) {
+						spm.setInfo("   ==> words too long to be super-stretched (average)");
+						continue; // this one looks fine
+					}
+					if (lineMaxWordLength > 2) {
+						spm.setInfo("   ==> words too long to be super-stretched (maximum)");
+						continue; // this one looks fine
+					}
+					if (nonSeparatingWordPairCount == -1) {
+						spm.setInfo("   ==> no words or numbers separated by spaces");
+						continue; // nothing to check at all
+					}
+					
+					//	get range of word distance distribution
+					int lineMinWordDist = ((Integer) lineWordDists.first()).intValue();
+					int lineMaxWordDist = ((Integer) lineWordDists.last()).intValue();
+					spm.setInfo("   - minimum word distance is " + lineMinWordDist + ", maximum is " + lineMaxWordDist);
+					
+					//	check for uniform space below half of block average (URL lines, which have no spaces)
+					if ((lineMaxWordDist - lineMinWordDist) < (blockAvgWordDistSp - blockAvgWordDistNsp)) {
+						spm.setInfo("   --> checking for space-free line");
+						if (lineMinWordDist <= blockAvgWordDistNsp) {
+							spm.setInfo("   ==> too small minimum word distance");
+							continue; // in super-stretched line, no space would stay below block average
+						}
+					}
+					
+					//	check for large gap in distribution of non-separating word distances (multi-word lines)
+					else {
+						spm.setInfo("   --> seeking split in word distance distribution around maximum gap");
+						
+						//	find actual gap in word distance distribution
+						int splitMinWordDist = lineAvgWordDist;
+						int splitMinWordDistScore = 1;
+						for (Iterator spit = lineWordDists.iterator(); spit.hasNext();) {
+							Integer wordDist = ((Integer) spit.next());
+							if (wordDist.intValue() < splitMinWordDist)
+								continue; // only seek from average upwards
+							if (wordDist.intValue() == lineMaxWordDist)
+								break; // no use seeking beyond maximum ...
+							int wordDistScore = 0;
+							for (int wdl = (wordDist.intValue() + 1);; wdl++) {
+								if (lineWordDists.contains(new Integer(wdl)))
+									break;
+								wordDistScore++;
+							}
+							spm.setInfo("     - score for gap above " + wordDist + " is " + wordDistScore);
+							if (splitMinWordDistScore < wordDistScore) {
+								spm.setInfo("     ==> new best split pivot");
+								splitMinWordDist = wordDist.intValue();
+								splitMinWordDistScore = wordDistScore;
+							}
+						}
+						
+						//	split word distance distribution
+						spm.setInfo("     --> splitting word distance distribution around gap above " + splitMinWordDist);
+						int belowAvgWordDistCount = 0;
+						int maxBelowAvgWordDist = 0;
+						int aboveAvgWordDistCount = 0;
+						int minAboveAvgWordDist = Integer.MAX_VALUE;
+						for (Iterator spit = lineWordDists.iterator(); spit.hasNext();) {
+							Integer wordDist = ((Integer) spit.next());
+							if (wordDist.intValue() <= splitMinWordDist) {
+								belowAvgWordDistCount += lineWordDists.getCount(wordDist);
+								maxBelowAvgWordDist = Math.max(maxBelowAvgWordDist, wordDist.intValue());
+							}
+							else {
+								aboveAvgWordDistCount += lineWordDists.getCount(wordDist);
+								minAboveAvgWordDist = Math.min(minAboveAvgWordDist, wordDist.intValue());
+							}
+						}
+						spm.setInfo("   - got " + belowAvgWordDistCount + " word distances below " + splitMinWordDist + ", max is " + maxBelowAvgWordDist);
+						spm.setInfo("   - got " + aboveAvgWordDistCount + " word distances above " + splitMinWordDist + ", min is " + minAboveAvgWordDist);
+						spm.setInfo("   --> gap is " + (minAboveAvgWordDist - maxBelowAvgWordDist) + ", block average is " + (blockAvgWordDistSp - blockAvgWordDistNsp));
+						if ((minAboveAvgWordDist - maxBelowAvgWordDist) <= (blockAvgWordDistSp - blockAvgWordDistNsp)) {
+							spm.setInfo("   ==> no distinctive gap in word distances");
+							continue; // in super-stretched line, actual space would be increased as well, bringing proportion well beyond block average
+						}
+					}
+					spm.setInfo("   ==> found super-stretched line, joining words");
+					
+					//	concatenate line and line up words
+					StringBuffer lineString = new StringBuffer();
+					ArrayList wordAtOffset = new ArrayList();
+					for (int w = 0; w < lm.words.length; w++) {
+						if ((w != 0) && (blockAvgWordDistSp < (lm.words[w].bounds.left - lm.words[w-1].bounds.right))) /* add space if distance above block average space */ {
+							lineString.append(' ');
+							wordAtOffset.add(null);
+						}
+						wordString = lm.words[w].getString();
+						for (int c = 0; c < wordString.length(); c++) {
+							lineString.append(wordString.charAt(c));
+							wordAtOffset.add(lm.words[w]);
+						}
+					}
+					spm.setInfo("   - line string is " + lineString);
+					
+					//	re-tokenize line and line up tokens
+					TokenSequence lineTokens = tokenizer.tokenize(lineString);
+					ArrayList tokenAtOffset = new ArrayList();
+					for (int t = 0; t < lineTokens.size(); t++) {
+						while (tokenAtOffset.size() < lineTokens.tokenAt(t).getStartOffset())
+							tokenAtOffset.add(null);
+						String tokenString = lineTokens.valueAt(t);
+						for (int c = 0; c < tokenString.length(); c++)
+							tokenAtOffset.add(lineTokens.tokenAt(t));
+					}
+					
+					//	join words that ended up in same token
+					for (int o = 1; o < wordAtOffset.size(); o++) {
+						if (wordAtOffset.get(o-1) == null)
+							continue; // after significant space
+						if (wordAtOffset.get(o) == null)
+							continue; // on significant space
+						if (wordAtOffset.get(o-1) == wordAtOffset.get(o))
+							continue; // same word
+						if (tokenAtOffset.get(o-1) != tokenAtOffset.get(o))
+							continue; // tokenized apart
+						((ImWord) wordAtOffset.get(o-1)).setNextRelation(ImWord.NEXT_RELATION_CONTINUE); // join words
+					}
+					spm.setInfo("   ==> line words joined to " + ImUtils.getString(lm.words, true));
+//					spm.setInfo("   ==> line words joined to " + ImUtils.getString(lm.words, true, blockAvgWordDistSp));
+					//doc.addAnnotation(lm.words[0], lm.words[lm.words.length-1], "superStretchedLine"); // TODO activate this line for debugging
+				}
+			}
+		}
+		
+		//	de-hyphenate line breaks within paragraphs
+		spm.setStep(" - de-hyphenating line breaks");
+		spm.setBaseProgress(68);
+		spm.setMaxProgress(72);
 		for (int h = 0; h < textStreamHeads.length; h++) {
 			spm.setProgress((h * 100) / textStreamHeads.length);
 			if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(textStreamHeads[h].getTextStreamType()))
@@ -1485,8 +2490,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	try and merge paragraphs across blocks
 		spm.setStep(" - merging interrupted paragraphs");
-		spm.setBaseProgress(68);
-		spm.setMaxProgress(70);
+		spm.setBaseProgress(72);
+		spm.setMaxProgress(75);
 		final DocumentStyle blockStyle = docLayout.getSubset("block");
 		for (int h = 0; h < textStreamHeads.length; h++) {
 			spm.setProgress((h * 100) / textStreamHeads.length);
@@ -1572,12 +2577,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					System.out.println(" ==> no lines to start with");
 					continue; // happens if there are no lines at all
 				}
-				BlockLayout imwBlockLayout = imwBlockMetrics.analyze(blockStyle);
 				BlockMetrics nextImwBlockMetrics = PageAnalysis.computeBlockMetrics(nextImwBlock);
 				if (nextImwBlockMetrics == null) {
 					System.out.println(" ==> no lines to continue with");
 					continue; // happens if there are no lines at all
 				}
+				BlockLayout imwBlockLayout = imwBlockMetrics.analyze(blockStyle);
 				BlockLayout nextImwBlockLayout = nextImwBlockMetrics.analyze(blockStyle);
 				
 				//	no chance of flowing text continuing across blocks with incompatible style
@@ -1589,7 +2594,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				//	analyze blocks as one
 				int imwBlockPargraphMargin = ((imwBlockLayout.paragraphDistance < 0) ? imwBlockMetrics.avgAboveLineGap : (imwBlockLayout.paragraphDistance - 1));
 				int nextImwBlockPargraphMargin = ((nextImwBlockLayout.paragraphDistance < 0) ? nextImwBlockMetrics.avgAboveLineGap : (nextImwBlockLayout.paragraphDistance - 1));
-				int blockMargin = Math.min(((imwBlockPargraphMargin < 0) ? Integer.MAX_VALUE : imwBlockPargraphMargin), ((nextImwBlockPargraphMargin < 0) ? Integer.MAX_VALUE : nextImwBlockPargraphMargin));
+				int blockMargin = Math.min(((imwBlockPargraphMargin < 0) ? Short.MAX_VALUE : imwBlockPargraphMargin), ((nextImwBlockPargraphMargin < 0) ? Integer.MAX_VALUE : nextImwBlockPargraphMargin));
 				BlockLayout jointBlockMetrics = nextImwBlockMetrics.analyzeContinuingFrom(imwBlockMetrics, blockMargin, blockStyle);
 				
 				//	all indications are next block starts paragraph of its own
@@ -1617,8 +2622,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	collect blocks that might be assigned captions
 		spm.setStep(" - identifying caption target areas");
-		spm.setBaseProgress(70);
-		spm.setMaxProgress(75);
+		spm.setBaseProgress(75);
+		spm.setMaxProgress(80);
 		final HashMap tablesToCaptionAnnots = new HashMap();
 		final boolean figureAboveCaptions = docLayout.getBooleanProperty("caption.belowFigure", true);
 		final boolean figureBelowCaptions = docLayout.getBooleanProperty("caption.aboveFigure", false);
@@ -1776,8 +2781,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	merge tables within pages, and collect large ones along the way for cross-page mergers
 		spm.setStep(" - merging tables within pages");
-		spm.setBaseProgress(75);
-		spm.setMaxProgress(80);
+		spm.setBaseProgress(80);
+		spm.setMaxProgress(82);
 		final LinkedList docTableList = new LinkedList();
 		ParallelJobRunner.runParallelFor(new ParallelFor() {
 			public void doFor(int p) throws Exception {
@@ -1891,8 +2896,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		});
 		
 		//	investigate row mergers
-		spm.setBaseProgress(75);
-		spm.setMaxProgress(80);
+		spm.setBaseProgress(82);
+		spm.setMaxProgress(83);
 		for (int t = 0; t < docTables.length; t++) {
 			spm.setProgress((t * 100) / docTables.length);
 			ImAnnotation tableCaption = ((ImAnnotation) tablesToCaptionAnnots.get(docTables[t]));
@@ -1932,7 +2937,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		//	investigate column mergers
 		docTables = ((ImRegion[]) docTableList.toArray(new ImRegion[docTableList.size()]));
 		docTableList.clear();
-		spm.setBaseProgress(80);
+		spm.setBaseProgress(83);
 		spm.setMaxProgress(85);
 		for (int t = 0; t < docTables.length; t++) {
 			spm.setProgress((t * 100) / docTables.length);
@@ -2171,6 +3176,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					for (int l = 0; l < paragraphLines.size(); l++) {
 						ImRegion paragraphLine = ((ImRegion) paragraphLines.get(l));
 						ImWord[] lineWords = paragraphLine.getWords();
+						Arrays.sort(lineWords, ImUtils.textStreamOrder);
 						
 						//	compute average vertical center of main font size words, collect small words, and mark main font size areas
 						int mainFontSizeWordWidthSum = 0;
@@ -2186,8 +3192,24 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 									mainFontSizeWordCenterYSum += (lineWords[w].bounds.getWidth() * lineWords[w].centerY);
 									Arrays.fill(mainFontSizeWord, Math.max(0, (lineWords[w].bounds.left - pageParagraphs[p].bounds.left)), Math.min(mainFontSizeWord.length, (lineWords[w].bounds.right - pageParagraphs[p].bounds.left)), lineWords[w]);
 								}
-								else if (fs < minMainFontSize)
+								else if (fs < minMainFontSize) {
+									if (w == 0) {}
+									else if (lineWords[w].getPreviousWord() == null) {}
+									else if (lineWords[w].getPreviousRelation() != ImWord.NEXT_RELATION_CONTINUE) {}
+									else if ((smallLineWords.size() != 0) && (smallLineWords.get(smallLineWords.size()-1) == lineWords[w].getPreviousWord())) {}
+									else if (!StringUtils.normalizeString(lineWords[w].getString()).matches("[A-Z\\-]+")) {}
+									else if (!StringUtils.normalizeString(lineWords[w].getPreviousWord().getString()).matches("[A-Z]")) {}
+									else continue; // continuing emulated small-caps from non-small predecessor
+									if (w == 0) {}
+									else if (lineWords[w].getPreviousWord() == null) {}
+									else if (lineWords[w].getPreviousRelation() != ImWord.NEXT_RELATION_SEPARATE) {}
+									else if (lineWords[w].getFontSize() < lineWords[w].getPreviousWord().getFontSize()) {}
+									else if ((smallLineWords.size() != 0) && (smallLineWords.get(smallLineWords.size()-1) == lineWords[w].getPreviousWord())) {}
+									else if (!StringUtils.normalizeString(lineWords[w].getString()).matches("[A-Z\\-]+")) {}
+									else if (!StringUtils.normalizeString(lineWords[w].getPreviousWord().getString()).matches("[A-Z\\-]+")) {}
+									else continue; // second word in emulated small-caps, with non-small predecessor of same font size
 									smallLineWords.add(lineWords[w]);
+								}
 							}
 						
 						//	anything to work with?
@@ -2219,6 +3241,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						this.annotateSuperSubScripts(pageParagraphs[p], subScriptWords, ImAnnotation.SUB_SCRIPT_TYPE, mainFontSizeWord);
 					}
 				}
+				
+				//	TODO also observe superscript and subscript Unicode blocks
 			}
 			private void annotateSuperSubScripts(ImRegion paragraph, ArrayList superOrSubScriptWords, String type, ImWord[] mainFontSizeWord) {
 				if (superOrSubScriptWords.isEmpty())
@@ -2322,12 +3346,26 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		//	get heading styles
 		HeadingStyleDefined[] headingStyles = null;
 		DocumentStyle headingStyle = docStyle.getSubset("style.heading");
-		int[] headingLevels = headingStyle.getIntListProperty("levels", null);
-		if (headingLevels != null) {
-			headingStyles = new HeadingStyleDefined[headingLevels.length];
-			for (int l = 0; l < headingLevels.length; l++)
-				headingStyles[l] = new HeadingStyleDefined(headingLevels[l], headingStyle);
+//		int[] headingLevels = headingStyle.getIntListProperty("levels", null);
+//		if (headingLevels != null) {
+//			headingStyles = new HeadingStyleDefined[headingLevels.length];
+//			for (int l = 0; l < headingLevels.length; l++)
+//				headingStyles[l] = new HeadingStyleDefined(headingLevels[l], headingStyle);
+//		}
+//		int[] headingGroups = headingStyle.getIntListProperty("groups", null);
+//		if (headingGroups != null) {
+//			headingStyles = new HeadingStyleDefined[headingGroups.length];
+//			for (int g = 0; g < headingGroups.length; g++)
+//				headingStyles[g] = new HeadingStyleDefined(headingGroups[g], headingStyle);
+//		}
+		ArrayList definedHeadingStyles = new ArrayList();
+		for (int g = 1; g <= 9; g++) {
+			HeadingStyleDefined hsd = HeadingStyleDefined.getHeadingStyle(g, headingStyle);
+			if (hsd != null)
+				definedHeadingStyles.add(hsd);
 		}
+		if (definedHeadingStyles.size() != 0)
+			headingStyles = ((HeadingStyleDefined[]) definedHeadingStyles.toArray(new HeadingStyleDefined[definedHeadingStyles.size()]));
 		
 		//	extract headings using heuristics
 		if (headingStyles == null) {
@@ -2342,13 +3380,28 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			//	assess hierarchy of headings
 			spm.setStep(" - assessing hierarchy of headings");
 			this.assessHeadingHierarchy(headings, docFontSize, pages[0].pageId, spm);
-			
 		}
 		
 		//	extract headings using style templates
 		else for (int pg = 0; pg < pages.length; pg++) {
 			spm.setProgress((pg * 100) / pages.length);
-			markHeadings(pages[pg], pages[pg].getImageDPI(), headingStyles, spm);
+			markHeadings(pages[pg], headingStyles, spm);
+		}
+		
+		//	mark in-line headings if we have defined styles
+		DocumentStyle inLineHeadingStyle = headingStyle.getSubset("inLine");
+		ArrayList inLineHeadingStyles = new ArrayList();
+		for (int g = 1; g <= 3; g++) {
+			InLineHeadingStyle ilhs = InLineHeadingStyle.getInLineHeadingStyle(g, inLineHeadingStyle);
+			if (ilhs != null)
+				inLineHeadingStyles.add(ilhs);
+		}
+		if (inLineHeadingStyles.size() != 0) {
+			InLineHeadingStyle[] ilhss = ((InLineHeadingStyle[]) inLineHeadingStyles.toArray(new InLineHeadingStyle[inLineHeadingStyles.size()]));
+			for (int pg = 0; pg < pages.length; pg++) {
+				spm.setProgress((pg * 100) / pages.length);
+				markInLineHeadings(pages[pg], ilhss, spm);
+			}
 		}
 		
 		//	finally, we're done
@@ -2407,11 +3460,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	
 	/* string of punctuation marks whose font size can differ a little from the
 	 * surrounding text due to sloppy layout or even adjustment */
-	private static final String fontSizeVariablePunctuationMarks = ",.;:^°\"'=+-\u00B1\u00AD\u2010\u2012\u2011\u2013\u2014\u2015\u2212";
+	private static final String fontSizeVariablePunctuationMarks = (",.;:^°\"'=+-\u00B1" + StringUtils.DASHES);
 	
 	/* string of punctuation marks whose font style (bold, italics) can differ
 	 * from the surrounding text due to sloppy layout or even adjustment */
-	private static final String fontStyleVariablePunctuationMarks = ",.°'=+-\u00B1\u00AD\u2010\u2012\u2011\u2013\u2014\u2015\u2212";
+	private static final String fontStyleVariablePunctuationMarks = (",.°'=+-\u00B1" + StringUtils.DASHES);
 	
 	private boolean isFontSizeMatch(int fontSize, ImWord imw) {
 		if (fontSize == -1)
@@ -2558,90 +3611,175 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	}
 	
 	private static class HeadingStyleDefined {
+		final int group;
 		final int level;
+		String lineBreakMergeMode;
 		int minFontSize;
 		int maxFontSize;
 		int maxLineCount;
 		boolean isBlock;
+		boolean isBlockAligned;
 		boolean isBold;
 		boolean startIsBold;
 		boolean containsBold;
+		boolean isItalics;
+		boolean startIsItalics;
 		boolean containsItalics;
 		boolean isAllCaps;
 		boolean startIsAllCaps;
 		boolean containsAllCaps;
+		boolean isSmallCaps;
+		boolean startIsSmallCaps;
+		boolean containsSmallCaps;
+		boolean ignoreParentheses;
 		Pattern[] startPatterns;
+		Pattern[] filterPatterns;
 		boolean isLeftAligned;
+		boolean isCenterAligned;
 		boolean isRightAligned;
-		HeadingStyleDefined(int level, DocumentStyle style) {
-			this.level = level;
-			int fontSize = style.getIntProperty((this.level + ".fontSize"), -1);
-			this.minFontSize = style.getIntProperty((this.level + ".minFontSize"), ((fontSize == -1) ? 0 : fontSize));
-			this.maxFontSize = style.getIntProperty((this.level + ".maxFontSize"), ((fontSize == -1) ? 72 : fontSize));
-			this.maxLineCount = style.getIntProperty((this.level + ".maxLineCount"), 0);
-			this.isBlock = !style.getBooleanProperty((this.level + ".isNonBlock"), false); // we need to use inversion here, as styles save only 'true'
-			this.isBold = style.getBooleanProperty((this.level + ".isBold"), false);
-			this.startIsBold = style.getBooleanProperty((this.level + ".startIsBold"), false);
-			this.containsBold = style.getBooleanProperty((this.level + ".containsBold"), false);
-			this.containsItalics = style.getBooleanProperty((this.level + ".containsItalics"), false);
-			this.isAllCaps = style.getBooleanProperty((this.level + ".isAllCaps"), false);
-			this.startIsAllCaps = style.getBooleanProperty((this.level + ".startIsAllCaps"), false);
-			this.startIsAllCaps = style.getBooleanProperty((this.level + ".containsAllCaps"), false);
-			String[] startPatternStrs = style.getListProperty((this.level + ".startPatterns"), null, " ");
-			if (startPatternStrs != null) try {
-				Pattern[] startPatterns = new Pattern[startPatternStrs.length];
-				for (int p = 0; p < startPatternStrs.length; p++)
-					startPatterns[p] = Pattern.compile(startPatternStrs[p]);
-				this.startPatterns = startPatterns;
-			} catch (PatternSyntaxException pse) {}
-			String alignment = style.getProperty((this.level + ".alignment"), "");
-			this.isLeftAligned = ("left".equals(alignment) || "justified".equals(alignment));
-			this.isRightAligned = ("right".equals(alignment) || "justified".equals(alignment));
-			//	TODO observe center alignment (require distance to left and right edge of column to be about equal)
+		boolean canHaveIndent;
+		boolean isCenterStrict;
+		
+		private HeadingStyleDefined(int group, DocumentStyle style) {
+			this.group = group;
+			this.level = style.getIntProperty((this.group + ".level"), this.group);
+			this.lineBreakMergeMode = style.getProperty((this.group + ".lineBreakMergeMode"), "never");
+			int fontSize = style.getIntProperty((this.group + ".fontSize"), -1);
+			this.minFontSize = style.getIntProperty((this.group + ".minFontSize"), ((fontSize == -1) ? 0 : fontSize));
+			this.maxFontSize = style.getIntProperty((this.group + ".maxFontSize"), ((fontSize == -1) ? 72 : fontSize));
+			this.maxLineCount = style.getIntProperty((this.group + ".maxLineCount"), 0);
+			this.isBlock = !style.getBooleanProperty((this.group + ".isNonBlock"), false); // we need to use inversion here, as styles save only 'true'
+			this.isBlockAligned = style.getBooleanProperty((this.group + ".alignmentInBlock"), false);
+			this.isBold = style.getBooleanProperty((this.group + ".isBold"), false);
+			this.startIsBold = style.getBooleanProperty((this.group + ".startIsBold"), false);
+			this.containsBold = style.getBooleanProperty((this.group + ".containsBold"), false);
+			this.isItalics = style.getBooleanProperty((this.group + ".isItalics"), false);
+			this.startIsItalics = style.getBooleanProperty((this.group + ".startIsItalics"), false);
+			this.containsItalics = style.getBooleanProperty((this.group + ".containsItalics"), false);
+			this.isAllCaps = style.getBooleanProperty((this.group + ".isAllCaps"), false);
+			this.startIsAllCaps = style.getBooleanProperty((this.group + ".startIsAllCaps"), false);
+			this.containsAllCaps = style.getBooleanProperty((this.group + ".containsAllCaps"), false);
+			this.isSmallCaps = style.getBooleanProperty((this.group + ".isSmallCaps"), false);
+			this.startIsSmallCaps = style.getBooleanProperty((this.group + ".startIsSmallCaps"), false);
+			this.containsSmallCaps = style.getBooleanProperty((this.group + ".containsSmallCaps"), false);
+			this.ignoreParentheses = style.getBooleanProperty((this.group + ".ignoreParentheses"), false);
+			this.startPatterns = getPatterns(style.getListProperty((this.group + ".startPatterns"), null, " "));
+			this.filterPatterns = getPatterns(style.getListProperty((this.group + ".filterPatterns"), null, " "));
+			String alignment = style.getProperty((this.group + ".alignment"), "");
+			this.isLeftAligned = (ImAnnotation.TEXT_ORIENTATION_LEFT.equals(alignment) || ImAnnotation.TEXT_ORIENTATION_JUSTIFIED.equals(alignment));
+			this.isCenterAligned = (ImAnnotation.TEXT_ORIENTATION_CENTERED.equals(alignment) || TEXT_ORIENTATION_CENTERED_STRICT.equals(alignment));
+			this.isRightAligned = (ImAnnotation.TEXT_ORIENTATION_RIGHT.equals(alignment) || ImAnnotation.TEXT_ORIENTATION_JUSTIFIED.equals(alignment));
+			this.canHaveIndent = style.getBooleanProperty((this.group + ".canHaveIndent"), false);
+			this.isCenterStrict = TEXT_ORIENTATION_CENTERED_STRICT.equals(alignment);
 		}
-		boolean matches(ImRegion line, ImWord[] lineWords, int blockLinePos, int blockLineCount, boolean isFlushLeft, boolean isFlushRight) {
+		
+		boolean matches(ImPage page, ImRegion line, ImWord[] lineWords, int blockLinePos, int blockLineCount, int leftColDist, int rightColDist, int leftBlockDist, int rightBlockDist, PrintStream log) {
+			log.println("Mathing against line " + line.bounds);
+			
+			//	select how to measure alignment
+			int leftDist = ((!this.isBlock && this.isBlockAligned) ? leftBlockDist : leftColDist);
+			int rightDist = ((!this.isBlock && this.isBlockAligned) ? rightBlockDist : rightColDist);
+			
+			//	add some tolerance for indent (up to half an inch, some 12mm)
+			if (this.isLeftAligned && this.canHaveIndent && (blockLinePos == 0) && ((leftDist * 2) < page.getImageDPI())) {
+				if (leftDist != 0)
+					log.println(" - ignoring indent left edge distance " + leftDist);
+				leftDist = 0;
+			}
+			
+			//	compute orientation
+			log.println(" - checking orientation for " + ((!this.isBlock && this.isBlockAligned) ? "block" : "column") + " edge distances " + leftDist + " and " + rightDist);
+			boolean isFlushLeft = ((leftDist * 25) < page.getImageDPI());
+			log.println("   - left aligned: " + isFlushLeft);
+			boolean isFlushRight = ((rightDist * 25) < page.getImageDPI());
+			log.println("   - right aligned: " + isFlushRight);
+			boolean isCentered = ((Math.abs(leftDist - rightDist) * 8) < page.getImageDPI());
+			log.println("   - center aligned: " + isCentered);
 			
 			//	check alignment first
-			if (this.isLeftAligned && !isFlushLeft)
+			if (this.isCenterStrict && (isFlushLeft || isFlushRight)) {
+				log.println(" ==> mismatch on strictly-centered orientation");
 				return false;
-			if (this.isRightAligned && !isFlushRight)
+			}
+			if (this.isLeftAligned && !isFlushLeft) {
+				log.println(" ==> mismatch on left block edge");
 				return false;
-			if (!this.isLeftAligned && !this.isRightAligned && (isFlushLeft != isFlushRight))
+			}
+			if (this.isRightAligned && !isFlushRight) {
+				log.println(" ==> mismatch on right block edge");
 				return false;
+			}
+			if (this.isCenterAligned && !isCentered) {
+				log.println(" ==> mismatch on centered orientation");
+				return false;
+			}
+			log.println(" - orientation match");
 			
 			//	check line count and position
 			if (this.maxLineCount > 0) {
+				log.println(" - checking number of lines");
 				
 				//	headings are in their own blocks, check block size
 				if (this.isBlock) {
-					if (blockLineCount > this.maxLineCount)
+					if (blockLineCount > this.maxLineCount) {
+						log.println(" ==> mismatch on maximum of " + this.maxLineCount + " lines in block, got " + blockLineCount);
 						return false;
+					}
 				}
 				
 				//	headings sit atop a text block, all we can check is line position
 				else {
-					if (blockLinePos >= this.maxLineCount)
+					if (blockLinePos >= this.maxLineCount) {
+						log.println(" ==> mismatch on maximum line position of " + this.maxLineCount + ", at " + blockLinePos);
 						return false;
+					}
 				}
+				log.println(" - line maximum match");
 			}
 			
 			//	check start style
-			if ((this.isBold || this.startIsBold) && !lineWords[0].hasAttribute(ImWord.BOLD_ATTRIBUTE))
+			if ((this.isBold || this.startIsBold) && !lineWords[0].hasAttribute(ImWord.BOLD_ATTRIBUTE)) {
+				log.println(" ==> expected bold start not found");
 				return false;
-			if ((this.isAllCaps || this.startIsAllCaps) && !lineWords[0].getString().equals(lineWords[0].getString().toUpperCase()))
+			}
+			if ((this.isItalics || this.startIsItalics) && !lineWords[0].hasAttribute(ImWord.ITALICS_ATTRIBUTE)) {
+				log.println(" ==> expected italics start not found");
 				return false;
+			}
+			if ((this.isAllCaps || this.startIsAllCaps || this.isSmallCaps || this.startIsSmallCaps) && !lineWords[0].getString().equals(lineWords[0].getString().toUpperCase())) {
+				log.println(" ==> expected all-caps or small-caps start not found");
+				return false;
+			}
+			log.println(" - start style match");
 			
 			//	concatenate words, checking style along the way
+			log.println(" - checking font style");
 			StringBuffer lineWordString = new StringBuffer();
 			boolean gotBold = false;
 			boolean gotItalics = false;
 			boolean gotAllCaps = false;
+			boolean gotSmallCaps = false;
+			int capsMinFontSize = 72;
+			int capsMaxFontSize = 0;
+			LinkedList openBrackets = new LinkedList();
 			for (int w = 0; w < lineWords.length; w++) {
 				String wordStr = lineWords[w].getString();
-				if (this.isBold && !lineWords[w].hasAttribute(ImWord.BOLD_ATTRIBUTE) && ((wordStr.length() > 1) || (fontStyleVariablePunctuationMarks.indexOf(wordStr) != -1)))
-					return false;
-				if (this.isAllCaps && !wordStr.equals(wordStr.toUpperCase()))
-					return false;
+				if (this.ignoreParentheses && Gamta.isOpeningBracket(wordStr))
+					openBrackets.addLast(wordStr);
+				if (openBrackets.isEmpty()) {
+					if (this.isBold && !lineWords[w].hasAttribute(ImWord.BOLD_ATTRIBUTE) && ((wordStr.length() > 1) || (fontStyleVariablePunctuationMarks.indexOf(wordStr) == -1))) {
+						log.println(" ==> expected bold font not found at " + wordStr);
+						return false;
+					}
+					if (this.isItalics && !lineWords[w].hasAttribute(ImWord.ITALICS_ATTRIBUTE) && ((wordStr.length() > 1) || (fontStyleVariablePunctuationMarks.indexOf(wordStr) == -1))) {
+						log.println(" ==> expected italics not found at " + wordStr);
+						return false;
+					}
+					if ((this.isAllCaps || this.isSmallCaps) && !wordStr.equals(wordStr.toUpperCase())) {
+						log.println(" ==> expected all-caps or small-caps not found at " + wordStr);
+						return false;
+					}
+				}
 				gotBold = (gotBold || lineWords[w].hasAttribute(ImWord.BOLD_ATTRIBUTE));
 				gotItalics = (gotItalics || lineWords[w].hasAttribute(ImWord.ITALICS_ATTRIBUTE));
 				gotAllCaps = (gotAllCaps || (
@@ -2654,12 +3792,29 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				if (lineWords[w].hasAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) {
 					int wfs = lineWords[w].getFontSize();
 					int wfsTolerance = (((wordStr.length() == 1) && (fontSizeVariablePunctuationMarks.indexOf(wordStr) != -1)) ? 1 : 0);
-					if ((wfs + wfsTolerance) < this.minFontSize)
+					if (openBrackets.isEmpty() && ((wfs + wfsTolerance) < this.minFontSize)) {
+						log.println(" ==> font size below minimum of " + this.minFontSize +  " at " + wordStr + ": " + wfs);
 						return false;
-					if (this.maxFontSize < (wfs - wfsTolerance))
+					}
+					if (this.maxFontSize < (wfs - wfsTolerance)) {
+						log.println(" ==> font size above maximum of " + this.maxFontSize +  " at " + wordStr + ": " + wfs);
 						return false;
+					}
+					if (wordStr.equals(wordStr.toUpperCase()) && !wordStr.equals(wordStr.toLowerCase())) {
+						if ((w != 0) && !gotSmallCaps && (lineWords[w-1].getNextRelation() == ImWord.NEXT_RELATION_CONTINUE)) {
+							int pwfs = lineWords[w-1].getFontSize();
+							if (wfs < pwfs)
+								gotSmallCaps = true;
+						}
+						capsMinFontSize = Math.min(capsMinFontSize, wfs);
+						capsMaxFontSize = Math.max(capsMaxFontSize, wfs);
+					}
 				}
 				lineWordString.append(wordStr);
+				if (this.ignoreParentheses && Gamta.isClosingBracket(wordStr) && (openBrackets.size() != 0)) {
+					if (Gamta.closes(wordStr, ((String) openBrackets.getLast())))
+						openBrackets.removeLast();
+				}
 				if ((w+1) == lineWords.length)
 					break;
 				if (lineWords[w].getNextWord() != lineWords[w+1])
@@ -2671,32 +3826,95 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				else if ((lineWords[w].getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED) && (lineWordString.length() != 0))
 					lineWordString.deleteCharAt(lineWordString.length()-1);
 			}
+			log.println("   - got bold: " + gotBold);
+			log.println("   - got italics: " + gotItalics);
+			log.println("   - got all-caps: " + gotAllCaps);
+			log.println("   - caps font size range: " + capsMinFontSize + "-" + capsMaxFontSize);
 			
 			//	check font style containment
-			if (this.containsBold && !gotBold)
+			if (this.containsBold && !gotBold) {
+				log.println(" ==> expected bold part not found");
 				return false;
-			if (this.containsItalics && !gotItalics)
+			}
+			if (this.containsItalics && !gotItalics) {
+				log.println(" ==> expected part in italics not found");
 				return false;
-			if (this.containsAllCaps && !gotAllCaps)
+			}
+			if (this.containsAllCaps && !gotAllCaps) {
+				log.println(" ==> expected part in all-caps not found");
 				return false;
+			}
+			if (this.containsSmallCaps && !gotAllCaps) {
+				log.println(" ==> expected part in small-caps not found");
+				return false;
+			}
+			if (this.containsSmallCaps && !gotSmallCaps) {
+				log.println(" ==> expected part in small-caps not found");
+				return false;
+			}
+			if ((this.isSmallCaps || this.startIsSmallCaps || this.containsSmallCaps) && (capsMaxFontSize <= capsMinFontSize)) {
+				log.println(" ==> expected part in small-caps not found, all-caps font size range is " + capsMinFontSize + "-" + capsMaxFontSize);
+				return false;
+			}
+			
+			//	use filter patterns
+			if (this.filterPatterns != null) {
+				log.println(" - checking filter patterns");
+				for (int p = 0; p < this.filterPatterns.length; p++) {
+					Matcher m = this.filterPatterns[p].matcher(lineWordString);
+					if (m.find() && (m.start() == 0)) {
+						log.println(" ==> excluded by filter pattern match on " + m.group());
+						return false;
+					}
+				}
+			}
 			
 			//	no patterns to match, this one looks good
-			if (this.startPatterns == null)
+			if (this.startPatterns == null) {
+				log.println(" ==> match");
 				return true;
+			}
 			
 			//	check against start patterns
+			log.println(" - checking start patterns");
 			for (int p = 0; p < this.startPatterns.length; p++) {
 				Matcher m = this.startPatterns[p].matcher(lineWordString);
-				if (m.find() && (m.start() == 0))
+				if (m.find() && (m.start() == 0)) {
+					log.println(" ==> match via start pattern match on " + m.group());
 					return true;
+				}
 			}
 			
 			//	no pattern matched
+			log.println(" ==> failed to match any start pattern");
 			return false;
+		}
+		
+		private static HeadingStyleDefined getHeadingStyle(int group, DocumentStyle style) {
+			if (style.getSubset("" + group).isEmpty())
+				return null;
+			return new HeadingStyleDefined(group, style);
 		}
 	}
 	
-	private static void markHeadings(ImPage page, int pageImageDpi, HeadingStyleDefined[] headingStyles, ProgressMonitor pm) {
+	private static Pattern[] getPatterns(String[] patternStrings) {
+		if (patternStrings == null)
+			return null;
+		ArrayList patterns = new ArrayList(patternStrings.length);
+		for (int p = 0; p < patternStrings.length; p++) try {
+			Pattern pattern = Pattern.compile(patternStrings[p]);
+			patterns.add(pattern);
+		}
+		catch (PatternSyntaxException pse) {
+			System.out.println("Could not compile pattern " + patternStrings[p]);
+			pse.printStackTrace(System.out);
+		}
+		if (patterns.isEmpty())
+			return null;
+		return ((Pattern[]) patterns.toArray(new Pattern[patterns.size()]));
+	}
+	
+	private static void markHeadings(ImPage page, HeadingStyleDefined[] headingStyles, ProgressMonitor pm) {
 		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 		
 		//	get block words
@@ -2714,8 +3932,6 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		 * 
 		 * - use ZJLS_Hertach2015.pdf to test this (main text lines on first page mistaken for headings because mistaken for short due to very large single-column document head)
 		 */
-		
-		//	TODO compute alignment at least from paragraphs as a whole
 		
 		//	get block parent columns
 		//	TODO use column area style template parameter as first choice
@@ -2791,8 +4007,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			
 			//	measure line positions
 			ImWord[][] lineWords = new ImWord[blockLines.length][];
-			boolean[] lineIsFlushLeft = new boolean[blockLines.length];
-			boolean[] lineIsFlushRight = new boolean[blockLines.length];
+			int[] lineLeftColDists = new int[blockLines.length];
+			int[] lineRightColDists = new int[blockLines.length];
+			int[] lineLeftBlockDists = new int[blockLines.length];
+			int[] lineRightBlockDists = new int[blockLines.length];
 			boolean[] lineIsShort = new boolean[blockLines.length];
 			for (int l = 0; l < blockLines.length; l++) {
 				lineWords[l] = getLargestTextStreamWords(blockLines[l].getWords());
@@ -2804,14 +4022,18 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				pm.setInfo(" - line " + blockLines[l].bounds + ": " + ImUtils.getString(lineWords[l][0], lineWords[l][lineWords[l].length-1], true));
 				
 				//	assess line position and length (center alignment against surrounding column to catch short blocks)
-				int leftDist = (blockLines[l].bounds.left - blockParentColumns[b].bounds.left);
-				lineIsFlushLeft[l] = ((leftDist * 25) < pageImageDpi);
-				if (lineIsFlushLeft[l])
-					pm.setInfo(" --> flush left");
-				int rightDist = (blockParentColumns[b].bounds.right - blockLines[l].bounds.right);
-				lineIsFlushRight[l] = ((rightDist * 25) < pageImageDpi);
-				if (lineIsFlushRight[l])
-					pm.setInfo(" --> flush right");
+				lineLeftColDists[l] = (blockLines[l].bounds.left - blockParentColumns[b].bounds.left);
+				if ((lineLeftColDists[l] * 25) < page.getImageDPI())
+					pm.setInfo(" --> flush left in column");
+				lineRightColDists[l] = (blockParentColumns[b].bounds.right - blockLines[l].bounds.right);
+				if ((lineRightColDists[l] * 25) < page.getImageDPI())
+					pm.setInfo(" --> flush right in column");
+				lineLeftBlockDists[l] = (blockLines[l].bounds.left - pageBlocks[b].bounds.left);
+				if ((lineLeftBlockDists[l] * 25) < page.getImageDPI())
+					pm.setInfo(" --> flush left in block");
+				lineRightBlockDists[l] = (pageBlocks[b].bounds.right - blockLines[l].bounds.right);
+				if ((lineRightBlockDists[l] * 25) < page.getImageDPI())
+					pm.setInfo(" --> flush right in block");
 				lineIsShort[l] = (((blockLines[l].bounds.right - blockLines[l].bounds.left) * 3) < (mainTextBlockWidthA * 2));
 				if (lineIsShort[l]) // TODO replace this with measurement used in block line metrics
 					pm.setInfo(" --> short");
@@ -2835,9 +4057,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				
 				//	check against styles
 				for (int s = 0; s < headingStyles.length; s++)
-					if (headingStyles[s].matches(blockLines[l], lineWords[l], l, blockLines.length, lineIsFlushLeft[l], lineIsFlushRight[l])) {
+					if (headingStyles[s].matches(page, blockLines[l], lineWords[l], l, blockLines.length, lineLeftColDists[l], lineRightColDists[l], lineLeftBlockDists[l], lineRightBlockDists[l], System.out)) {
 						lineHeadingStyles[l] = headingStyles[s];
-						pm.setInfo(" --> match at level " + lineHeadingStyles[l].level);
+						pm.setInfo(" --> match in group " + lineHeadingStyles[l].group + " for level " + lineHeadingStyles[l].level);
 						break;
 					}
 				
@@ -2862,6 +4084,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			HeadingStyleDefined headingStyle = lineHeadingStyles[0];
 			int headingStartLineIndex = 0;
 			boolean headingEndLineShort = lineIsShort[0];
+			ArrayList headingAnnots = new ArrayList();
+			ArrayList headingAnnotStyles = new ArrayList();
 			for (int l = 1; l < Math.min(blockLines.length, 4); l++) {
 				if (lineWords[l].length == 0)
 					continue;
@@ -2878,7 +4102,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				
 				//	mark heading in current style and start new one in new style
 				else {
-					markHeading(page, headingStart, headingEnd, headingStyle, lineIsFlushLeft[headingStartLineIndex], lineIsFlushRight[headingStartLineIndex], headingEndLineShort, pm);
+					int lineLeftDist = (headingStyle.isBlockAligned ? lineLeftBlockDists[headingStartLineIndex] : lineLeftColDists[headingStartLineIndex]);
+					int lineRightDist = (headingStyle.isBlockAligned ? lineRightBlockDists[headingStartLineIndex] : lineRightColDists[headingStartLineIndex]);
+					ImAnnotation headingAnnot = markHeading(page, headingStart, headingEnd, headingStyle, lineLeftDist, lineRightDist, headingEndLineShort, pm);
+					if (headingAnnot != null) {
+						headingAnnots.add(headingAnnot);
+						headingAnnotStyles.add(headingStyle);
+					}
 					headingStart = lineWords[l][0];
 					headingEnd = lineWords[l][lineWords[l].length-1];
 					headingStyle = lineHeadingStyles[l];
@@ -2886,22 +4116,90 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					headingEndLineShort = lineIsShort[l];
 				}
 			}
-			if (headingStyle != null)
-				markHeading(page, headingStart, headingEnd, headingStyle, lineIsFlushLeft[headingStartLineIndex], lineIsFlushRight[headingStartLineIndex], headingEndLineShort, pm);
+			if (headingStyle != null) {
+				int lineLeftDist = (headingStyle.isBlockAligned ? lineLeftBlockDists[headingStartLineIndex] : lineLeftColDists[headingStartLineIndex]);
+				int lineRightDist = (headingStyle.isBlockAligned ? lineRightBlockDists[headingStartLineIndex] : lineRightColDists[headingStartLineIndex]);
+				ImAnnotation headingAnnot = markHeading(page, headingStart, headingEnd, headingStyle, lineLeftDist, lineRightDist, headingEndLineShort, pm);
+				if (headingAnnot != null) {
+					headingAnnots.add(headingAnnot);
+					headingAnnotStyles.add(headingStyle);
+				}
+			}
+			
+			//	anything to merge?
+			if (headingAnnots.size() < 2)
+				continue;
+			
+			//	perform mergers where applicable
+			for (int h = 1; h < headingAnnots.size(); h++) {
+				ImAnnotation topHeading = ((ImAnnotation) headingAnnots.get(h-1));
+				HeadingStyleDefined topStyle = ((HeadingStyleDefined) headingAnnotStyles.get(h-1));
+				ImAnnotation bottomHeading = ((ImAnnotation) headingAnnots.get(h));
+				HeadingStyleDefined bottomStyle = ((HeadingStyleDefined) headingAnnotStyles.get(h));
+				pm.setInfo(" - checking merger of headings " + ImUtils.getString(topHeading.getFirstWord(), topHeading.getLastWord(), true) + " and " + ImUtils.getString(bottomHeading.getFirstWord(), bottomHeading.getLastWord(), true));
+				
+				//	check levels
+				if (topStyle.level != bottomStyle.level) {
+					pm.setInfo("   ==> cannot merge across levels (" + topStyle.level + " in top group " + topStyle.group + ", " + bottomStyle.level + " in bottom group " + bottomStyle.group + ")");
+					continue;
+				}
+				
+				//	check merge mode(s)
+				if ("never".equals(topStyle.lineBreakMergeMode)) {
+					pm.setInfo("   ==> group " + topStyle.group + " (top) never merges");
+					continue;
+				}
+				else if ("never".equals(bottomStyle.lineBreakMergeMode)) {
+					pm.setInfo("   ==> group " + bottomStyle.group + " (bottom) never merges");
+					continue;
+				}
+				
+				//	check cross-group merge modes
+				if (topStyle.group == bottomStyle.group) {}
+				else if ("group".equals(topStyle.lineBreakMergeMode)) {
+					pm.setInfo("   ==> group " + topStyle.group + " (top) never merges across groups (bottom group is " + bottomStyle.group + ")");
+					continue;
+				}
+				else if ("group".equals(bottomStyle.lineBreakMergeMode)) {
+					pm.setInfo("   ==> group " + bottomStyle.group + " (bottom) never merges across groups (top group is " + topStyle.group + ")");
+					continue;
+				}
+				else if ("level-upwards".equals(topStyle.lineBreakMergeMode)) {
+					pm.setInfo("   ==> group " + topStyle.group + " (top) only merges upwards across groups (bottom group is " + bottomStyle.group + ")");
+					continue;
+				}
+				else if ("level-downwards".equals(bottomStyle.lineBreakMergeMode)) {
+					pm.setInfo("   ==> group " + bottomStyle.group + " (bottom) only merges downwards across groups (top group is " + topStyle.group + ")");
+					continue;
+				}
+				
+				//	perform merger
+				ImAnnotation heading = page.getDocument().addAnnotation(topHeading.getFirstWord(), bottomHeading.getLastWord(), ImAnnotation.HEADING_TYPE);
+				heading.setAttribute("reason", ((topStyle.group == bottomStyle.group) ? topHeading.getAttribute("reason") : (topHeading.getAttribute("reason") + "+" + bottomStyle.group)));
+				heading.setAttribute("level", topHeading.getAttribute("level"));
+				heading.copyAttributes(topHeading);
+				heading.copyAttributes(bottomHeading);
+				page.getDocument().removeAnnotation(topHeading);
+				page.getDocument().removeAnnotation(bottomHeading);
+				straightenHeadingStreamStructure(heading);
+				headingAnnots.set(h, heading);
+				headingAnnotStyles.set(h, topStyle); // preserve top style for merge behavior, as there might be one more heading coming
+				pm.setInfo("   ==> merged: " + ImUtils.getString(heading.getFirstWord(), heading.getLastWord(), true));
+			}
 		}
 	}
 	
-	private static void markHeading(ImPage page, ImWord headingStart, ImWord headingEnd, HeadingStyleDefined headingStyle, boolean startLineFlushLeft, boolean startLineFlushRight, boolean endLineShort, ProgressMonitor pm) {
+	private static ImAnnotation markHeading(ImPage page, ImWord headingStart, ImWord headingEnd, HeadingStyleDefined headingStyle, int startLineLeftDist, int startLineRightDist, boolean endLineShort, ProgressMonitor pm) {
 		
-		//	accept non-block heading only if (a) it is bold or all-caps as a whole or (b) it (its last line) is short
-		if (!headingStyle.isBlock && !endLineShort && !headingStyle.isBold && !headingStyle.isAllCaps)
-			return;
+		//	accept non-block heading only if (a) it is bold or all-caps as a whole or (b) it (its last line) is short or ends with a paragraph break
+		if (!headingStyle.isBlock && !headingStyle.isBold && !headingStyle.isAllCaps && !endLineShort && (headingEnd.getNextRelation() != ImWord.NEXT_RELATION_PARAGRAPH_END))
+			return null;
 		
 		//	mark heading, including all the attributes
 		ImAnnotation heading = page.getDocument().addAnnotation(headingStart, headingEnd, ImAnnotation.HEADING_TYPE);
-		heading.setAttribute("reason", ("" + headingStyle.level));
+		heading.setAttribute("reason", ("" + headingStyle.group));
 		heading.setAttribute("level", ("" + headingStyle.level));
-		if (!startLineFlushLeft && !startLineFlushRight)
+		if (((Math.abs(startLineLeftDist - startLineRightDist) * 8) < page.getImageDPI()))
 			heading.setAttribute(ImAnnotation.TEXT_ORIENTATION_CENTERED);
 		if (headingStyle.isAllCaps)
 			heading.setAttribute(ImAnnotation.ALL_CAPS_ATTRIBUTE);
@@ -2910,7 +4208,327 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		if (((headingStyle.minFontSize + headingStyle.maxFontSize) / 2) > 6)
 			heading.setAttribute(ImAnnotation.FONT_SIZE_ATTRIBUTE, ("" + ((headingStyle.minFontSize + headingStyle.maxFontSize) / 2)));
 		straightenHeadingStreamStructure(heading);
-		pm.setInfo(" ==> marked heading level " + headingStyle.level + ": " + ImUtils.getString(heading.getFirstWord(), heading.getLastWord(), true));
+		pm.setInfo(" ==> marked heading at level " + headingStyle.level + " (matching group " + headingStyle.group + "): " + ImUtils.getString(heading.getFirstWord(), heading.getLastWord(), true));
+		return heading;
+	}
+	
+	private static class InLineHeadingStyle {
+		final int group;
+		int minFontSize;
+		int maxFontSize;
+		int minBlockLineCount;
+		boolean isBold;
+		boolean startIsBold;
+		boolean containsBold;
+		boolean isItalics;
+		boolean startIsItalics;
+		boolean containsItalics;
+		boolean isAllCaps;
+		boolean startIsAllCaps;
+		boolean containsAllCaps;
+		boolean isSmallCaps;
+		boolean startIsSmallCaps;
+		boolean containsSmallCaps;
+		boolean ignoreParentheses;
+		Pattern[] startPatterns;
+		Pattern[] filterPatterns;
+		
+		private InLineHeadingStyle(int group, DocumentStyle style) {
+			this.group = group;
+			int fontSize = style.getIntProperty((this.group + ".fontSize"), -1);
+			this.minFontSize = style.getIntProperty((this.group + ".minFontSize"), ((fontSize == -1) ? 0 : fontSize));
+			this.maxFontSize = style.getIntProperty((this.group + ".maxFontSize"), ((fontSize == -1) ? 72 : fontSize));
+			this.minBlockLineCount = style.getIntProperty((this.group + ".minBlockLineCount"), 0);
+			this.isBold = style.getBooleanProperty((this.group + ".isBold"), false);
+			this.startIsBold = style.getBooleanProperty((this.group + ".startIsBold"), false);
+			this.containsBold = style.getBooleanProperty((this.group + ".containsBold"), false);
+			this.isItalics = style.getBooleanProperty((this.group + ".isItalics"), false);
+			this.startIsItalics = style.getBooleanProperty((this.group + ".startIsItalics"), false);
+			this.containsItalics = style.getBooleanProperty((this.group + ".containsItalics"), false);
+			this.isAllCaps = style.getBooleanProperty((this.group + ".isAllCaps"), false);
+			this.startIsAllCaps = style.getBooleanProperty((this.group + ".startIsAllCaps"), false);
+			this.containsAllCaps = style.getBooleanProperty((this.group + ".containsAllCaps"), false);
+			this.isSmallCaps = style.getBooleanProperty((this.group + ".isSmallCaps"), false);
+			this.startIsSmallCaps = style.getBooleanProperty((this.group + ".startIsSmallCaps"), false);
+			this.containsSmallCaps = style.getBooleanProperty((this.group + ".containsSmallCaps"), false);
+			this.ignoreParentheses = style.getBooleanProperty((this.group + ".ignoreParentheses"), false);
+			this.startPatterns = getPatterns(style.getListProperty((this.group + ".startPatterns"), null, " "));
+			this.filterPatterns = getPatterns(style.getListProperty((this.group + ".filterPatterns"), null, " "));
+		}
+		
+		ImWord getMatchEnd(ImPage page, ImRegion line, ImWord[] lineWords, int blockLineCount, PrintStream log) {
+			log.println("Mathing against line " + line.bounds);
+//			
+//			//	select how to measure alignment
+//			int leftDist = ((!this.isBlock && this.isBlockAligned) ? leftBlockDist : leftColDist);
+//			int rightDist = ((!this.isBlock && this.isBlockAligned) ? rightBlockDist : rightColDist);
+//			
+//			//	add some tolerance for indent (up to half an inch, some 12mm)
+//			if (this.isLeftAligned && this.canHaveIndent && (blockLinePos == 0) && ((leftDist * 2) < page.getImageDPI())) {
+//				if (leftDist != 0)
+//					log.println(" - ignoring indent left edge distance " + leftDist);
+//				leftDist = 0;
+//			}
+//			
+//			//	compute orientation
+//			log.println(" - checking orientation for " + ((!this.isBlock && this.isBlockAligned) ? "block" : "column") + " edge distances " + leftDist + " and " + rightDist);
+//			boolean isFlushLeft = ((leftDist * 25) < page.getImageDPI());
+//			log.println("   - left aligned: " + isFlushLeft);
+//			boolean isFlushRight = ((rightDist * 25) < page.getImageDPI());
+//			log.println("   - right aligned: " + isFlushRight);
+//			boolean isCentered = ((Math.abs(leftDist - rightDist) * 8) < page.getImageDPI());
+//			log.println("   - center aligned: " + isCentered);
+//			
+//			//	check alignment first
+//			if (this.isCenterStrict && (isFlushLeft || isFlushRight)) {
+//				log.println(" ==> mismatch on strictly-centered orientation");
+//				return false;
+//			}
+//			if (this.isLeftAligned && !isFlushLeft) {
+//				log.println(" ==> mismatch on left block edge");
+//				return false;
+//			}
+//			if (this.isRightAligned && !isFlushRight) {
+//				log.println(" ==> mismatch on right block edge");
+//				return false;
+//			}
+//			if (this.isCenterAligned && !isCentered) {
+//				log.println(" ==> mismatch on centered orientation");
+//				return false;
+//			}
+//			log.println(" - orientation match");
+			
+			//	check line count and position
+			if (this.minBlockLineCount > 0) {
+				log.println(" - checking number of lines in block");
+				if (blockLineCount < this.minBlockLineCount) {
+					log.println(" ==> too few lines (" + blockLineCount + ") in block, expecting at least " + this.minBlockLineCount);
+					return null;
+				}
+				log.println(" - block line count match");
+			}
+			
+			//	check start style
+			if ((this.isBold || this.startIsBold) && !lineWords[0].hasAttribute(ImWord.BOLD_ATTRIBUTE)) {
+				log.println(" ==> expected bold start not found");
+				return null;
+			}
+			if ((this.isItalics || this.startIsItalics) && !lineWords[0].hasAttribute(ImWord.ITALICS_ATTRIBUTE)) {
+				log.println(" ==> expected italics start not found");
+				return null;
+			}
+			if ((this.isAllCaps || this.startIsAllCaps || this.isSmallCaps || this.startIsSmallCaps) && !lineWords[0].getString().equals(lineWords[0].getString().toUpperCase())) {
+				log.println(" ==> expected all-caps or small-caps start not found");
+				return null;
+			}
+			log.println(" - start style match");
+			
+			//	concatenate words, checking style along the way
+			log.println(" - checking font style");
+//			StringBuffer lineWordString = new StringBuffer();
+			boolean gotBold = false;
+			boolean gotItalics = false;
+			boolean gotAllCaps = false;
+			boolean gotSmallCaps = false;
+			int capsMinFontSize = 72;
+			int capsMaxFontSize = 0;
+			LinkedList openBrackets = new LinkedList();
+			ImWord inLineHeadingEnd = null;
+			for (int w = 0; w < lineWords.length; w++) {
+				String wordStr = lineWords[w].getString();
+				if (this.ignoreParentheses && Gamta.isOpeningBracket(wordStr))
+					openBrackets.addLast(wordStr);
+				if (openBrackets.isEmpty()) {
+					if (this.isBold && !lineWords[w].hasAttribute(ImWord.BOLD_ATTRIBUTE) && ((wordStr.length() > 1) || (fontStyleVariablePunctuationMarks.indexOf(wordStr) == -1))) {
+						log.println(" - expected bold font ends before " + wordStr);
+						break;
+					}
+					if (this.isItalics && !lineWords[w].hasAttribute(ImWord.ITALICS_ATTRIBUTE) && ((wordStr.length() > 1) || (fontStyleVariablePunctuationMarks.indexOf(wordStr) == -1))) {
+						log.println(" - expected italics font ends before " + wordStr);
+						break;
+					}
+					if ((this.isAllCaps || this.isSmallCaps) && !wordStr.equals(wordStr.toUpperCase())) {
+						log.println(" - expected all-caps or small-caps ends before " + wordStr);
+						break;
+					}
+				}
+				gotBold = (gotBold || lineWords[w].hasAttribute(ImWord.BOLD_ATTRIBUTE));
+				gotItalics = (gotItalics || lineWords[w].hasAttribute(ImWord.ITALICS_ATTRIBUTE));
+				gotAllCaps = (gotAllCaps || (
+						(wordStr.length() > 1)
+						&&
+						wordStr.equals(wordStr.toUpperCase())
+						&&
+						!wordStr.equals(wordStr.toLowerCase())
+					));
+				if (lineWords[w].hasAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) {
+					int wfs = lineWords[w].getFontSize();
+					int wfsTolerance = (((wordStr.length() == 1) && (fontSizeVariablePunctuationMarks.indexOf(wordStr) != -1)) ? 1 : 0);
+					if (openBrackets.isEmpty() && ((wfs + wfsTolerance) < this.minFontSize)) {
+						log.println(" - expected minumum font size of " + this.minFontSize +  " ends before " + wordStr + ": " + wfs);
+						break;
+					}
+					if (this.maxFontSize < (wfs - wfsTolerance)) {
+						log.println(" - expected maximum font size of " + this.maxFontSize +  " ends before " + wordStr + ": " + wfs);
+						break;
+					}
+					if (wordStr.equals(wordStr.toUpperCase()) && !wordStr.equals(wordStr.toLowerCase())) {
+						if ((w != 0) && !gotSmallCaps && (lineWords[w-1].getNextRelation() == ImWord.NEXT_RELATION_CONTINUE)) {
+							int pwfs = lineWords[w-1].getFontSize();
+							if (wfs < pwfs)
+								gotSmallCaps = true;
+						}
+						capsMinFontSize = Math.min(capsMinFontSize, wfs);
+						capsMaxFontSize = Math.max(capsMaxFontSize, wfs);
+					}
+				}
+//				lineWordString.append(wordStr);
+				if (this.ignoreParentheses && Gamta.isClosingBracket(wordStr) && (openBrackets.size() != 0)) {
+					if (Gamta.closes(wordStr, ((String) openBrackets.getLast())))
+						openBrackets.removeLast();
+				}
+				if (lineWords[w].getTextStreamId().equals(lineWords[0].getTextStreamId()) && openBrackets.isEmpty())
+					inLineHeadingEnd = lineWords[w];
+//				if ((w+1) == lineWords.length)
+//					break;
+//				if (lineWords[w].getNextWord() != lineWords[w+1])
+//					lineWordString.append(" ");
+//				else if ((lineWords[w].getNextRelation() == ImWord.NEXT_RELATION_SEPARATE) && Gamta.insertSpace(lineWords[w].getString(), lineWords[w+1].getString()))
+//					lineWordString.append(" ");
+//				else if (lineWords[w].getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
+//					lineWordString.append(" ");
+//				else if ((lineWords[w].getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED) && (lineWordString.length() != 0))
+//					lineWordString.deleteCharAt(lineWordString.length()-1);
+			}
+			log.println("   - got bold: " + gotBold);
+			log.println("   - got italics: " + gotItalics);
+			log.println("   - got all-caps: " + gotAllCaps);
+			log.println("   - caps font size range: " + capsMinFontSize + "-" + capsMaxFontSize);
+			
+			//	did we find some possible end?
+			if (inLineHeadingEnd == null) {
+				log.println(" ==> no viable end word found (or text stream broken)");
+				return null;
+			}
+//			
+//			//	any brackets left open?
+//			//	TODOne try and go back to matching opening bracket (might have a match at that point already)
+//			if (openBrackets.size() != 0) {
+//				log.println(" ==> found brackets left open: " + openBrackets);
+//				return null;
+//			}
+			
+			//	check font style containment
+			if (this.containsBold && !gotBold) {
+				log.println(" ==> expected bold part not found");
+				return null;
+			}
+			if (this.containsItalics && !gotItalics) {
+				log.println(" ==> expected part in italics not found");
+				return null;
+			}
+			if (this.containsAllCaps && !gotAllCaps) {
+				log.println(" ==> expected part in all-caps not found");
+				return null;
+			}
+			if (this.containsSmallCaps && !gotAllCaps) {
+				log.println(" ==> expected part in small-caps not found");
+				return null;
+			}
+			if (this.containsSmallCaps && !gotSmallCaps) {
+				log.println(" ==> expected part in small-caps not found");
+				return null;
+			}
+			if ((this.isSmallCaps || this.startIsSmallCaps || this.containsSmallCaps) && (capsMaxFontSize <= capsMinFontSize)) {
+				log.println(" ==> expected part in small-caps not found, all-caps font size range is " + capsMinFontSize + "-" + capsMaxFontSize);
+				return null;
+			}
+			
+			//	create token sequence for pattern matching
+			ImDocumentRoot lineDoc = new ImDocumentRoot(lineWords[0], inLineHeadingEnd, (ImDocumentRoot.NORMALIZE_CHARACTERS | ImDocumentRoot.NORMALIZATION_LEVEL_WORDS));
+			
+			//	use filter patterns
+			if (this.filterPatterns != null) {
+				log.println(" - checking filter patterns");
+				for (int p = 0; p < this.filterPatterns.length; p++) {
+					Matcher m = this.filterPatterns[p].matcher(lineDoc);
+					if (m.find() && (m.start() == 0)) {
+						log.println(" ==> excluded by filter pattern match on " + m.group());
+						return null;
+					}
+				}
+			}
+			
+			//	no patterns to match, this one looks good
+			if (this.startPatterns == null) {
+				log.println(" ==> match");
+				return inLineHeadingEnd;
+			}
+			
+			//	check against start patterns
+			log.println(" - checking start patterns");
+			for (int p = 0; p < this.startPatterns.length; p++) {
+				Matcher m = this.startPatterns[p].matcher(lineDoc);
+				if (m.find() && (m.start() == 0)) {
+					log.println(" ==> match via start pattern match on " + m.group());
+					return lineDoc.wordAtOffset(m.end()-1);
+				}
+			}
+			
+			//	no pattern matched
+			log.println(" ==> failed to match any start pattern");
+			return null;
+		}
+		
+		private static InLineHeadingStyle getInLineHeadingStyle(int group, DocumentStyle style) {
+			if (style.getSubset("" + group).isEmpty())
+				return null;
+			return new InLineHeadingStyle(group, style);
+		}
+	}
+	
+	private static void markInLineHeadings(ImPage page, InLineHeadingStyle[] inLineHeadingStyles, ProgressMonitor spm) {
+		
+		//	work block by block
+		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+		for (int b = 0; b < pageBlocks.length; b++) {
+			spm.setInfo("Seeking in-line headings in block " + pageBlocks[b].pageId + "@" + pageBlocks[b].bounds);
+			ImRegion[] blockLines = pageBlocks[b].getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+			spm.setInfo(" - got " + blockLines.length + " lines");
+			if (blockLines.length == 0)
+				continue;
+			
+			//	work line by line
+			Arrays.sort(blockLines, ImUtils.topDownOrder);
+			for (int l = 0; l < blockLines.length; l++) {
+				spm.setInfo(" - checking line " + blockLines[l].pageId + "@" + blockLines[l].bounds);
+				ImWord[] lineWords = blockLines[l].getWords();
+				spm.setInfo("   - got " + lineWords.length + " words");
+				if (lineWords.length == 0)
+					continue;
+				Arrays.sort(lineWords, ImUtils.textStreamOrder);
+				if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(lineWords[0].getTextStreamType())) {
+					spm.setInfo("   ==> not main text");
+					continue;
+				}
+				for (int s = 0; s < inLineHeadingStyles.length; s++) {
+					ImWord inLineHeadingEnd = inLineHeadingStyles[s].getMatchEnd(page, blockLines[l], lineWords, blockLines.length, System.out);
+					if (inLineHeadingEnd == null) {
+						spm.setInfo("   ==> no match");
+						continue;
+					}
+					ImAnnotation inLineHeading = page.getDocument().addAnnotation(lineWords[0], inLineHeadingEnd, EMPHASIS_TYPE);
+					if (inLineHeading == null) {
+						spm.setInfo("   ==> cannot annotate across text streams");
+						continue;
+					}
+					inLineHeading.setAttribute("inLineHeading");
+					inLineHeading.setAttribute("reason", ("" + inLineHeadingStyles[s].group));
+					spm.setInfo("   ==> got in-line heading " + ImUtils.getString(lineWords[0], inLineHeadingEnd, true));
+					break;
+				}
+			}
+		}
 	}
 	
 	private static class HeadingStyleObserved {
@@ -3100,7 +4718,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 							lineEmphasisWordCount++;
 						if (lineWords[l][w].hasAttribute(ImWord.BOLD_ATTRIBUTE))
 							lineBoldWordCount++;
-						else if ((lineWords[l][w].getString().length() < 2) && (fontStyleVariablePunctuationMarks.indexOf(lineWords[l][w].getString()) != -1))
+						else if ((lineWords[l][w].getString().length() > 1) || (fontStyleVariablePunctuationMarks.indexOf(lineWords[l][w].getString()) == -1))
 							lineNonBoldBoldWordCount++;
 					}
 					if (lineWords[l][w].hasAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) try {
@@ -3434,6 +5052,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		String paragraphFirstLine = ImUtils.getString(paragraphWords[0], firstLineEnd, true);
 		if (DEBUG_IS_FOOTNOTE) System.out.println(" - footnote test first line is " + paragraphFirstLine);
 		
+		//	normalize first line of paragraph
+		paragraphFirstLine = StringUtils.normalizeString(paragraphFirstLine);
+		if (DEBUG_IS_FOOTNOTE) System.out.println(" - normalized is " + paragraphFirstLine);
+		
 		//	test paragraph start against detector patterns
 		for (int p = 0; p < startPatterns.length; p++) {
 			Matcher startMatcher = startPatterns[p].matcher(paragraphFirstLine);
@@ -3510,7 +5132,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 	}
 	
-	private static HashMap markBlockCaptions(ImDocument doc, ImRegion block, ImRegion[] pageParagraphs, CaptionStartPattern[] startPatterns, CaptionStartPattern[] defaultStartPatterns, int minFontSize, int maxFontSize, boolean startIsBold, ProgressMonitor pm) {
+	private static HashMap markBlockCaptions(ImDocument doc, ImRegion block, ImRegion[] pageParagraphs, CaptionStartPattern[] startPatterns, CaptionStartPattern[] defaultStartPatterns, int minFontSize, int maxFontSize, boolean startIsBold, boolean startIsSeparateLine, ProgressMonitor pm) {
 		ArrayList blockParagraphList = new ArrayList();
 		HashMap blockParagraphsToWords = new HashMap();
 		for (int p = 0; p < pageParagraphs.length; p++) {
@@ -3558,11 +5180,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			pm.setInfo("Testing paragraph " + blockParagraphs[p].bounds + " on page " + block.pageId + " for caption");
 			
 			//	compute distance to predecessor
-			int prevParagraphDist = ((p == 0) ? Integer.MAX_VALUE : Math.max(0, (blockParagraphs[p].bounds.top - blockParagraphs[p-1].bounds.bottom)));
+			int prevParagraphDist = ((p == 0) ? Short.MAX_VALUE : Math.max(0, (blockParagraphs[p].bounds.top - blockParagraphs[p-1].bounds.bottom)));
 			
 			//	test for (start of) caption
 			ImWord[] paragraphWords = ((ImWord[]) blockParagraphsToWords.get(blockParagraphs[p]));
-			paragraphPatternMatches[p] = getCaptionPatternMatch(blockParagraphs[p], paragraphWords, startPatterns, defaultStartPatterns, minFontSize, maxFontSize, startIsBold);
+			paragraphPatternMatches[p] = getCaptionPatternMatch(blockParagraphs[p], paragraphWords, startPatterns, defaultStartPatterns, minFontSize, maxFontSize, startIsBold, startIsSeparateLine);
 			if (paragraphPatternMatches[p] != null) {
 				//	TODO prevent marking captions inside larger main text blocks, unless at very top (bottom right of Page 10 in TableTest/Milleretal2014Anthracotheres.pdf.clean.imf)
 				//	==> TODO check distance to predecessor (should be above average)
@@ -3675,7 +5297,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			ImWord[] captionWords = paragraphWords;
 			BoundingBox captionBounds = blockParagraphs[p].bounds;
 			
-			//	and attach any continuing matches
+			//	... and attach any continuing matches
 			while ((p+1) < blockParagraphs.length) {
 				if ((matchFontSizes[p+1] == -1) || (matchStartWords[p+1] == null) || (matchEndWords[p+1] == null))
 					break;
@@ -3779,7 +5401,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	}
 	
 	private static final boolean DEBUG_IS_CAPTION = true;
-	private static CaptionPatternMatch getCaptionPatternMatch(ImRegion paragraph, ImWord[] paragraphWords, CaptionStartPattern[] startPatterns, CaptionStartPattern[] defaultStartPatterns, int minFontSize, int maxFontSize, boolean startIsBold) {
+	private static CaptionPatternMatch getCaptionPatternMatch(ImRegion paragraph, ImWord[] paragraphWords, CaptionStartPattern[] startPatterns, CaptionStartPattern[] defaultStartPatterns, int minFontSize, int maxFontSize, boolean startIsBold, boolean startIsSeparateLine) {
 		
 		//	test bold property first thing
 		if (startIsBold && !paragraphWords[0].hasAttribute(ImWord.BOLD_ATTRIBUTE)) {
@@ -3796,7 +5418,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		
 		//	concatenate first line of paragraph
 		String paragraphFirstLine = ImUtils.getString(paragraphWords[0], firstLineEnd, true);
-		if (DEBUG_IS_CAPTION) System.out.println("Caption test first line is " + paragraphFirstLine);
+		if (DEBUG_IS_CAPTION) System.out.println(" - caption test first line is " + paragraphFirstLine);
+		
+		//	normalize first line of paragraph
+		paragraphFirstLine = StringUtils.normalizeString(paragraphFirstLine);
+		if (DEBUG_IS_CAPTION) System.out.println(" - normalized is " + paragraphFirstLine);
 		
 		//	test first line against detector patterns
 		CaptionStartPattern startPattern = null;
@@ -3806,6 +5432,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				continue;
 			Matcher startMatcher = startPatterns[p].matcher(paragraphFirstLine);
 			if (startMatcher.find() && (startMatcher.start() == 0)) {
+				if (startIsSeparateLine && (startMatcher.end() != paragraphFirstLine.length()))
+					continue;
 				startPattern = startPatterns[p];
 				startPatternMatch = startMatcher.group();
 				break;
@@ -3824,7 +5452,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		int numberCountRomanLower = 0;
 		int indexLetterCountUpper = 0;
 		int indexLetterCountLower = 0;
-		for (int w = 1; w < paragraphWords.length; w++) {
+		for (int w = 1 /* 0 if lead word */; w < paragraphWords.length; w++) {
 			String wordString = paragraphWords[w].getString();
 			if ((wordString == null) || (wordString.length() == 0))
 				continue;
@@ -3884,13 +5512,15 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		int numberingCount = (numberingCounts[1] + numberingCounts[2]);
 		
 		//	more numbering than words ==> reference to caption (we can cut some more slack if we have other clues)
-		boolean isCaptionReference;
-		if (startIsBold || (startPatterns != defaultStartPatterns))
-			isCaptionReference = ((wordCount * 3) < (numberingCount * 2));
-		else isCaptionReference = (wordCount < numberingCount);
-		if (isCaptionReference) {
-			if (DEBUG_IS_CAPTION) System.out.println(" ==> " + wordCount + " words vs. " + numberingCount + " numbers, caption reference");
-			return null;
+		if (!startIsSeparateLine) {
+			boolean isCaptionReference;
+			if (startIsBold || (startPatterns != defaultStartPatterns))
+				isCaptionReference = ((wordCount * 3) < (numberingCount * 2));
+			else isCaptionReference = (wordCount < numberingCount);
+			if (isCaptionReference) {
+				if (DEBUG_IS_CAPTION) System.out.println(" ==> " + wordCount + " words vs. " + numberingCount + " numbers, caption reference");
+				return null;
+			}
 		}
 		
 		//	assess caption type
@@ -3916,7 +5546,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			type = CaptionStartPattern.FIGURE_TYPE;
 		
 		//	more words than numbering ==> actual caption
-		if (DEBUG_IS_CAPTION) System.out.println(" ==> " + wordCount + " words vs. " + numberingCount + " numbers, caption");
+		if (DEBUG_IS_CAPTION) System.out.println(" ==> " + wordCount + " words vs. " + numberingCount + " numbers, caption" + (startIsSeparateLine ? " start" : ""));
 		return new CaptionPatternMatch(paragraphFirstLine, startPattern, startPatternMatch, type);
 	}
 	
@@ -4479,6 +6109,34 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 	private PageData getPageData(ImPage page, int pageImageDpi, BoundingBox[] headerAreas, ProgressMonitor pm) {
 		PageData pageData = new PageData(page);
 		
+		//	if we have defined header areas, split any blocks that partially overlap them right away
+		if ((headerAreas != null) && (this.regionActionProvider != null)) {
+			ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+			boolean newSplit = false;
+			for (int h = 0; h < headerAreas.length; h++) {
+				pm.setInfo(" - splitting blocks overlapping header area " + headerAreas[h] + " on page " + page.pageId);
+				if (newSplit) // need to re-get blocks if we split anything for last header area
+					pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+				newSplit = false;
+				for (int b = 0; b < pageBlocks.length; b++) {
+					pm.setInfo("   - checking block at " + pageBlocks[b].bounds);
+					if (pageBlocks[b].bounds.liesIn(headerAreas[h], false)) {
+						pm.setInfo("     ==> completely contained");
+						continue; // completely contained, no need for splitting
+					}
+					if (!pageBlocks[b].bounds.overlaps(headerAreas[h])) {
+						pm.setInfo("     ==> no overlap");
+						continue; // no need for splitting this one
+					}
+					if (this.regionActionProvider.splitBlock(page, pageBlocks[b], headerAreas[h].intersect(pageBlocks[b].bounds))) {
+						newSplit = true;
+						pm.setInfo("     ==> split successfully");
+					}
+					else pm.setInfo("     ==> split failed");
+				}
+			}
+		}
+		
 		//	get regions
 		ImRegion[] regions = page.getRegions();
 		pm.setInfo(" - got " + regions.length + " regions in page " + page.pageId);
@@ -4553,7 +6211,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				}
 			}
 			
-			//	use header areas
+			//	use defined header areas
 			else for (int h = 0; h < headerAreas.length; h++) {
 				if (!headerAreas[h].includes(regions[r].bounds, false))
 					continue;

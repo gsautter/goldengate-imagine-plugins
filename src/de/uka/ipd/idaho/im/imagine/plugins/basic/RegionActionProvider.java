@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -433,6 +433,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	 */
 	public void annotationRemoved(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
 	
+	private static DocumentStyle getBlockStyle(ImDocument doc) {
+		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
+		return docStyle.getSubset("layout").getSubset("block");
+	}
+	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider#getActions(java.awt.Point, java.awt.Point, de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
 	 */
@@ -594,23 +599,25 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			//	no region selected, either
 			if (selectedRegions.length == 0) {
 				actions.add(new SelectionAction("editAttributesPage", ("Edit Page Attributes"), ("Edit attributes of page.")) {
+					protected boolean isAtomicAction() {
+						return false;
+					}
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
 						idmp.editAttributes(page, PAGE_TYPE, "");
 						return true;
 					}
 				});
-				if (!idmp.documentBornDigital) {
+				if (!idmp.documentBornDigital)
 					actions.add(new SelectionAction("editPage", ("Edit Page Image & Words"), ("Edit page image and words recognized in page.")) {
 						public boolean performAction(ImDocumentMarkupPanel invoker) {
 							return idmp.editPage(page.pageId);
 						}
 					});
-					actions.add(new SelectionAction("cleanPageRegions", ("Cleanup Page Regions"), ("Clean up and sanitize all regions in this page, remove duplicates, etc.")) {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							return cleanupPageRegions(page);
-						}
-					});
-				}
+				actions.add(new SelectionAction("cleanPageRegions", ("Cleanup Page Regions"), ("Clean up and sanitize all regions in this page, remove duplicates, etc.")) {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return cleanupPageRegions(page);
+					}
+				});
 			}
 			
 			//	check supplements to tell image from graphics if document born-digital
@@ -676,6 +683,9 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			
 			//	edit attributes of existing region
 			actions.add(new SelectionAction("editAttributesRegion", ("Edit " + selectedRegions[0].getType() + " Attributes"), ("Edit attributes of '" + selectedRegions[0].getType() + "' region.")) {
+				protected boolean isAtomicAction() {
+					return false;
+				}
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					idmp.editAttributes(selectedRegions[0], selectedRegions[0].getType(), "");
 					return true;
@@ -1160,15 +1170,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						ImWord[] blockWords = block.getWords();
 						sortIntoLines(page, blockWords);
 						
-						//	re-detect paragraphs
-//						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
-//						BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
-//						BlockLayout blockLayout = blockMetrics.analyze();
-//						blockLayout.writeParagraphStructure();
-						PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
+						//	get block style
+						DocumentStyle blockStyle = getBlockStyle(page.getDocument());
 						
-						//	update text stream structure
-						updateBlockTextStream(block);
+						//	update paragraphs and text stream structure
+						updateBlockStructure(page, block, blockStyle, true);
 						
 						//	finally ...
 						return true;
@@ -1208,6 +1214,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				actions.add(new SelectionAction("blocksInColumn", "Merge Columns", "Merge selected columns, re-detect first blocks, then lines, and group the latter into paragraphs.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
 						//	TODO implement this
+						return false;
 //						
 //						//	get & merge blocks
 //						LinkedList blockList = ((LinkedList) multiSelectedRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE));
@@ -1237,9 +1244,9 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 //						
 //						//	update text stream structure
 //						updateBlockTextStream(block);
-						
-						//	finally ...
-						return true;
+//						
+//						//	finally ...
+//						return true;
 					}
 					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
 						JMenuItem mi = super.getMenuItem(invoker);
@@ -1254,10 +1261,12 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			
 			//	if one column partially selected, and one or more blocks fully selected, offer splitting
 			if (idmp.areRegionsPainted(ImRegion.COLUMN_ANNOTATION_TYPE) && idmp.areRegionsPainted(ImRegion.BLOCK_ANNOTATION_TYPE) && contextRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE) && !multiSelectedRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE) && selectedRegionsByType.containsKey(ImRegion.BLOCK_ANNOTATION_TYPE)) {
-				final ImRegion block = ((ImRegion) ((LinkedList) contextRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE)).getFirst());
+				final ImRegion column = ((ImRegion) ((LinkedList) contextRegionsByType.get(ImRegion.COLUMN_ANNOTATION_TYPE)).getFirst());
 				actions.add(new SelectionAction("blocksInColumn", "Split Column", "Split selected column, re-detect blocks, then lines, and group the latter into paragraphs.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return splitBlock(page, block, selectedBounds);
+						//	TODO implement this
+						return false;
+//						return splitBlock(page, block, selectedBounds);
 					}
 					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
 						JMenuItem mi = super.getMenuItem(invoker);
@@ -1302,14 +1311,16 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				actions.add(new TwoClickSelectionAction("assignCaptionImage", "Assign Caption", "Assign a caption to this image with a second click.") {
 					private ImWord artificialStartWord = null;
 					public boolean performAction(ImWord secondWord) {
-						if (!ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
-							return false;
 						
 						//	find affected caption
 						ImAnnotation[] wordAnnots = idmp.document.getAnnotationsSpanning(secondWord);
 						ArrayList wordCaptions = new ArrayList(2);
 						for (int a = 0; a < wordAnnots.length; a++) {
-							if (ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
+							if (!ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
+								continue;
+							if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
+								wordCaptions.add(wordAnnots[a]);
+							else if (wordAnnots[a].hasAttribute(IN_LINE_OBJECT_MARKER_ATTRIBUTE))
 								wordCaptions.add(wordAnnots[a]);
 						}
 						if (wordCaptions.size() != 1)
@@ -1317,9 +1328,12 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
 						
 						//	does this caption match?
-						String firstWordStr = getStringFrom(wordCaption.getFirstWord());
-						if (firstWordStr.toLowerCase().startsWith("tab"))
-							return false;
+						String firstWordStr = ImUtils.getStringFrom(wordCaption.getFirstWord());
+						if (firstWordStr.toLowerCase().startsWith("tab")) {
+							int choice = DialogFactory.confirm("This caption appears to belong to a table rather than an image.\r\nAre you sure you want to assign it to the image?", "Assign Table Caption to Image?", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+							if (choice != JOptionPane.YES_OPTION)
+								return false;
+						}
 						
 						//	set attributes
 						wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, selImage.bounds.toString());
@@ -1518,14 +1532,16 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				actions.add(new TwoClickSelectionAction("assignCaptionGraphics", "Assign Caption", "Assign a caption to this graphics with a second click.") {
 					private ImWord artificialStartWord = null;
 					public boolean performAction(ImWord secondWord) {
-						if (!ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
-							return false;
 						
 						//	find affected caption
 						ImAnnotation[] wordAnnots = idmp.document.getAnnotationsSpanning(secondWord);
 						ArrayList wordCaptions = new ArrayList(2);
 						for (int a = 0; a < wordAnnots.length; a++) {
-							if (ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
+							if (!ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
+								continue;
+							if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
+								wordCaptions.add(wordAnnots[a]);
+							else if (wordAnnots[a].hasAttribute(IN_LINE_OBJECT_MARKER_ATTRIBUTE))
 								wordCaptions.add(wordAnnots[a]);
 						}
 						if (wordCaptions.size() != 1)
@@ -1533,9 +1549,12 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
 						
 						//	does this caption match?
-						String firstWordStr = getStringFrom(wordCaption.getFirstWord());
-						if (firstWordStr.toLowerCase().startsWith("tab"))
-							return false;
+						String firstWordStr = ImUtils.getStringFrom(wordCaption.getFirstWord());
+						if (firstWordStr.toLowerCase().startsWith("tab")) {
+							int choice = DialogFactory.confirm("This caption appears to belong to a table rather than a graphics.\r\nAre you sure you want to assign it to the graphics?", "Assign Table Caption to Graphics?", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+							if (choice != JOptionPane.YES_OPTION)
+								return false;
+						}
 						
 						//	set attributes
 						wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, selGraphics.bounds.toString());
@@ -1646,15 +1665,6 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
-	}
-	
-	private String getStringFrom(ImWord start) {
-		if ((start.getNextRelation() != ImWord.NEXT_RELATION_CONTINUE) && (start.getNextRelation() != ImWord.NEXT_RELATION_HYPHENATED))
-			return start.getString();
-		ImWord end = start;
-		while ((end.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) || (end.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED))
-			end = end.getNextWord();
-		return ImUtils.getString(start, end, true);
 	}
 	
 	private boolean cleanupPageRegions(ImPage page) {
@@ -2494,6 +2504,9 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
 		ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
 		
+		//	get block style
+		DocumentStyle blockStyle = getBlockStyle(page.getDocument());
+		
 		//	if we have a plain top-bottom split, we can retain lines and word order, and likely most paragraphs
 		if (leftWords.isEmpty() && rightWords.isEmpty()) {
 			
@@ -2511,13 +2524,13 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			//	split the block proper
 			if (aboveWords.size() != 0) {
 				ImRegion aboveBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) aboveWords.toArray(new ImWord[aboveWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
-				updateBlockTextStream(aboveBlock);
+				updateBlockStructure(page, aboveBlock, blockStyle, false);
 			}
 			ImRegion selectedBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) selectedWords.toArray(new ImWord[selectedWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
-			updateBlockTextStream(selectedBlock);
+			updateBlockStructure(page, selectedBlock, blockStyle, false);
 			if (belowWords.size() != 0) {
 				ImRegion belowBlock = new ImRegion(page, ImLayoutObject.getAggregateBox((ImWord[]) belowWords.toArray(new ImWord[belowWords.size()])), ImRegion.BLOCK_ANNOTATION_TYPE);
-				updateBlockTextStream(belowBlock);
+				updateBlockStructure(page, belowBlock, blockStyle, false);
 			}
 			page.removeRegion(block);
 			
@@ -2548,35 +2561,35 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		//	if we have a plain left-right split, chain blocks left to right
 		if (aboveWords.isEmpty() && belowWords.isEmpty()) {
 			if (leftWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, leftWords));
+				blockWordLists.add(markBlock(page, leftWords, blockStyle));
 			if (selectedWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, selectedWords));
+				blockWordLists.add(markBlock(page, selectedWords, blockStyle));
 			if (rightWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, rightWords));
+				blockWordLists.add(markBlock(page, rightWords, blockStyle));
 		}
 		
 		//	selection cut out on top left corner
 		else if (aboveWords.isEmpty() && leftWords.isEmpty()) {
 			if (selectedWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, selectedWords));
+				blockWordLists.add(markBlock(page, selectedWords, blockStyle));
 			if (rightWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, rightWords));
+				blockWordLists.add(markBlock(page, rightWords, blockStyle));
 			if (belowWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, belowWords));
+				blockWordLists.add(markBlock(page, belowWords, blockStyle));
 		}
 		
 		//	selection cut out in some other place
 		else {
 			if (aboveWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, aboveWords));
+				blockWordLists.add(markBlock(page, aboveWords, blockStyle));
 			if (leftWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, leftWords));
+				blockWordLists.add(markBlock(page, leftWords, blockStyle));
 			if (rightWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, rightWords));
+				blockWordLists.add(markBlock(page, rightWords, blockStyle));
 			if (belowWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, belowWords));
+				blockWordLists.add(markBlock(page, belowWords, blockStyle));
 			if (selectedWords.size() != 0)
-				blockWordLists.add(this.markBlock(page, selectedWords));
+				blockWordLists.add(markBlock(page, selectedWords, blockStyle));
 		}
 		
 		//	chain block text streams (only if text stream types match, however)
@@ -2584,7 +2597,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			ImWord[] imws = ((ImWord[]) blockWordLists.get(b));
 			if (imws.length == 0)
 				continue;
-			if ((blockPrevWord != null) && !blockPrevWord.getTextStreamType().endsWith(imws[0].getTextStreamType()))
+			if ((blockPrevWord != null) && !blockPrevWord.getTextStreamType().equals(imws[0].getTextStreamType()))
 				continue;
 			if (blockPrevWord != null)
 				blockPrevWord.setNextWord(imws[0]);
@@ -2600,38 +2613,34 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		return true;
 	}
 	
-	private ImWord[] markBlock(ImPage page, ArrayList wordList) {
+	private static ImWord[] markBlock(ImPage page, ArrayList wordList, DocumentStyle blockStyle) {
 		ImWord[] words = ((ImWord[]) wordList.toArray(new ImWord[wordList.size()]));
 		if (words.length == 0)
 			return words;
 		
 		//	mark lines
-		ImUtils.makeStream(words, words[0].getTextStreamType(), null);
+		ImUtils.makeStream(words, words[0].getTextStreamType(), null, false); // no need to clean up annotations, we're re-joining the streams later
 		sortIntoLines(page, words);
 		
 		//	mark block proper
 		ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
 		
 		//	re-detect paragraphs
-//		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
-//		BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
-//		BlockLayout blockLayout = blockMetrics.analyze();
-//		blockLayout.writeParagraphStructure();
-		PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
+		PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block, blockStyle);
 		
 		//	finally ...
 		Arrays.sort(words, ImUtils.textStreamOrder);
 		return words;
 	}
 	
-	private void sortIntoLines(ImPage page, ImWord[] words) {
+	private static void sortIntoLines(ImPage page, ImWord[] words) {
 		
 		//	order text stream
 		ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 		Arrays.sort(words, ImUtils.textStreamOrder);
 		
 		//	re-detect lines
-		this.markLines(page, words, null);
+		markLines(page, words, null);
 	}
 	
 	/**
@@ -2652,23 +2661,22 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		//	mark lines
 		ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
 		Arrays.sort(words, ImUtils.textStreamOrder);
-		this.markLines(page, words, null);
+		markLines(page, words, null);
 		
 		//	mark block proper
 		ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
 		
+		//	get block style
+		DocumentStyle blockStyle = getBlockStyle(page.getDocument());
+		
 		//	re-detect paragraphs
-//		PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
-//		BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
-//		BlockLayout blockLayout = blockMetrics.analyze();
-//		blockLayout.writeParagraphStructure();
-		PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
+		PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block, blockStyle);
 		
 		//	finally ...
 		return block;
 	}
 	
-	private void markLines(ImPage page, ImWord[] words, Map existingLines) {
+	private static void markLines(ImPage page, ImWord[] words, Map existingLines) {
 		int lineStartWordIndex = 0;
 		for (int w = 1; w <= words.length; w++)
 			
@@ -2691,7 +2699,20 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				page.removeRegion((ImRegion) existingLines.get(lbit.next()));
 	}
 	
-	private void updateBlockTextStream(ImRegion block) {
+	private static void updateBlockStructure(ImPage page, ImRegion block, DocumentStyle blockStyle, boolean forceRevisitParagraphs) {
+		
+		//	update paragraphs if either requested explicitly or sufficient lines present
+		boolean revisitParagraphs;
+		if (forceRevisitParagraphs)
+			revisitParagraphs = true;
+		else {
+			ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+			revisitParagraphs = (blockLines.length > 4);
+		}
+		if (revisitParagraphs)
+			PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block, blockStyle);
+		
+		//	update text stream in any case
 		ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
 		for (int p = 0; p < blockParagraphs.length; p++) {
 			ImWord[] paragraphWords = blockParagraphs[p].getWords();
@@ -2707,7 +2728,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		}
 	}
 	
-	private boolean sortLinesIntoParagraphs(ImPage page, ImRegion[] lines, BoundingBox selectedBounds) {
+	private static boolean sortLinesIntoParagraphs(ImPage page, ImRegion[] lines, BoundingBox selectedBounds) {
 		Arrays.sort(lines, ImUtils.topDownOrder);
 		
 		//	find boundaries between above, inside, and below selection
@@ -2813,12 +2834,15 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			for (int p = 0; p < bParagraphs.length; p++)
 				page.removeRegion(bParagraphs[p]);
 			
+			//	get block style
+			DocumentStyle blockStyle = getBlockStyle(page.getDocument());
+			
 			//	re-mark paragraphs
 //			PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), ProgressMonitor.dummy);
 //			BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
 //			BlockLayout blockLayout = blockMetrics.analyze();
 //			blockLayout.writeParagraphStructure();
-			PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
+			PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block, blockStyle);
 		}
 	}
 	
@@ -2829,7 +2853,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		if (blockMetrics == null)
 			return false; // happens if there are no lines at all
 		
-		//	run analysis
+		//	run analysis (do not use document style here, would influence user selected options)
 		BlockLayout blockLayout = blockMetrics.analyze();
 		
 		//	assemble split option panel

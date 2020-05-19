@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -1268,6 +1268,7 @@ UI: Make "Edit Page Image & Words" accessible from cluster representative contex
 		
 		void removeWordCluster(ImWordCluster iwc) {
 			this.idsToClusters.remove(iwc.id);
+			this.modCount++;
 			for (int w = 0; w < iwc.words.size(); w++)
 				this.wordIDsToClusters.remove(((ImWord) iwc.words.get(w)).getLocalID());
 			this.unIndexForStringAndTrigrams(iwc);
@@ -1411,12 +1412,12 @@ UI: Make "Edit Page Image & Words" accessible from cluster representative contex
 		private byte[] wordClusteringBytes = null;
 		private int wordClusteringBytesModCount = -1;
 		ImWordClusteringSupplement(ImDocument doc, ImWordClustering wordClustering) {
-			super(doc, "ocrWordClustering", "text/plain");
+			super(doc, "ocrWordClustering", "ocrWordClustering", "text/plain");
 			this.wordClustering = wordClustering;
 		}
-		public String getId() {
-			return "ocrWordClustering";
-		}
+//		public String getId() {
+//			return "ocrWordClustering";
+//		}
 		public InputStream getInputStream() throws IOException {
 			if ((this.wordClusteringBytes == null) || (this.wordClusteringBytesModCount < this.wordClustering.modCount)) {
 				ByteArrayOutputStream wcBytes = new ByteArrayOutputStream();
@@ -1425,6 +1426,7 @@ UI: Make "Edit Page Image & Words" accessible from cluster representative contex
 				this.wordClusteringBytesModCount = this.wordClustering.modCount;
 			}
 			return new ByteArrayInputStream(this.wordClusteringBytes);
+			//	TODO make changes to word clustering tractable (for UNDO, etc.)
 		}
 	}
 	
@@ -1518,6 +1520,9 @@ UI: Make "Edit Page Image & Words" accessible from cluster representative contex
 				wordClustering.addLetterReplacement(wcsData[0], wcsData[1], Integer.parseInt(wcsData[2]));
 		}
 		
+		//	mark word clustering as clean
+		wordClustering.modCount = 0;
+		
 		//	finally ...
 		return wordClustering;
 	}
@@ -1580,7 +1585,7 @@ UI: Make "Edit Page Image & Words" accessible from cluster representative contex
 		wcBw.newLine();
 		
 		//	write letter replacements
-		for (int r = 0; r < wordClustering.clusterSimilarities.size(); r++) {
+		for (int r = 0; r < wordClustering.letterReplacements.size(); r++) {
 			ImLetterReplacement ilr = ((ImLetterReplacement) wordClustering.letterReplacements.get(r));
 			wcBw.write(ilr.replaced);
 			wcBw.write("\t");

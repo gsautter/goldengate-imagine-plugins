@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -124,7 +124,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	public void init() {
 		
 		//	read operations for individual annotation types
-		try {
+		if (this.parent != null) try {
 			Reader tor = new BufferedReader(new InputStreamReader(this.dataProvider.getInputStream("tableCleanupOptions.cnfg")));
 			StringVector typeOperationList = StringVector.loadList(tor);
 			tor.close();
@@ -258,20 +258,21 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			});
 		
 		//	offer assigning caption with second click
-		actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
-			private ImWord artificialStartWord = null;
-			public boolean performAction(ImWord secondWord) {
-				return assignTableCaption(idmp.document, startTable, secondWord);
-			}
-			public ImWord getFirstWord() {
-				if (this.artificialStartWord == null)
-					this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
-				return this.artificialStartWord;
-			}
-			public String getActiveLabel() {
-				return ("Click on a caption to assign it to the table at " + startTable.bounds.toString() + " on page " + (startTable.pageId + 1));
-			}
-		});
+		if (!startTable.hasAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE))
+			actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
+				private ImWord artificialStartWord = null;
+				public boolean performAction(ImWord secondWord) {
+					return assignTableCaption(idmp.document, startTable, secondWord);
+				}
+				public ImWord getFirstWord() {
+					if (this.artificialStartWord == null)
+						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
+					return this.artificialStartWord;
+				}
+				public String getActiveLabel() {
+					return ("Click on a caption to assign it to the table at " + startTable.bounds.toString() + " on page " + (startTable.pageId + 1));
+				}
+			});
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
@@ -676,12 +677,18 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (selTables.length == 0) {
 			
 			//	offer marking selected words as a table and analyze table structure
-			if (selWords.length != 0)
+			if (selWords.length != 0) {
 				actions.add(new SelectionAction("markRegionTable", "Mark Table", "Mark selected words as a table and analyze table structure.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return markTable(page, selWords, selWordsBox, null, invoker);
+						return markTable(page, selWords, selWordsBox, null, false, invoker);
 					}
 				});
+				actions.add(new SelectionAction("markRegionTable", "Mark In-Line Table", "Mark selected words as an in-line table and analyze table structure.") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return markTable(page, selWords, selWordsBox, null, true, invoker);
+					}
+				});
+			}
 			
 			//	little else to do ...
 			return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
@@ -918,20 +925,21 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		});
 		
 		//	offer assigning caption with second click
-		actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
-			private ImWord artificialStartWord = null;
-			public boolean performAction(ImWord secondWord) {
-				return assignTableCaption(idmp.document, selTables[0], secondWord);
-			}
-			public ImWord getFirstWord() {
-				if (this.artificialStartWord == null)
-					this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
-				return this.artificialStartWord;
-			}
-			public String getActiveLabel() {
-				return ("Click on a caption to assign it to the table at " + selTables[0].bounds.toString() + " on page " + (selTables[0].pageId + 1));
-			}
-		});
+		if (!selTables[0].hasAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE))
+			actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
+				private ImWord artificialStartWord = null;
+				public boolean performAction(ImWord secondWord) {
+					return assignTableCaption(idmp.document, selTables[0], secondWord);
+				}
+				public ImWord getFirstWord() {
+					if (this.artificialStartWord == null)
+						this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
+					return this.artificialStartWord;
+				}
+				public String getActiveLabel() {
+					return ("Click on a caption to assign it to the table at " + selTables[0].bounds.toString() + " on page " + (selTables[0].pageId + 1));
+				}
+			});
 		
 		//	offer merging rows across tables
 		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && !selTables[0].hasAttribute("rowsContinueIn"))
@@ -2630,17 +2638,21 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		ImWord[] words = page.getWordsInside(tableBox);
 		if (words.length == 0)
 			return false;
-		return this.markTable(page, words, tableBox, tableBoxStats, idmp);
+		return this.markTable(page, words, tableBox, tableBoxStats, false, idmp);
 	}
 	
-	private boolean markTable(ImPage page, ImWord[] tableWords, BoundingBox tableBox, TableAreaStatistics tableBoxStats, ImDocumentMarkupPanel idmp) {
+	private boolean markTable(ImPage page, ImWord[] tableWords, BoundingBox tableBox, TableAreaStatistics tableBoxStats, boolean inLineTable, ImDocumentMarkupPanel idmp) {
 		
 		//	compute stats if not given
 		if (tableBoxStats == null)
 			tableBoxStats = TableAreaStatistics.getTableAreaStatistics(page, tableWords);
 		
 		//	get table markup
-		TableAreaMarkup tableMarkup = this.getTableMarkup(page, tableWords, null, tableBox, tableBoxStats);
+		TableAreaMarkup tableMarkup = this.getTableMarkup(page, tableWords, null, tableBox, tableBoxStats, inLineTable);
+		if (tableMarkup == null) {
+			DialogFactory.alert("The selected area cannot be marked as a table because it does not split into columns.", "Cannot Mark Tables", JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
 		
 		//	finish markup
 		return this.finishMarkTable(page, tableBox, tableWords, tableMarkup, null, idmp);
@@ -2882,7 +2894,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return tableMarkup;
 	}
 	
-	private TableAreaMarkup getTableMarkup(ImPage page, ImWord[] words, ImRegion[] exTables, BoundingBox tableBox, TableAreaStatistics tableBoxStats) {
+	private TableAreaMarkup getTableMarkup(ImPage page, ImWord[] words, ImRegion[] exTables, BoundingBox tableBox, TableAreaStatistics tableBoxStats, boolean inLineTable) {
 		
 		//	get overall bounds of any existing tables
 		BoundingBox exTablesBox = (((exTables == null) || (exTables.length == 0)) ? null : ImLayoutObject.getAggregateBox(exTables));
@@ -2894,6 +2906,10 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	get column gaps
 		TreeSet colOccupationLows = new TreeSet(tableBoxStats.getBrgColOccupationLowsReduced());
 		System.out.println("Column occupation lows are " + colOccupationLows);
+		if (colOccupationLows.isEmpty()) {
+			System.out.println(" ==> cannot mark table");
+			return null;
+		}
 		int colMarginSum = 0;
 		int minColMargin = Integer.MAX_VALUE;
 		int maxColMargin = 0;
@@ -3376,13 +3392,15 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		}
 		
 		//	create markup
-		return this.getTableMarkup(page, words, tableBox, tableBoxStats, minColMargin, minRowMargin, colOccupationLows, rowOccupationGaps);
+		return this.getTableMarkup(page, words, tableBox, tableBoxStats, minColMargin, minRowMargin, colOccupationLows, rowOccupationGaps, inLineTable);
 	}
 	
-	private TableAreaMarkup getTableMarkup(ImPage page, ImWord[] words, BoundingBox tableBox, TableAreaStatistics tableBoxStats, int minColMargin, int minRowMargin, TreeSet colOccupationLows, TreeSet rowOccupationGaps) {
+	private TableAreaMarkup getTableMarkup(ImPage page, ImWord[] words, BoundingBox tableBox, TableAreaStatistics tableBoxStats, int minColMargin, int minRowMargin, TreeSet colOccupationLows, TreeSet rowOccupationGaps, boolean inLineTable) {
 		
 		//	wrap region around words
 		ImRegion tableRegion = new ImRegion(page.getDocument(), page.pageId, tableBox, ImRegion.TABLE_TYPE);
+		if (inLineTable)
+			tableRegion.setAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE);
 		
 		//	create columns based on reduced column gaps from statistics
 		ColumnOccupationLow[] areaColGaps = ((ColumnOccupationLow[]) colOccupationLows.toArray(new ColumnOccupationLow[colOccupationLows.size()]));
@@ -5037,6 +5055,13 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	
 	private boolean mergeTables(ImPage page, ImRegion[] selTables, ImDocumentMarkupPanel idmp) {
 		
+		//	check if we have an in-line table
+		int inLineTableCount = 0;
+		for (int t = 0; t < selTables.length; t++) {
+			if (selTables[t].hasAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE))
+				inLineTableCount++;
+		}
+		
 		//	get aggregate bounds
 		BoundingBox mTableBox = ImLayoutObject.getAggregateBox(selTables);
 		
@@ -5047,7 +5072,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		TableAreaStatistics mTableBoxStats = TableAreaStatistics.getTableAreaStatistics(page, mTableWords);
 		
 		//	compute merged table markup, considering existing gaps
-		TableAreaMarkup mTableMarkup = this.getTableMarkup(page, mTableWords, selTables, mTableBox, mTableBoxStats);
+		TableAreaMarkup mTableMarkup = this.getTableMarkup(page, mTableWords, selTables, mTableBox, mTableBoxStats, ((inLineTableCount * 2) > selTables.length));
 		
 		//	check if merger makes sense
 		if (mTableMarkup.rows.length < 3) {
@@ -5082,7 +5107,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	compute merged table markup, considering existing gaps
 		ImRegion[] selTables = {selTable};
-		TableAreaMarkup extTableMarkup = this.getTableMarkup(page, extTableWords, selTables, extTableBox, extTableBoxStats);
+		TableAreaMarkup extTableMarkup = this.getTableMarkup(page, extTableWords, selTables, extTableBox, extTableBoxStats, selTable.hasAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE));
 		
 		//	get rows and columns of extended table
 		if (extTableMarkup.rows.length < 3) {
@@ -5199,6 +5224,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	mark cut table (we need that for diffing)
 		ImRegion cTable = new ImRegion(page.getDocument(), page.pageId, cTableBox, ImRegion.TABLE_TYPE);
+		if (table.hasAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE))
+			cTable.setAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE);
 		
 		//	diff table markup (salvages merged cells)
 		TableAreaMarkup cTableMarkup = new TableAreaMarkup(page, cTableWords, cTable, cTableCols, cTableRows, cTableCells);
@@ -5307,14 +5334,16 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	}
 	
 	private boolean assignTableCaption(ImDocument doc, ImRegion table, ImWord captionWord) {
-		if (!ImWord.TEXT_STREAM_TYPE_CAPTION.equals(captionWord.getTextStreamType()))
-			return false;
 		
 		//	find affected caption
 		ImAnnotation[] wordAnnots = doc.getAnnotationsSpanning(captionWord);
 		ArrayList wordCaptions = new ArrayList(2);
 		for (int a = 0; a < wordAnnots.length; a++) {
-			if (ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
+			if (!ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
+				continue;
+			if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(captionWord.getTextStreamType()))
+				wordCaptions.add(wordAnnots[a]);
+			else if (wordAnnots[a].hasAttribute(ImAnnotation.IN_LINE_OBJECT_MARKER_ATTRIBUTE))
 				wordCaptions.add(wordAnnots[a]);
 		}
 		if (wordCaptions.size() != 1)
@@ -5322,24 +5351,18 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
 		
 		//	does this caption match?
-		String firstWordStr = getStringFrom(wordCaption.getFirstWord());
-		if (!firstWordStr.toLowerCase().startsWith("tab"))
-			return false;
+		String firstWordStr = ImUtils.getStringFrom(wordCaption.getFirstWord());
+		if (!firstWordStr.toLowerCase().startsWith("tab")) {
+			int choice = DialogFactory.confirm("This caption appears to belong to a figure rather than a table.\r\nAre you sure you want to assign it to the table?", "Assign Figure Caption to Table?", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+			if (choice != JOptionPane.YES_OPTION)
+				return false;
+		}
 		
 		//	set attributes
 		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, table.bounds.toString());
 		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + table.pageId));
 		wordCaption.setAttribute("targetIsTable");
 		return true;
-	}
-	
-	private String getStringFrom(ImWord start) {
-		if ((start.getNextRelation() != ImWord.NEXT_RELATION_CONTINUE) && (start.getNextRelation() != ImWord.NEXT_RELATION_HYPHENATED))
-			return start.getString();
-		ImWord end = start;
-		while ((end.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) || (end.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED))
-			end = end.getNextWord();
-		return ImUtils.getString(start, end, true);
 	}
 	
 	private boolean connectTableRows(ImRegion startTable, ImWord secondWord) {

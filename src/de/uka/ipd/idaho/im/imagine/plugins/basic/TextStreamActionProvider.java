@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -32,10 +32,7 @@ import java.awt.Point;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -84,9 +81,11 @@ import de.uka.ipd.idaho.stringUtils.StringUtils;
  */
 public class TextStreamActionProvider extends AbstractSelectionActionProvider implements ImageMarkupToolProvider {
 	private static final String WORD_JOINER_IMT_NAME = "WordJoiner";
+	private static final String WORD_SPLITTER_IMT_NAME = "WordSplitter";
 	private static final String TEXT_FLOW_BREAK_CHECKER_IMT_NAME = "TextFlowBreakChecker";
 	
 	private ImageMarkupTool wordJoiner = new WordJoiner();
+	private ImageMarkupTool wordSplitter = new WordSplitter();
 	private ImageMarkupTool textFlowBreakChecker = new TextFlowBreakChecker();
 	
 	/** public zero-argument constructor for class loading */
@@ -121,61 +120,117 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		
 		//	we're not offering text stream editing if text streams are not visualized, only word relations
 		if (!idmp.areTextStreamsPainted()) {
-			if ((start == end) && (start.getNextWord() != null))
-				actions.add(new SelectionAction("streamWordRelation", "Set Next Word Relation", ("Set Relation between '" + start.getString() + "' and its Successor '" + start.getNextWord().getString() + "'")) {
-					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return false;
-					}
-					public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
-						JMenu pm = new JMenu("Set Next Word Relation");
-						ButtonGroup bg = new ButtonGroup();
-						final JMenuItem smi = new JRadioButtonMenuItem("Separate Word", (start.getNextRelation() == ImWord.NEXT_RELATION_SEPARATE));
-						smi.addActionListener(new ActionListener() {
-							public void actionPerformed(ActionEvent ae) {
-								if (smi.isSelected()) {
-									setNextRelation(ImWord.NEXT_RELATION_SEPARATE, invoker);
+			if (start == end) {
+				if (start.getNextWord() != null)
+					actions.add(new SelectionAction("streamWordRelation", "Set Next Word Relation", ("Set Relation between '" + start.getString() + "' and its Successor '" + start.getNextWord().getString() + "'")) {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return false;
+						}
+						public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+							JMenu pm = new JMenu("Set Next Word Relation");
+							ButtonGroup bg = new ButtonGroup();
+							final JMenuItem smi = new JRadioButtonMenuItem("Separate Word", (start.getNextRelation() == ImWord.NEXT_RELATION_SEPARATE));
+							smi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (smi.isSelected()) {
+										setNextRelation(ImWord.NEXT_RELATION_SEPARATE, invoker);
+									}
 								}
-							}
-						});
-						pm.add(smi);
-						bg.add(smi);
-						final JMenuItem pmi = new JRadioButtonMenuItem("Separate Word with Pararaph Break After", (start.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
-						pmi.addActionListener(new ActionListener() {
-							public void actionPerformed(ActionEvent ae) {
-								if (pmi.isSelected())
-									setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END, invoker);
-							}
-						});
-						pm.add(pmi);
-						bg.add(pmi);
-						final JMenuItem hmi = new JRadioButtonMenuItem("First Part of Hyphenated Word", (start.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED));
-						hmi.addActionListener(new ActionListener() {
-							public void actionPerformed(ActionEvent ae) {
-								if (hmi.isSelected())
-									setNextRelation(ImWord.NEXT_RELATION_HYPHENATED, invoker);
-							}
-						});
-						pm.add(hmi);
-						bg.add(hmi);
-						final JMenuItem cmi = new JRadioButtonMenuItem(((start.bounds.left <= start.getNextWord().bounds.left) ? "First Part of Split Word" : "First Part of Line-Broken Word"), (start.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE));
-						cmi.addActionListener(new ActionListener() {
-							public void actionPerformed(ActionEvent ae) {
-								if (cmi.isSelected())
-									setNextRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
-							}
-						});
-						pm.add(cmi);
-						bg.add(cmi);
-						return pm;
-					}
-					private void setNextRelation(char nextRelation, ImDocumentMarkupPanel invoker) {
-						invoker.beginAtomicAction("Set Next Word Relation");
-						start.setNextRelation(nextRelation);
-						invoker.endAtomicAction();
-						invoker.validate();
-						invoker.repaint();
-					}
-				});
+							});
+							pm.add(smi);
+							bg.add(smi);
+							final JMenuItem pmi = new JRadioButtonMenuItem("Separate Word with Pararaph Break After", (start.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+							pmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (pmi.isSelected())
+										setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END, invoker);
+								}
+							});
+							pm.add(pmi);
+							bg.add(pmi);
+							final JMenuItem hmi = new JRadioButtonMenuItem("First Part of Hyphenated Word", (start.getNextRelation() == ImWord.NEXT_RELATION_HYPHENATED));
+							hmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (hmi.isSelected())
+										setNextRelation(ImWord.NEXT_RELATION_HYPHENATED, invoker);
+								}
+							});
+							pm.add(hmi);
+							bg.add(hmi);
+							final JMenuItem cmi = new JRadioButtonMenuItem(((start.bounds.left <= start.getNextWord().bounds.left) ? "First Part of Split Word" : "First Part of Line-Broken Word"), (start.getNextRelation() == ImWord.NEXT_RELATION_CONTINUE));
+							cmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (cmi.isSelected())
+										setNextRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
+								}
+							});
+							pm.add(cmi);
+							bg.add(cmi);
+							return pm;
+						}
+						private void setNextRelation(char nextRelation, ImDocumentMarkupPanel invoker) {
+							invoker.beginAtomicAction("Set Next Word Relation");
+							start.setNextRelation(nextRelation);
+							invoker.endAtomicAction();
+							invoker.validate();
+							invoker.repaint();
+						}
+					});
+				if (start.getPreviousWord() != null)
+					actions.add(new SelectionAction("streamWordRelation", "Set Previous Word Relation", ("Set Relation between '" + start.getString() + "' and its Predecessor '" + start.getPreviousWord().getString() + "'")) {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return false;
+						}
+						public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+							JMenu pm = new JMenu("Set Previous Word Relation");
+							ButtonGroup bg = new ButtonGroup();
+							final JMenuItem smi = new JRadioButtonMenuItem("Separate Word", (start.getPreviousRelation() == ImWord.NEXT_RELATION_SEPARATE));
+							smi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (smi.isSelected())
+										setPreviousRelation(ImWord.NEXT_RELATION_SEPARATE, invoker);
+								}
+							});
+							pm.add(smi);
+							bg.add(smi);
+							final JMenuItem pmi = new JRadioButtonMenuItem("Separate Word with Pararaph Break Before", (start.getPreviousRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+							pmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (pmi.isSelected())
+										setPreviousRelation(ImWord.NEXT_RELATION_PARAGRAPH_END, invoker);
+								}
+							});
+							pm.add(pmi);
+							bg.add(pmi);
+							final JMenuItem hmi = new JRadioButtonMenuItem("Second Part of Hyphenated Word", (start.getPreviousRelation() == ImWord.NEXT_RELATION_HYPHENATED));
+							hmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (hmi.isSelected())
+										setPreviousRelation(ImWord.NEXT_RELATION_HYPHENATED, invoker);
+								}
+							});
+							pm.add(hmi);
+							bg.add(hmi);
+							final JMenuItem cmi = new JRadioButtonMenuItem(((start.bounds.left >= start.getPreviousWord().bounds.left) ? "Second Part of Split Word" : "Second Part of Line-Broken Word"), (start.getPreviousRelation() == ImWord.NEXT_RELATION_CONTINUE));
+							cmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (cmi.isSelected())
+										setPreviousRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
+								}
+							});
+							pm.add(cmi);
+							bg.add(cmi);
+							return pm;
+						}
+						private void setPreviousRelation(char previousRelation, ImDocumentMarkupPanel invoker) {
+							invoker.beginAtomicAction("Set Previous Word Relation");
+							start.getPreviousWord().setNextRelation(previousRelation);
+							invoker.endAtomicAction();
+							invoker.validate();
+							invoker.repaint();
+						}
+					});
+			}
 			else if (start.getNextWord() == end)
 				actions.add(new SelectionAction("streamWordRelation", "Set Word Relation", ("Set word relation between '" + start.getString() + "' and '" + end.getString() + "'")) {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
@@ -293,7 +348,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		
 		//	single word selection
 		if (start == end) {
-			if (start.getNextWord() != null) {
+			if (start.getNextWord() != null)
 				actions.add(new SelectionAction("streamWordRelation", "Set Next Word Relation", ("Set Relation between '" + start.getString() + "' and its Successor '" + start.getNextWord().getString() + "'")) {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
 						return false;
@@ -347,7 +402,60 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 						invoker.repaint();
 					}
 				});
-			}
+			if (start.getPreviousWord() != null)
+				actions.add(new SelectionAction("streamWordRelation", "Set Previous Word Relation", ("Set Relation between '" + start.getString() + "' and its Predecessor '" + start.getPreviousWord().getString() + "'")) {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return false;
+					}
+					public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+						JMenu pm = new JMenu("Set Previous Word Relation");
+						ButtonGroup bg = new ButtonGroup();
+						final JMenuItem smi = new JRadioButtonMenuItem("Separate Word", (start.getPreviousRelation() == ImWord.NEXT_RELATION_SEPARATE));
+						smi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (smi.isSelected())
+									setPreviousRelation(ImWord.NEXT_RELATION_SEPARATE, invoker);
+							}
+						});
+						pm.add(smi);
+						bg.add(smi);
+						final JMenuItem pmi = new JRadioButtonMenuItem("Separate Word with Pararaph Break Before", (start.getPreviousRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END));
+						pmi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (pmi.isSelected())
+									setPreviousRelation(ImWord.NEXT_RELATION_PARAGRAPH_END, invoker);
+							}
+						});
+						pm.add(pmi);
+						bg.add(pmi);
+						final JMenuItem hmi = new JRadioButtonMenuItem("Second Part of Hyphenated Word", (start.getPreviousRelation() == ImWord.NEXT_RELATION_HYPHENATED));
+						hmi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (hmi.isSelected())
+									setPreviousRelation(ImWord.NEXT_RELATION_HYPHENATED, invoker);
+							}
+						});
+						pm.add(hmi);
+						bg.add(hmi);
+						final JMenuItem cmi = new JRadioButtonMenuItem(((start.bounds.left >= start.getPreviousWord().bounds.left) ? "Second Part of Split Word" : "Second Part of Line-Broken Word"), (start.getPreviousRelation() == ImWord.NEXT_RELATION_CONTINUE));
+						cmi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (cmi.isSelected())
+									setPreviousRelation(ImWord.NEXT_RELATION_CONTINUE, invoker);
+							}
+						});
+						pm.add(cmi);
+						bg.add(cmi);
+						return pm;
+					}
+					private void setPreviousRelation(char previousRelation, ImDocumentMarkupPanel invoker) {
+						invoker.beginAtomicAction("Set Previous Word Relation");
+						start.getPreviousWord().setNextRelation(previousRelation);
+						invoker.endAtomicAction();
+						invoker.validate();
+						invoker.repaint();
+					}
+				});
 			if (start.getPreviousWord() != null)
 				actions.add(new SelectionAction("streamCutBefore", "Cut Stream Before", ("Cut text stream before '" + start.getString() + "'")) {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
@@ -364,7 +472,8 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 				});
 			actions.add(new TwoClickSelectionAction("streamMergeBackward", "Click Predeccessor", "Mark words, and set its predeccessor by clicking another word") {
 				public boolean performAction(ImWord secondWord) {
-					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && ((secondWord.pageId > start.pageId) || ((secondWord.pageId == start.pageId) && (secondWord.getTextStreamPos() >= start.getTextStreamPos())))) {
+//					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && ((secondWord.pageId > start.pageId) || ((secondWord.pageId == start.pageId) && (secondWord.getTextStreamPos() >= start.getTextStreamPos())))) {
+					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && (secondWord.getTextStreamPos() >= start.getTextStreamPos())) {
 						DialogFactory.alert(("'" + secondWord.getString() + "' cannot be the predecessor of '" + start.getString() + "'\nThey belong to the same logical text stream,\nand '" + start.getString() + "' is a treansitive predecessor of '" + secondWord.getString() + "'"), "Cannot Set Predecessor", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
@@ -384,7 +493,8 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			});
 			actions.add(new TwoClickSelectionAction("streamMergeForward", "Click Successor", "Mark words, and set its successor by clicking another word") {
 				public boolean performAction(ImWord secondWord) {
-					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && ((secondWord.pageId < start.pageId) || ((secondWord.pageId == start.pageId) && (secondWord.getTextStreamPos() <= start.getTextStreamPos())))) {
+//					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && ((secondWord.pageId < start.pageId) || ((secondWord.pageId == start.pageId) && (secondWord.getTextStreamPos() <= start.getTextStreamPos())))) {
+					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && (secondWord.getTextStreamPos() <= start.getTextStreamPos())) {
 						DialogFactory.alert(("'" + secondWord.getString() + "' cannot be the successor of '" + start.getString() + "'\nThey belong to the same logical text stream,\nand '" + start.getString() + "' is a treansitive successor of '" + secondWord.getString() + "'"), "Cannot Set Successor", JOptionPane.ERROR_MESSAGE);
 						return false;
 					}
@@ -774,6 +884,20 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 * OR BETTER TODO add function for manually flipping box selections, most likely in region actions, to facilitate manual cleanup right after decoding
 	 */
 	
+	/* TODO Prevent in-line separator dashes from getting in way of markup (especially pattern matching and lexicon lookups):
+- split tailing dashes off words unless successor
+  - follows after text flow break (potential hyphenation) ...
+  - ... or is "and" or "or" (in any target language)
+    ==> centrally provide respective dictionaries, most likely in StringUtils
+- also split if dash-tailed word lower case and successor capitalized ...
+- ... unless coming in from capitalized joined word sequence
+==> should get reference group figure dashes (tend to attach to species) out of FAT's way
+==> centralize to WordAnalysis
+==> call from PDF decoder after establishing text streams
+==> provide "Tools > Check Tokenization" to retro-apply functionality
+==> use rendering extent based measurements (centralize, see previous mail) for splitting
+	 */
+	
 	private static boolean orderStream(ImWord[] words, ImPage page) {
 		
 		//	anything to do at all?
@@ -853,7 +977,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getToolsMenuItemNames()
 	 */
 	public String[] getToolsMenuItemNames() {
-		String[] tmins = {WORD_JOINER_IMT_NAME, TEXT_FLOW_BREAK_CHECKER_IMT_NAME};
+		String[] tmins = {WORD_JOINER_IMT_NAME, WORD_SPLITTER_IMT_NAME, TEXT_FLOW_BREAK_CHECKER_IMT_NAME};
 		return tmins;
 	}
 	
@@ -863,6 +987,8 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	public ImageMarkupTool getImageMarkupTool(String name) {
 		if (WORD_JOINER_IMT_NAME.equals(name))
 			return this.wordJoiner;
+		else if (WORD_SPLITTER_IMT_NAME.equals(name))
+			return this.wordSplitter;
 		else if (TEXT_FLOW_BREAK_CHECKER_IMT_NAME.equals(name))
 			return this.textFlowBreakChecker;
 		else return null;
@@ -906,6 +1032,44 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
+	private static class WordSplitter implements ImageMarkupTool {
+		public String getLabel() {
+			return "Split Conflated Words";
+		}
+		public String getTooltip() {
+			return "Analyze line-internal word gaps, and split words conflated into one due to very narrow spaces - USE WITH CARE";
+		}
+		public String getHelpText() {
+			return null; // for now ...
+		}
+		public void process(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp, ProgressMonitor pm) {
+			
+			//	we only process documents as a whole
+			if (annot != null)
+				return;
+			
+			//	little use processing scanned documents
+			if (!idmp.documentBornDigital)
+				return;
+			
+			//	get lines
+			ArrayList docLines = new ArrayList();
+			ImPage[] pages = doc.getPages();
+			for (int p = 0; p < pages.length; p++) {
+				ImRegion[] pageLines = pages[p].getRegions(ImagingConstants.LINE_ANNOTATION_TYPE);
+				Arrays.sort(pageLines, ImUtils.topDownOrder);
+				docLines.addAll(Arrays.asList(pageLines));
+			}
+			ImRegion[] lines = ((ImRegion[]) docLines.toArray(new ImRegion[docLines.size()]));
+			
+			//	get tokenizer
+			Tokenizer tokenizer = ((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.NO_INNER_PUNCTUATION_TOKENIZER));
+			
+			//	process lines
+			splitWords(lines, tokenizer, pm);
+		}
+	}
+	
 	private static class TextFlowBreakChecker implements ImageMarkupTool {
 		public String getLabel() {
 			return "Check Text Flow Breaks";
@@ -933,17 +1097,10 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
-	private static class LineData {
+	private static abstract class LineData {
 		ImWord[] words;
 		int lineHeight;
 		int fontSize;
-		int maxWordGapJump;
-		int minWordGap;
-		int maxNonWordGap;
-		int avgWordGap;
-		int minSpaceWordGap;
-		int maxNonSpaceWordGap;
-		int mergeMinWordGap = -1;
 		LineData(ImWord[] words, int lineHeight, int fontSize) {
 			this.words = words;
 			this.lineHeight = lineHeight;
@@ -953,8 +1110,21 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	
 	private static final boolean DEBUG_WORD_MERGING = false;
 	
+	private static class WordJoiningLineData extends LineData {
+		int maxWordGapJump;
+		int minWordGap;
+		int maxNonWordGap;
+		int avgWordGap;
+		int minSpaceWordGap;
+		int maxNonSpaceWordGap;
+		int mergeMinWordGap = -1;
+		WordJoiningLineData(ImWord[] words, int lineHeight, int fontSize) {
+			super(words, lineHeight, fontSize);
+		}
+	}
+	
 	private static void joinWords(ImRegion[] lines, Tokenizer tokenizer, ProgressMonitor pm) {
-		LineData[] lineData = new LineData[lines.length];
+		WordJoiningLineData[] lineData = new WordJoiningLineData[lines.length];
 		
 		//	get line words, and measure font size
 		pm.setStep("Collecting line words");
@@ -978,7 +1148,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			int lFontSize = ((lFontSizeCount == 0) ? -1 : ((lFontSizeSum + (lFontSizeCount / 2)) / lFontSizeCount));
 			if (1 < lWords.length)
 				Arrays.sort(lWords, ImUtils.leftRightOrder);
-			lineData[l] = new LineData(lWords, (lines[l].bounds.bottom - lines[l].bounds.top), lFontSize);
+			lineData[l] = new WordJoiningLineData(lWords, (lines[l].bounds.bottom - lines[l].bounds.top), lFontSize);
 		}
 		
 		//	split lines up at gaps larger than twice line height TODO threshold low enough?
@@ -988,10 +1158,10 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		ArrayList lineDataList = new ArrayList();
 		for (int l = 0; l < lineData.length; l++) {
 			pm.setProgress((l * 100) / lines.length);
-			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ", max word gap jump " + lineData[l].maxWordGapJump + ")");
+			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ")");
 			
 			if (DEBUG_WORD_MERGING) {
-				System.out.println("Line " + l + " of " + lineData.length + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ", max word gap jump " + lineData[l].maxWordGapJump + ")");
+				System.out.println("Line " + l + " of " + lineData.length + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ")");
 				System.out.print("  words: " + lineData[l].words[0].getString());
 				for (int w = 1; w < lineData[l].words.length; w++) {
 					int gap = getGap(lineData[l].words[w-1], lineData[l].words[w]);
@@ -1010,10 +1180,10 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 				if ((lineData[l].lineHeight * 2) < gap) {
 					ImWord[] lWords = new ImWord[w];
 					System.arraycopy(lineData[l].words, 0, lWords, 0, lWords.length);
-					lineDataList.add(new LineData(lWords, lineData[l].lineHeight, lineData[l].fontSize));
+					lineDataList.add(new WordJoiningLineData(lWords, lineData[l].lineHeight, lineData[l].fontSize));
 					ImWord[] rWords = new ImWord[lineData[l].words.length - w];
 					System.arraycopy(lineData[l].words, w, rWords, 0, rWords.length);
-					lineData[l] = new LineData(rWords, lineData[l].lineHeight, lineData[l].fontSize);
+					lineData[l] = new WordJoiningLineData(rWords, lineData[l].lineHeight, lineData[l].fontSize);
 					if (DEBUG_WORD_MERGING) System.out.println("  split at " + w + " for " + gap + " gap");
 					w = 0;
 				}
@@ -1021,7 +1191,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			lineDataList.add(lineData[l]);
 		}
 		if (lineData.length < lineDataList.size())
-			lineData = ((LineData[]) lineDataList.toArray(new LineData[lineDataList.size()]));
+			lineData = ((WordJoiningLineData[]) lineDataList.toArray(new WordJoiningLineData[lineDataList.size()]));
 		
 		//	analyze word gap structure for all lines together
 		pm.setStep("Computing word gap distributions");
@@ -1032,7 +1202,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		CountingSet pageWordGapQuots = new CountingSet(new TreeMap());
 		for (int l = 0; l < lineData.length; l++) {
 			pm.setProgress((l * 100) / lines.length);
-			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ", max word gap jump " + lineData[l].maxWordGapJump + ")");
+			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ")");
 			
 			CountingSet lWordGaps = new CountingSet(new TreeMap());
 			CountingSet lWordGapQuots = new CountingSet(new TreeMap());
@@ -1734,6 +1904,472 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		return false;
 	}
 	
+	private static final boolean DEBUG_WORD_SPLITTING = true;
+	
+	private static class WordSplittingLineData extends LineData {
+		CountingSet all = new CountingSet(new TreeMap());
+		CountingSet separating = new CountingSet(new TreeMap());
+		CountingSet nonSpace = new CountingSet(new TreeMap());
+		CountingSet relevant;
+		float maxJump = -1;
+		float maxJumpLow = -1;
+		float maxJumpHigh = -1;
+		WordSplittingLineData(ImWord[] words, int lineHeight, int fontSize) {
+			super(words, lineHeight, fontSize);
+		}
+		void computeRelevantWordGaps(float avgNonSpaceGap) {
+			this.relevant = new CountingSet(new TreeMap());
+			if (this.nonSpace.isEmpty()) {
+				if (DEBUG_WORD_SPLITTING) System.out.println(" - added average non-space gap for lack of local ones");
+				this.relevant.add(new Float(round(avgNonSpaceGap, 1)));
+			}
+			else this.relevant.addAll(this.nonSpace);
+			this.relevant.addAll(this.separating);
+			if (DEBUG_WORD_SPLITTING) System.out.println(" - relevant gaps: " + this.relevant);
+			
+			float lastGap = Float.NaN;
+			for (Iterator git = this.relevant.iterator(); git.hasNext();) {
+				Number gap = ((Number) git.next());
+				if (!Float.isNaN(lastGap)) {
+					float gapJump = round((gap.floatValue() - lastGap), 1);
+					if (this.maxJump < gapJump) {
+						this.maxJump = gapJump;
+						this.maxJumpLow = lastGap;
+						this.maxJumpHigh = gap.floatValue();
+					}
+				}
+				lastGap = gap.floatValue();
+			}
+			if (DEBUG_WORD_SPLITTING) System.out.println(" - maximum gap jump is " + this.maxJump + " (" + this.maxJumpLow + "/" + this.maxJumpHigh + ")");
+		}
+	}
+	
+	private static void splitWords(ImRegion[] lines, Tokenizer tokenizer, ProgressMonitor pm) {
+		WordSplittingLineData[] lineData = new WordSplittingLineData[lines.length];
+		
+		//	get line words, and measure font size and line height
+		pm.setStep("Collecting line words");
+		pm.setBaseProgress(0);
+		pm.setMaxProgress(10);
+		int minFontSize = Integer.MAX_VALUE;
+		int maxFontSize = 0;
+		int lineHeightSum = 0;
+		for (int l = 0; l < lines.length; l++) {
+			pm.setProgress((l * 100) / lines.length);
+			
+			ImWord[] lWords = lines[l].getWords();
+			int lFontSizeSum = 0;
+			int lFontSizeCount = 0;
+			for (int w = 1; w < lWords.length; w++) try {
+				int wfs = lWords[w].getFontSize();
+				minFontSize = Math.min(minFontSize, wfs);
+				maxFontSize = Math.max(maxFontSize, wfs);
+				lFontSizeSum += wfs;
+				lFontSizeCount++;
+			} catch (RuntimeException re) {}
+			int lFontSize = ((lFontSizeCount == 0) ? -1 : ((lFontSizeSum + (lFontSizeCount / 2)) / lFontSizeCount));
+			if (1 < lWords.length)
+				Arrays.sort(lWords, ImUtils.leftRightOrder);
+			lineData[l] = new WordSplittingLineData(lWords, (lines[l].bounds.bottom - lines[l].bounds.top), lFontSize);
+			lineHeightSum += lines[l].bounds.getHeight();
+		}
+		int avgLineHeight = ((lineHeightSum + (lines.length / 2)) / lines.length);
+		
+		//	split lines up at gaps larger than twice line height TODO threshold low enough?
+		pm.setStep("Splitting lines at large gaps");
+		pm.setBaseProgress(10);
+		pm.setMaxProgress(20);
+		ArrayList lineDataList = new ArrayList();
+		for (int l = 0; l < lineData.length; l++) {
+			pm.setProgress((l * 100) / lines.length);
+			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ")");
+			
+			if (DEBUG_WORD_SPLITTING) {
+				System.out.println("Line " + l + " of " + lineData.length + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + ")");
+				System.out.print("  words: " + lineData[l].words[0].getString());
+				for (int w = 1; w < lineData[l].words.length; w++) {
+					int gap = getGap(lineData[l].words[w-1], lineData[l].words[w]);
+					System.out.print(((gap < 100) ? "" : " ") + ((gap < 10) ? "" : " ") + " " + lineData[l].words[w].getString());
+				}
+				System.out.println();
+				System.out.print("   gaps: " + lineData[l].words[0].getString().replaceAll(".", " "));
+				for (int w = 1; w < lineData[l].words.length; w++) {
+					int gap = getGap(lineData[l].words[w-1], lineData[l].words[w]);
+					System.out.print(gap + "" + lineData[l].words[w].getString().replaceAll(".", " "));
+				}
+				System.out.println();
+			}
+			for (int w = 1; w < lineData[l].words.length; w++) {
+				int gap = getGap(lineData[l].words[w-1], lineData[l].words[w]);
+				if ((lineData[l].lineHeight * 2) < gap) {
+					ImWord[] lWords = new ImWord[w];
+					System.arraycopy(lineData[l].words, 0, lWords, 0, lWords.length);
+					lineDataList.add(new WordSplittingLineData(lWords, lineData[l].lineHeight, lineData[l].fontSize));
+					ImWord[] rWords = new ImWord[lineData[l].words.length - w];
+					System.arraycopy(lineData[l].words, w, rWords, 0, rWords.length);
+					lineData[l] = new WordSplittingLineData(rWords, lineData[l].lineHeight, lineData[l].fontSize);
+					if (DEBUG_WORD_SPLITTING) System.out.println("  split at " + w + " for " + gap + " gap");
+					w = 0;
+				}
+			}
+			lineDataList.add(lineData[l]);
+		}
+		if (lineData.length < lineDataList.size())
+			lineData = ((WordSplittingLineData[]) lineDataList.toArray(new WordSplittingLineData[lineDataList.size()]));
+		pm.setProgress(100);
+		
+		/* TODOne Build WordSplitter as reverse of WordJoiner:
+		 * - https://github.com/gsautter/goldengate-imagine/issues/864
+		 * - TEST: Nauplius.26.e2018015.imd at FFA6FFE8FF85CB7DB102C5500823306A
+		 */
+		
+		//	analyze word gap structure for all lines together
+		CountingSet allSeparatingWordGaps = new CountingSet(new TreeMap());
+		CountingSet allNonSpaceWordGaps = new CountingSet(new TreeMap());
+		
+		//	collect all words for dictionary-based scoring in problematic lines
+		CountingSet allWords = new CountingSet(new TreeMap(String.CASE_INSENSITIVE_ORDER));
+		
+		//	compute word gaps for all lines, and collect separating ones as well as ones that do _non_ represent spaces
+		pm.setStep("Computing word gap distributions");
+		pm.setBaseProgress(20);
+		pm.setMaxProgress(50);
+		for (int l = 0; l < lineData.length; l++) {
+			pm.setProgress((l * 100) / lines.length);
+			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + "): " + ImUtils.getString(lineData[l].words, true, 2));
+			
+			for (int w = 1; w < lineData[l].words.length; w++) {
+				int gap = (lineData[l].words[w].bounds.left - lineData[l].words[w-1].bounds.right);
+				lineData[l].all.add(new Float(normalize(gap, lineData[l].lineHeight, avgLineHeight, 1)));
+				if (lineData[l].words[w-1].getFontSize() != lineData[l].words[w].getFontSize())
+					continue; // skip over emulated small-caps
+				String lwStr = StringUtils.normalizeString(lineData[l].words[w-1].getString());
+				if (lwStr.startsWith("<") || lwStr.startsWith(">"))
+					continue;
+				String rwStr = StringUtils.normalizeString(lineData[l].words[w].getString());
+				if (rwStr.startsWith("<") || rwStr.startsWith(">"))
+					continue;
+				String wStr = (lwStr + rwStr);
+				if (wStr.matches("\\.{2,}"))
+					continue;
+				TokenSequence wTs = tokenizer.tokenize(wStr);
+				
+				boolean isSpace;
+				if (".:,;!?".indexOf(rwStr) != -1)
+					isSpace = false;
+				else if (StringUtils.isClosingBracket(rwStr.substring(0, 1)))
+					isSpace = false;
+				else if (StringUtils.isOpeningBracket(lwStr.substring(0, 1)))
+					isSpace = false;
+				else if (StringUtils.isClosingBracket(lwStr.substring(0, 1)))
+					isSpace = true;
+				else if (StringUtils.isOpeningBracket(rwStr.substring(0, 1)))
+					isSpace = true;
+				else if (":,;!?".indexOf(lwStr) != -1)
+					isSpace = true;
+				else if (StringUtils.isWord(lwStr) && StringUtils.isWord(rwStr))
+					isSpace = true;
+				else if (StringUtils.isNumber(lwStr) && StringUtils.isNumber(rwStr))
+					isSpace = true;
+				else continue;
+				/* NON-SPACES: count
+				 * - 	before periods
+				 * - 	before closing brackets
+				 * - 	before colons, commas, semicolons
+				 * - 	before question and exclamation marks
+				 * - 	after opening brackets
+				 * 
+				 * SPACES: count
+				 * - between words (both if second starts or does not start with cap)
+				 * - 	after colons, semicolons, and commas
+				 * - 	before opening brackets
+				 * - 	after closing brackets (unless followed by any of above space blockers along lines of period, colon, etc.)
+				 */
+				
+				if (wTs.size() == 1)
+					lineData[l].separating.add(new Float(normalize(gap, lineData[l].lineHeight, avgLineHeight, 1)));
+				else if (!isSpace)
+					lineData[l].nonSpace.add(new Float(normalize(gap, lineData[l].lineHeight, avgLineHeight, 1)));
+			}
+			
+			if (DEBUG_WORD_SPLITTING) {
+				System.out.println(" - separator gaps: " + lineData[l].separating);
+				System.out.println(" - non-space gaps: " + lineData[l].nonSpace);
+			}
+			
+			allSeparatingWordGaps.addAll(lineData[l].separating);
+			allNonSpaceWordGaps.addAll(lineData[l].nonSpace);
+			
+			if (lineData[l].separating.isEmpty()) {
+				collectWords(lineData[l], allWords);
+				lineData[l] = null; // no need to bother with this one any longer
+			}
+		}
+		pm.setProgress(100);
+		
+		MedianAverage allAvgNonSpaceGap = getMedianAverage(allNonSpaceWordGaps);
+		MedianAverage allAvgSeparatingGap = getMedianAverage(allSeparatingWordGaps);
+		if (DEBUG_WORD_SPLITTING) {
+			System.out.println("Overall word gaps:");
+			System.out.println(" - tokenizing apart without required space: " + allNonSpaceWordGaps);
+			System.out.println("   ==>  " + allAvgNonSpaceGap);
+			System.out.println(" - separating tokens: " + allSeparatingWordGaps);
+			System.out.println("   ==>  " + allAvgSeparatingGap);
+		}
+		
+		//	handle lines whose gap distribution is unambiguous
+		pm.setStep("Handling unproblematic lines");
+		pm.setBaseProgress(50);
+		pm.setMaxProgress(75);
+		for (int l = 0; l < lineData.length; l++) {
+			pm.setProgress((l * 100) / lines.length);
+			if (lineData[l] == null)
+				continue; // no relevant spaces in this one at all ...
+			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + "): " + ImUtils.getString(lineData[l].words, true, 2));
+			
+			if (DEBUG_WORD_SPLITTING) {
+				System.out.println(" - all gaps: " + lineData[l]);
+				System.out.println(" - separator gaps: " + lineData[l].separating);
+				System.out.println(" - non-space gaps: " + lineData[l].nonSpace);
+				System.out.print("  words: " + lineData[l].words[0].getString());
+				for (int w = 1; w < lineData[l].words.length; w++) {
+					int gap = (lineData[l].words[w].bounds.left - lineData[l].words[w-1].bounds.right);
+					System.out.print(((gap < 100) ? "" : " ") + (((gap < 10) && (-1 < gap)) ? "" : " ") + " " + lineData[l].words[w].getString());
+				}
+				System.out.println();
+				System.out.print("   gaps: " + lineData[l].words[0].getString().replaceAll(".", " "));
+				for (int w = 1; w < lineData[l].words.length; w++) {
+					int gap = (lineData[l].words[w].bounds.left - lineData[l].words[w-1].bounds.right);
+					System.out.print(gap + "" + lineData[l].words[w].getString().replaceAll(".", " "));
+				}
+				System.out.println();
+			}
+			
+			lineData[l].computeRelevantWordGaps(allAvgNonSpaceGap.average);
+			int minSpaceWidth = -1;
+			
+			if (Math.abs(lineData[l].maxJumpLow - allAvgNonSpaceGap.average) > Math.abs(lineData[l].maxJumpLow - allAvgSeparatingGap.average))
+				pm.setInfo(" ==> looking problematic, low end of maximum jump closer to separating gap: " + Math.abs(lineData[l].maxJumpLow - allAvgNonSpaceGap.average) + " > " + Math.abs(lineData[l].maxJumpLow - allAvgSeparatingGap.average));
+			else if (Math.abs(lineData[l].maxJumpHigh - allAvgNonSpaceGap.average) < Math.abs(lineData[l].maxJumpHigh - allAvgSeparatingGap.average)) {
+				pm.setInfo(" ==> looking problematic, high end of maximum jump closer to non-space gap: " + Math.abs(lineData[l].maxJumpHigh - allAvgNonSpaceGap.average) + " < " + Math.abs(lineData[l].maxJumpHigh - allAvgSeparatingGap.average));
+				float lWordGapMax = ((Float) lineData[l].all.last()).floatValue();
+				pm.setInfo(" - maximum gap is " + lWordGapMax + " against global average of " + allAvgSeparatingGap.average);
+				
+				//	proceed as normal if _maximum_ gap below over-all average as well (extremely dense line)
+				if (lWordGapMax < allAvgSeparatingGap.average) {
+					pm.setInfo(" ==> looking OK at last, just very dense, joining down from " + lineData[l].maxJumpLow + " and splitting up from " + lineData[l].maxJumpHigh);
+					minSpaceWidth = ((int) normalize(lineData[l].maxJumpHigh, avgLineHeight, lineData[l].lineHeight, 0));
+				}
+				else pm.setInfo(" ==> still looking problematic");
+			}
+			else {
+				pm.setInfo(" ==> looking OK, joining down from " + lineData[l].maxJumpLow + " and splitting up from " + lineData[l].maxJumpHigh);
+				minSpaceWidth = ((int) normalize(lineData[l].maxJumpHigh, avgLineHeight, lineData[l].lineHeight, 0));
+			}
+			if (minSpaceWidth == -1)
+				continue; // let's get back to this trouble maker later
+			
+			pm.setInfo(" ==> minimum space width: " + minSpaceWidth + " = " + (((float) minSpaceWidth) / lineData[l].lineHeight));
+			applyMinSpaceWidth(lineData[l], tokenizer, minSpaceWidth, allWords);
+			lineData[l] = null; // no need to bother with this one any longer
+		}
+		pm.setProgress(100);
+		
+		//	handle remaining lines, now that we have a dictionary for sensibility checks
+		pm.setStep("Handling remaining lines");
+		pm.setBaseProgress(75);
+		pm.setMaxProgress(100);
+		for (int l = 0; l < lineData.length; l++) {
+			pm.setProgress((l * 100) / lines.length);
+			if (lineData[l] == null)
+				continue; // no relevant spaces in this one at all ...
+			pm.setInfo("Line " + l + " at " + lineData[l].words[0].getLocalID() + " (font size " + lineData[l].fontSize + ", height " + lineData[l].lineHeight + "): " + ImUtils.getString(lineData[l].words, true, 2));
+			
+			if (DEBUG_WORD_SPLITTING) {
+				System.out.println(" - separator gaps: " + lineData[l].separating);
+				System.out.println(" - non-space gaps: " + lineData[l].nonSpace);
+				System.out.print("  words: " + lineData[l].words[0].getString());
+				for (int w = 1; w < lineData[l].words.length; w++) {
+					int gap = (lineData[l].words[w].bounds.left - lineData[l].words[w-1].bounds.right);
+					System.out.print(((gap < 100) ? "" : " ") + (((gap < 10) && (-1 < gap)) ? "" : " ") + " " + lineData[l].words[w].getString());
+				}
+				System.out.println();
+				System.out.print("   gaps: " + lineData[l].words[0].getString().replaceAll(".", " "));
+				for (int w = 1; w < lineData[l].words.length; w++) {
+					int gap = (lineData[l].words[w].bounds.left - lineData[l].words[w-1].bounds.right);
+					System.out.print(gap + "" + lineData[l].words[w].getString().replaceAll(".", " "));
+				}
+				System.out.println();
+			}
+			
+			if (Math.abs(lineData[l].maxJumpLow - allAvgNonSpaceGap.average) > Math.abs(lineData[l].maxJumpLow - allAvgSeparatingGap.average))
+				pm.setInfo(" ==> looking problematic, low end of maximum jump closer to separating gap: " + Math.abs(lineData[l].maxJumpLow - allAvgNonSpaceGap.average) + " > " + Math.abs(lineData[l].maxJumpLow - allAvgSeparatingGap.average));
+			else if (Math.abs(lineData[l].maxJumpHigh - allAvgNonSpaceGap.average) < Math.abs(lineData[l].maxJumpHigh - allAvgSeparatingGap.average))
+				pm.setInfo(" ==> looking problematic, high end of maximum jump closer to non-space gap: " + Math.abs(lineData[l].maxJumpHigh - allAvgNonSpaceGap.average) + " < " + Math.abs(lineData[l].maxJumpHigh - allAvgSeparatingGap.average));
+			
+			pm.setInfo(" ==> scoring all word gaps:");
+			int bestGapScore = 0;
+			int bestMinSpaceWidth = -1;
+			for (Iterator git = lineData[l].relevant.iterator(); git.hasNext();) {
+				Number tGap = ((Number) git.next());
+				if (tGap.floatValue() <= 0)
+					continue;
+				if (DEBUG_WORD_SPLITTING) System.out.println(" - testing " + tGap + " minimum for separating word gaps:");
+				int gMinSpaceWidth = ((int) normalize(tGap.floatValue(), avgLineHeight, lineData[l].lineHeight, 0));
+				if (DEBUG_WORD_SPLITTING) System.out.println("   - minimum space width is " + gMinSpaceWidth);
+				StringBuffer glStr = new StringBuffer(StringUtils.normalizeString(lineData[l].words[0].getString()));
+				for (int w = 1; w < lineData[l].words.length; w++) {
+					int gap = (lineData[l].words[w].bounds.left - lineData[l].words[w-1].bounds.right);
+					if (gap >= gMinSpaceWidth)
+						glStr.append(" ");
+					glStr.append(StringUtils.normalizeString(lineData[l].words[w].getString()));
+				}
+				if (DEBUG_WORD_SPLITTING) System.out.println("   - line is " + glStr);
+				TokenSequence gTs = tokenizer.tokenize(glStr);
+				int gWordCount = 0;
+				int gCharCount = 0;
+				int gHitWordCount = 0;
+				int gHitCharCount = 0;
+				int gHitWordPoints = 0;
+				for (int t = 0; t < gTs.size(); t++) {
+					String wStr = gTs.valueAt(t);
+					if (!StringUtils.isWord(wStr))
+						continue;
+					gWordCount++;
+					gCharCount += wStr.length();
+					int wCount = allWords.getCount(wStr);
+					if (wCount == 0)
+						continue;
+					gHitWordCount++;
+					gHitCharCount += wStr.length();
+					gHitWordPoints += (wCount * wStr.length());
+				}
+				if (DEBUG_WORD_SPLITTING) {
+					System.out.println("   ==> got " + gHitWordCount + " out of " + gWordCount + " words in dictionary");
+					System.out.println("   ==> got " + gHitCharCount + " out of " + gCharCount + " word chars in dictionary");
+				}
+				//	int gScore = ((gHitWordPoints * gHitCharCount * gMinSpaceWidth) / gCharCount);
+				//	CANNOT FACTOR IN SPACE WIDTH: line with only few _adjacent_ words would get larger gap selected despite lower dictionary hit rate
+				int gScore = (((gHitWordPoints * gHitCharCount) / gCharCount) + gMinSpaceWidth);
+				//	BETTER: just ensures that larger gap wins for same dictionary hit rate
+				if (DEBUG_WORD_SPLITTING) System.out.println("   ==> score is " + gScore);
+				if (bestGapScore < gScore) {
+					bestGapScore = gScore;
+					bestMinSpaceWidth = gMinSpaceWidth;
+					if (DEBUG_WORD_SPLITTING) System.out.println("   ==> new best score");
+				}
+			}
+			if (bestMinSpaceWidth == -1)
+				continue;
+			
+			pm.setInfo(" ==> minimum space width: " + bestMinSpaceWidth + " = " + (((float) bestMinSpaceWidth) / lineData[l].lineHeight));
+			applyMinSpaceWidth(lineData[l], tokenizer, bestMinSpaceWidth, null);
+		}
+		pm.setProgress(100);
+	}
+	
+	private static float normalize(float val, int fromDenom, int toDenom, int toSigDigits) {
+		return round((val * toDenom), fromDenom, toSigDigits);
+	}
+	
+	private static float round(float nom, int denom, int toSigDigits) {
+		return round((nom / denom), toSigDigits);
+	}
+	
+	private static float round(float value, int toSigDigits) {
+		int mul = 1;
+		if (toSigDigits == 1)
+			mul = 10;
+		else if (toSigDigits == 2)
+			mul = 100;
+		else for (int d = 0; d < toSigDigits; d++)
+			mul *= 10;
+		return (((float) Math.round(value * mul)) / mul);
+	}
+	
+	private static class MedianAverage {
+		final int valTotal;
+		final int valMed;
+		final float medMin;
+		final float medMax;
+		final float average;
+		MedianAverage(int valTotal, int valMed, float medMin, float medMax, float average) {
+			this.valTotal = valTotal;
+			this.valMed = valMed;
+			this.medMin = medMin;
+			this.medMax = medMax;
+			this.average = average;
+		}
+		public String toString() {
+			return ("" + this.average + " (" + this.valMed + "/" + this.valTotal + ":[" + this.medMin + "," + this.medMax + "])");
+		}
+	}
+	
+	private static MedianAverage getMedianAverage(CountingSet values) {
+		if (values.isEmpty())
+			return new MedianAverage(0, 0, 0, 0, 0);
+		int total = values.size();
+		int seenValueCount = 0;
+		float inSumMin = Float.NaN;
+		float inSumMax = 0;
+		float valueSum = 0;
+		int inSumValueCount = 0;
+		for (Iterator vit = values.iterator(); vit.hasNext();) {
+			Number value = ((Number) vit.next());
+			int count = values.getCount(value);
+			seenValueCount += count;
+			if ((seenValueCount * 5) < (total * 1))
+				continue; // still below 20%, disregard minimum 20% values
+			if (Float.isNaN(inSumMin))
+				inSumMin = value.floatValue();
+			inSumMax = value.floatValue();
+			valueSum += (count * value.floatValue());
+			inSumValueCount += count;
+			if ((seenValueCount * 5) >= (total * 4))
+				break; // made it above 80%, disregard maximum 20% values
+		}
+		return new MedianAverage(values.size(), inSumValueCount, inSumMin, inSumMax, (valueSum / inSumValueCount));
+	}
+	
+	private static boolean applyMinSpaceWidth(LineData lineData, Tokenizer tokenizer, int minSpaceWidth, CountingSet allWords) {
+		boolean modified = false;
+		for (int w = 1; w < lineData.words.length; w++) {
+			int gap = (lineData.words[w].bounds.left - lineData.words[w-1].bounds.right);
+			String lwStr = StringUtils.normalizeString(lineData.words[w-1].getString());
+			String rwStr = StringUtils.normalizeString(lineData.words[w].getString());
+			String wStr = (lwStr + rwStr);
+			TokenSequence wTs = tokenizer.tokenize(wStr);
+			if (wTs.size() != 1)
+				continue;
+			if (gap < minSpaceWidth) {
+				lineData.words[w-1].setNextRelation(ImWord.NEXT_RELATION_CONTINUE);
+				modified = true;
+			}
+			else if (lineData.words[w-1].getNextRelation() == ImWord.NEXT_RELATION_CONTINUE) {
+				lineData.words[w-1].setNextRelation(ImWord.NEXT_RELATION_SEPARATE);
+				modified = true;
+			}
+		}
+		if (allWords != null)
+			collectWords(lineData, allWords);
+		return modified;
+	}
+	
+	private static void collectWords(LineData lineData, CountingSet allWords) {
+		for (int w = 0; w < lineData.words.length; w++) {
+			String wStr = StringUtils.normalizeString(lineData.words[w].getString());
+			if (!StringUtils.isWord(wStr))
+				continue;
+			if (lineData.words[w].getPreviousRelation() == ImWord.NEXT_RELATION_CONTINUE)
+				continue;
+			if ((w == 0) && (lineData.words[w].getPreviousRelation() == ImWord.NEXT_RELATION_HYPHENATED))
+				continue;
+			wStr = StringUtils.normalizeString(ImUtils.getStringFrom(lineData.words[w]));
+			if (StringUtils.isWord(wStr))
+				allWords.add(wStr);
+		}
+	}
+	
 	private static void checkTextFlowBreaks(ImWord[] textStreamHeads, Tokenizer tokenizer, ProgressMonitor pm) {
 		
 		//	collect all document words to form lookup list, and count them out along the way
@@ -2051,10 +2687,27 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 	 * 
 	 * TEST WITH Lopez_et_al.pdf (words torn into individual letters due to combination of char decoding problems and obfuscation-aimed word rendering)
 	 */
+//	public static void main(String[] args) throws Exception {
+//		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Eigene Daten/Plazi Workshop - Heraklion 2015/Lopez et al.pdf.charsOk.imf")));
+//		ImDocument doc = ImDocumentIO.loadDocument(docIn);
+//		docIn.close();
+//		Tokenizer tokenizer = ((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.NO_INNER_PUNCTUATION_TOKENIZER));
+//		
+//		//	get lines
+//		ArrayList docLines = new ArrayList();
+//		ImPage[] pages = doc.getPages();
+//		for (int p = 0; p < pages.length; p++) {
+//			ImRegion[] pageLines = pages[p].getRegions(ImagingConstants.LINE_ANNOTATION_TYPE);
+//			Arrays.sort(pageLines, ImUtils.topDownOrder);
+////			if (p == 0)
+//			docLines.addAll(Arrays.asList(pageLines));
+//		}
+//		ImRegion[] lines = ((ImRegion[]) docLines.toArray(new ImRegion[docLines.size()]));
+//		joinWords(lines, tokenizer, ProgressMonitor.dummy);
+//	}
+	
 	public static void main(String[] args) throws Exception {
-		InputStream docIn = new BufferedInputStream(new FileInputStream(new File("E:/Eigene Daten/Plazi Workshop - Heraklion 2015/Lopez et al.pdf.charsOk.imf")));
-		ImDocument doc = ImDocumentIO.loadDocument(docIn);
-		docIn.close();
+		ImDocument doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/Nauplius.26.e2018015.imdir"));
 		Tokenizer tokenizer = ((Tokenizer) doc.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.NO_INNER_PUNCTUATION_TOKENIZER));
 		
 		//	get lines
@@ -2067,6 +2720,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			docLines.addAll(Arrays.asList(pageLines));
 		}
 		ImRegion[] lines = ((ImRegion[]) docLines.toArray(new ImRegion[docLines.size()]));
-		joinWords(lines, tokenizer, ProgressMonitor.dummy);
+		splitWords(lines, tokenizer, ProgressMonitor.dummy);
 	}
 }

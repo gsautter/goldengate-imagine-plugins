@@ -10,11 +10,11 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of the Universität Karlsruhe (TH) / KIT nor the
+ *     * Neither the name of the Universitaet Karlsruhe (TH) / KIT nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY UNIVERSITÄT KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
+ * THIS SOFTWARE IS PROVIDED BY UNIVERSITAET KARLSRUHE (TH) / KIT AND CONTRIBUTORS 
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY
@@ -2083,7 +2083,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		private JComboBox filterSelector = new JComboBox();
 		private boolean customFilterSelectorKeyPressed = false;
 		
-		ObjectListDialog(String title, MutableAnnotation wrappedDoc, boolean showingLayoutObjects, ImDocumentMarkupPanel target, AnnotationFilter filter) {
+		ObjectListDialog(String title, ImDocumentRoot wrappedDoc, boolean showingLayoutObjects, ImDocumentMarkupPanel target, AnnotationFilter filter) {
 			super(title, true);
 			this.originalTitle = title;
 			this.showingLayoutObjects = showingLayoutObjects;
@@ -2247,7 +2247,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			private ObjectTray[] objectTrays;
 			private HashMap objectTraysByID = new HashMap();
 			
-			private MutableAnnotation wrappedDoc;
+			private ImDocumentRoot wrappedDoc;
 			private ImDocumentMarkupPanel target;
 			private boolean showingLayoutObjects;
 			private String layoutObjectName;
@@ -2271,7 +2271,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			private int sortColumn = -1;
 			private boolean sortDescending = false;
 			
-			ObjectListPanel(MutableAnnotation data, boolean showingLayoutObjects, ImDocumentMarkupPanel target) {
+			ObjectListPanel(ImDocumentRoot data, boolean showingLayoutObjects, ImDocumentMarkupPanel target) {
 				super(new BorderLayout(), true);
 				this.setBorder(BorderFactory.createEtchedBorder());
 				this.wrappedDoc = data;
@@ -2299,24 +2299,24 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 		                	sortDescending = false;
 		                	sortColumn = newSortColumn;
 		                }
-		                sortObjects();
+		                sortObjects(true);
 					}
 				});
 				
-				this.refreshObjectList();
+				this.refreshObjectList(true);
 				
 				JScrollPane annotationTableBox = new JScrollPane(this.objectTable);
 				
 				this.showMatches.addItemListener(new ItemListener() {
 					public void itemStateChanged(ItemEvent ie) {
 						if (showMatches.isSelected())
-							refreshObjectList();
+							refreshObjectList(true);
 					}
 				});
 				this.highlightMatches.addItemListener(new ItemListener() {
 					public void itemStateChanged(ItemEvent ie) {
 						if (highlightMatches.isSelected())
-							refreshObjectList();
+							refreshObjectList(true);
 					}
 				});
 				
@@ -2338,7 +2338,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			
 			private JPanel buildMenu() {
 				this.mergeButton = new JButton("Merge");
-				this.mergeButton.setToolTipText("Merge " + layoutObjectName.toLowerCase() + "s, i.e., change their type");
+				this.mergeButton.setToolTipText("Merge " + layoutObjectName.toLowerCase() + "s");
 				this.mergeButton.setBorder(BorderFactory.createRaisedBevelBorder());
 				this.mergeButton.addActionListener(new ActionListener() {
 					public void actionPerformed(ActionEvent ae) {
@@ -2364,7 +2364,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 							if (annotations[a] != mAnnotation)
 								wrappedDoc.removeAnnotation(annotations[a]);
 						}
-						refreshObjectList();
+						refreshObjectList(false);
 					}
 				});
 				
@@ -2383,7 +2383,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 							return;
 						for (int a = 0; a < annotations.length; a++)
 							annotations[a].changeTypeTo(newType);
-						refreshObjectList();
+						refreshObjectList(false);
 						if (showingLayoutObjects)
 							target.setRegionsPainted(newType, true);
 						else target.setAnnotationsPainted(newType, true);
@@ -2399,7 +2399,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 						if (annotations.length != 0) {
 							for (int a = 0; a < annotations.length; a++)
 								wrappedDoc.removeAnnotation(annotations[a]);
-							refreshObjectList();
+							refreshObjectList(false);
 						}
 					}
 				});
@@ -2413,7 +2413,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 						if (annotations.length != 0) {
 							for (int a = 0; a < annotations.length; a++)
 								wrappedDoc.removeTokens(annotations[a]);
-							refreshObjectList();
+							refreshObjectList(false);
 						}
 					}
 				});
@@ -2534,13 +2534,21 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 			
 			void setFilter(AnnotationFilter filter) {
 				this.filter = filter;
-				this.refreshObjectList();
+				this.refreshObjectList(true);
 			}
 			
-			void refreshObjectList() {
+			void refreshObjectList(boolean clearSortOrder) {
+				
+				//	remember selection
+				int[] selectedRows = (clearSortOrder ? null : this.objectTable.getSelectedRows());
+				int listSize = ((this.objectTrays == null) ? -1 : this.objectTrays.length);
 				
 				//	apply filter
 				this.objectTrays = getObjects(this.filter, this.wrappedDoc, this.objectTraysByID, this.highlightMatches.isSelected());
+				
+				//	clear selection if list size changed
+				if (this.objectTrays.length != listSize)
+					selectedRows = null;
 				
 				//	set up statistics
 				String matchObjectType = ((this.objectTrays.length == 0) ? "" : this.objectTrays[0].wrappedObject.getType());
@@ -2550,7 +2558,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				for (int o = 0; o < this.objectTrays.length; o++) {
 					if (!matchObjectType.equals(this.objectTrays[0].wrappedObject.getType()))
 						matchObjectType = "";
-					if (this.objectTrays[0].isMatch)
+					if (this.objectTrays[o].isMatch)
 						this.matchObjectCount++;
 				}
 				
@@ -2580,81 +2588,24 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				this.objectTable.getColumnModel().getColumn(1).setMaxWidth(50);
 				this.objectTable.getColumnModel().getColumn(2).setMaxWidth(50);
 				
-				this.sortColumn = -1;
-				this.sortDescending = false;
-				this.refreshDisplay();
+				if (clearSortOrder) {
+					this.sortColumn = -1;
+					this.sortDescending = false;
+				}
+				
+				if (this.sortColumn == -1)
+					this.refreshDisplay();
+				else this.sortObjects(selectedRows == null);
+				
+				if (selectedRows != null)
+					for (int r = 0; r < selectedRows.length; r++) {
+						if (r == 0)
+							this.objectTable.setRowSelectionInterval(selectedRows[r], selectedRows[r]);
+						else this.objectTable.addRowSelectionInterval(selectedRows[r], selectedRows[r]);
+					}
 			}
-//			
-//			void refreshObjectList() {
-//				
-//				//	apply filter
-//				MutableAnnotation[] objects = ((this.filter == null) ? new MutableAnnotation[0] : this.filter.getMutableMatches(this.wrappedDoc));
-//				this.objectTrays = new ObjectTray[objects.length];
-//				
-//				//	set up statistics
-//				String type = ((objects.length == 0) ? "" : objects[0].getType());
-//				Set matchIDs = new HashSet();
-//				
-//				//	check matching annotations
-//				for (int a = 0; a < objects.length; a++) {
-//					if (!type.equals(objects[a].getType()))
-//						type = "";
-//					matchIDs.add(objects[a].getAnnotationID());
-//					if (this.objectTraysByID.containsKey(objects[a].getAnnotationID()))
-//						this.objectTrays[a] = ((ObjectTray) this.objectTraysByID.get(objects[a].getAnnotationID()));
-//					else {
-//						this.objectTrays[a] = new ObjectTray(objects[a]);
-//						this.objectTraysByID.put(objects[a].getAnnotationID(), this.objectTrays[a]);
-//					}
-//					this.objectTrays[a].isMatch = true;
-//				}
-//				
-//				//	more than one type
-//				if (type.length() == 0) {
-//					this.singleTypeMatch = false;
-//					this.matchObjectCount = objects.length;
-//					this.showMatches.setSelected(true);
-//					this.showMatches.setEnabled(false);
-//					this.highlightMatches.setEnabled(false);
-//					setTitle(originalTitle + " - " + objects.length + " " + this.layoutObjectName + "s");
-//				}
-//				
-//				//	all of same type, do match highlight display if required
-//				else {
-//					this.singleTypeMatch = true;
-//					this.matchObjectCount = matchIDs.size();
-//					this.showMatches.setEnabled(true);
-//					this.highlightMatches.setEnabled(true);
-//					
-//					//	highlight matches
-//					if (this.highlightMatches.isSelected()) {
-//						objects = this.wrappedDoc.getMutableAnnotations(type);
-//						this.objectTrays = new ObjectTray[objects.length];
-//						for (int a = 0; a < objects.length; a++) {
-//							if (this.objectTraysByID.containsKey(objects[a].getAnnotationID()))
-//								this.objectTrays[a] = ((ObjectTray) this.objectTraysByID.get(objects[a].getAnnotationID()));
-//							else {
-//								this.objectTrays[a] = new ObjectTray(objects[a]);
-//								this.objectTraysByID.put(objects[a].getAnnotationID(), this.objectTrays[a]);
-//							}
-//							this.objectTrays[a].isMatch = matchIDs.contains(objects[a].getAnnotationID());
-//						}
-//						setTitle(originalTitle + " - " + objects.length + " " + this.layoutObjectName + "s, " + matchIDs.size() + " matches");
-//					}
-//					else setTitle(originalTitle + " - " + objects.length + " " + this.layoutObjectName + "s");
-//				}
-//				
-//				this.objectTable.setModel(new ObjectListTableModel(this.objectTrays));
-//				this.objectTable.getColumnModel().getColumn(0).setMaxWidth(120);
-//				this.objectTable.getColumnModel().getColumn(1).setMaxWidth(50);
-//				this.objectTable.getColumnModel().getColumn(2).setMaxWidth(50);
-//				
-//				this.sortColumn = -1;
-//				this.sortDescending = false;
-//				this.refreshDisplay();
-//			}
 			
-			void sortObjects() {
+			void sortObjects(boolean clearSelection) {
 				Arrays.sort(this.objectTrays, new Comparator() {
 					public int compare(Object o1, Object o2) {
 						ObjectTray at1 = ((ObjectTray) o1);
@@ -2673,6 +2624,8 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 						return ((sortDescending ? -1 : 1) * ((c == 0) ? AnnotationUtils.compare(at1.wrappedObject, at2.wrappedObject) : c));
 					}
 				});
+				if (clearSelection)
+					this.objectTable.clearSelection();
 				this.refreshDisplay();
 			}
 			
@@ -2706,7 +2659,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				
 				//	finish
 				if (dirty)
-					refreshObjectList();
+					refreshObjectList(false);
 			}
 			
 			private class AttributeEditorDialog extends DialogPanel {
@@ -2802,7 +2755,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				if (annotations.length == 0)
 					return;
 				if (attributeToolProvider.renameAttribute(null, annotations))
-					refreshObjectList();
+					refreshObjectList(false);
 			}
 			
 			void modifyObjectAttribute() {
@@ -2810,7 +2763,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				if (annotations.length == 0)
 					return;
 				if (attributeToolProvider.modifyAttribute(null, annotations))
-					refreshObjectList();
+					refreshObjectList(false);
 			}
 			
 			void removeObjectAttribute() {
@@ -2818,7 +2771,7 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				if (annotations.length == 0)
 					return;
 				if (attributeToolProvider.removeAttribute(null, annotations))
-					refreshObjectList();
+					refreshObjectList(false);
 			}
 			
 			Annotation[] getSelectedObjects() {
@@ -2839,14 +2792,6 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				}
 			}
 			
-//			private class ObjectTray {
-//				final MutableAnnotation wrappedObject;
-//				boolean isMatch = false;
-//				ObjectTray(MutableAnnotation annotation) {
-//					this.wrappedObject = annotation;
-//				}
-//			}
-//			
 			private class ObjectListTableModel implements TableModel {
 				private ObjectTray[] objectTrays;
 				private boolean isMatchesOnly = true;
