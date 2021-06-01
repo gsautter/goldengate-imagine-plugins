@@ -53,8 +53,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -63,7 +66,6 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
-import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
@@ -85,7 +87,7 @@ import de.uka.ipd.idaho.gamta.util.gPath.GPathExpression;
 import de.uka.ipd.idaho.gamta.util.gPath.GPathParser;
 import de.uka.ipd.idaho.gamta.util.gPath.types.GPathObject;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
-import de.uka.ipd.idaho.gamta.util.swing.AnnotationDisplayDialog;
+import de.uka.ipd.idaho.gamta.util.swing.AnnotationSelectorPanel;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.plugins.AbstractDocumentProcessorManager;
 import de.uka.ipd.idaho.goldenGate.plugins.DocumentProcessor;
@@ -119,7 +121,6 @@ import de.uka.ipd.idaho.stringUtils.StringVector;
  * @author sautter
  */
 public class ImageMarkupToolManager extends AbstractDocumentProcessorManager implements SelectionActionProvider, ImageMarkupToolProvider {
-	
 	private static final String FILE_EXTENSION = ".imTool";
 	
 	private DpImageMarkupTool[] toolsMenuTools;
@@ -139,7 +140,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.ResourceManager#getResourceTypeLabel()
 	 */
 	public String getResourceTypeLabel() {
-		return "Image Markup Tool";
+		return "DP Image Markup Tool";
 	}
 	
 	/* (non-Javadoc)
@@ -187,24 +188,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.GoldenGateImaginePlugin#initImagine()
 	 */
 	public void initImagine() {
-		
-		//	get whole tools name list
-		String[] imtNames = this.getResourceNames();
-		
-		//	sort tools for main and context menu
-		LinkedList toolsMenuTools = new LinkedList();
-		LinkedList contextMenuTools = new LinkedList();
-		for (int n = 0; n < imtNames.length; n++) {
-			DpImageMarkupTool imt = ((DpImageMarkupTool) this.getImageMarkupTool(imtNames[n]));
-			if (imt == null)
-				continue;
-			if (imt.useInToolsMenu)
-				toolsMenuTools.addLast(imt);
-			if (imt.useAsSelectionAction)
-				contextMenuTools.addLast(imt);
-		}
-		this.toolsMenuTools = ((DpImageMarkupTool[]) toolsMenuTools.toArray(new DpImageMarkupTool[toolsMenuTools.size()]));
-		this.contextMenuTools = ((DpImageMarkupTool[]) contextMenuTools.toArray(new DpImageMarkupTool[contextMenuTools.size()]));
+		this.ensureToolsArrays();
 	}
 	
 	/* (non-Javadoc)
@@ -226,25 +210,31 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		final ImAnnotation[] spanningAnnots = ((ImAnnotation[]) spanningAnnotList.toArray(new ImAnnotation[spanningAnnotList.size()]));
 		
 		//	collect actions
-		LinkedList actions = new LinkedList();
+		this.ensureToolsArrays();
+//		HashSet actionLabels = new HashSet();
 		
 		//	test spanning annotations inside out, and collect actions
+		ArrayList spanningAnnotActionSets = new ArrayList(spanningAnnots.length);
 		for (int a = spanningAnnots.length; a > 0; a--) try {
-			ImDocumentRoot wrappedAnnot = new ImDocumentRoot(spanningAnnots[a-1], ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS);
+			String testAnnotType = spanningAnnots[a-1].getType();
+			ImDocumentRoot testAnnotDoc = new ImDocumentRoot(spanningAnnots[a-1], ImDocumentRoot.NORMALIZATION_LEVEL_PARAGRAPHS);
+			AnnotationMarkupToolSet spanningAnnotActionSet = null;
 			for (int t = 0; t < this.contextMenuTools.length; t++)
-				if (this.contextMenuTools[t].displayFor(wrappedAnnot)) {
-					final ImAnnotation annot = spanningAnnots[a-1];
-					final DpImageMarkupTool imt = this.contextMenuTools[t];
-					actions.add(new SelectionAction(("imt" + this.contextMenuTools[t].getName()), this.contextMenuTools[t].label, this.contextMenuTools[t].tooltip) {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							invoker.applyMarkupTool(imt, annot);
-							return true;
-						}
-					});
+				if (this.contextMenuTools[t].displayFor(testAnnotType, testAnnotDoc)) {
+//					if (actionLabels.contains(this.contextMenuTools[t].label))
+//						continue; // we've already added this one
+					if (spanningAnnotActionSet == null) {
+						spanningAnnotActionSet = new AnnotationMarkupToolSet(spanningAnnots[a-1], idmp.getAnnotationColor(spanningAnnots[a-1].getType()));
+						spanningAnnotActionSets.add(spanningAnnotActionSet);
+					}
+					System.out.println("Showing DP-IMT '" + this.contextMenuTools[t].label + "' for " + spanningAnnots[a-1].getType());
+					spanningAnnotActionSet.adddpMarkupTool(this.contextMenuTools[t]);
+//					actionLabels.add(this.contextMenuTools[t].label);
 				}
-			if (actions.size() != 0)
-				break;
+//			if (actions.size() != 0)
+//				break;
 		}
+
 		
 		//	catch occasional exception from XML wrapper (can happen if text streams are messed up, and we need the other functions to repair this)
 		catch (RuntimeException re) {
@@ -252,8 +242,73 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			re.printStackTrace(System.out);
 		}
 		
+		//	anything to work with?
+		if (spanningAnnotActionSets.isEmpty())
+			return null;
+		
+		//	collect all actions
+		LinkedList actions = new LinkedList();
+		for (int a = 0; a < spanningAnnotActionSets.size(); a++)
+			((AnnotationMarkupToolSet) spanningAnnotActionSets.get(a)).addActions(actions, (spanningAnnotActionSets.size() > 1));
+		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	private static class AnnotationMarkupToolSet {
+		final ImAnnotation annot;
+		final Color annotTypeColor;
+		final LinkedHashSet dpMarkupTools = new LinkedHashSet();
+		AnnotationMarkupToolSet(ImAnnotation annot, Color annotTypeColor) {
+			this.annot = annot;
+			this.annotTypeColor = annotTypeColor;
+		}
+		void adddpMarkupTool(DpImageMarkupTool dpmt) {
+			this.dpMarkupTools.add(dpmt);
+		}
+		void addActions(LinkedList actions, boolean showAnnotType) {
+			for (Iterator mtit = this.dpMarkupTools.iterator(); mtit.hasNext();) {
+				final DpImageMarkupTool dpmt = ((DpImageMarkupTool) mtit.next());
+				actions.add(new SelectionAction(("imt" + dpmt.getName()), (dpmt.label + (showAnnotType ? " (" + this.annot.getType() + ")" : "")), this.getActionTooltip(dpmt.tooltip)) {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						invoker.applyMarkupTool(dpmt, annot);
+						return true;
+					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						if ((mi != null) && (annotTypeColor != null)) {
+							mi.setOpaque(true);
+							mi.setBackground(annotTypeColor);
+						}
+						return mi;
+					}
+				});
+			}
+		}
+		private String annotValue = null;
+		private String getAnnotValue() {
+			if (this.annotValue == null)
+				this.annotValue = ImUtils.getString(this.annot.getFirstWord(), this.annot.getLastWord(), true);
+			return this.annotValue;
+		}
+		private String getActionTooltip(String dpmtTooltip) {
+			if (dpmtTooltip.indexOf("$value") == -1)
+				return dpmtTooltip;
+			StringBuffer at = new StringBuffer();
+			for (int s = 0, e;;) {
+				e = dpmtTooltip.indexOf("$value", s);
+				if (e == -1) {
+					at.append(dpmtTooltip.substring(s));
+					break;
+				}
+				else {
+					at.append(dpmtTooltip.substring(s, e));
+					at.append(this.getAnnotValue());
+					s = (e + "$value".length());
+				}
+			}
+			return at.toString();
+		}
 	}
 	
 	/* (non-Javadoc)
@@ -295,10 +350,38 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getToolsMenuItemNames()
 	 */
 	public String[] getToolsMenuItemNames() {
+		this.ensureToolsArrays();
 		String[] toolsMenuImtNames = new String[this.toolsMenuTools.length];
 		for (int t = 0; t < this.toolsMenuTools.length; t++)
 			toolsMenuImtNames[t] = this.toolsMenuTools[t].name;
 		return toolsMenuImtNames;
+	}
+	
+	private void ensureToolsArrays() {
+		if ((this.toolsMenuTools != null) && (this.contextMenuTools != null))
+			return;
+		
+		//	get whole tools name list
+		String[] imtNames = this.getResourceNames();
+		
+		//	sort tools for main and context menu
+		LinkedList toolsMenuTools = new LinkedList();
+		LinkedList contextMenuTools = new LinkedList();
+		for (int n = 0; n < imtNames.length; n++) {
+			DpImageMarkupTool imt = ((DpImageMarkupTool) this.getImageMarkupTool(imtNames[n]));
+			if (imt == null)
+				continue;
+			if (imt.useInToolsMenu)
+				toolsMenuTools.addLast(imt);
+			if (imt.useAsSelectionAction)
+				contextMenuTools.addLast(imt);
+		}
+		this.toolsMenuTools = ((DpImageMarkupTool[]) toolsMenuTools.toArray(new DpImageMarkupTool[toolsMenuTools.size()]));
+		this.contextMenuTools = ((DpImageMarkupTool[]) contextMenuTools.toArray(new DpImageMarkupTool[contextMenuTools.size()]));
+	}
+	private void clearToolsArrays() {
+		this.toolsMenuTools = null;
+		this.contextMenuTools = null;
 	}
 	
 	/* (non-Javadoc)
@@ -321,7 +404,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#getMainMenuTitle()
 	 */
 	public String getMainMenuTitle() {
-		return "Image Markup Tools";
+		return "DP Image Markup Tools";
 	}
 	
 	/* (non-Javadoc)
@@ -376,6 +459,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			try {
 				if (this.storeSettingsResource(imtName, imt)) {
 					this.resourceNameList.refresh();
+					this.clearToolsArrays();
 					return imtName;
 				}
 			} catch (IOException ioe) {}
@@ -387,7 +471,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		final ImageMarkupToolEditorPanel[] editor = new ImageMarkupToolEditorPanel[1];
 		editor[0] = null;
 		
-		final DialogPanel editDialog = new DialogPanel("Edit Image Markup Tools", true);
+		final DialogPanel editDialog = new DialogPanel("Edit DP Image Markup Tools", true);
 		editDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 		editDialog.addWindowListener(new WindowAdapter() {
 			public void windowClosed(WindowEvent we) {
@@ -400,6 +484,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 				if ((editor[0] != null) && editor[0].isDirty()) {
 					try {
 						storeSettingsResource(editor[0].name, editor[0].getSettings());
+						clearToolsArrays();
 					} catch (IOException ioe) {}
 				}
 				if (editDialog.isVisible()) editDialog.dispose();
@@ -433,8 +518,10 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		button.setPreferredSize(new Dimension(100, 21));
 		button.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent ae) {
-				if (deleteResource(resourceNameList.getSelectedName()))
+				if (deleteResource(resourceNameList.getSelectedName())) {
 					resourceNameList.refresh();
+					clearToolsArrays();
+				}
 			}
 		});
 		editButtons.add(button);
@@ -462,6 +549,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 				if ((editor[0] != null) && editor[0].isDirty()) {
 					try {
 						storeSettingsResource(editor[0].name, editor[0].getSettings());
+						clearToolsArrays();
 					}
 					catch (IOException ioe) {
 						if (DialogFactory.confirm((ioe.getClass().getName() + " (" + ioe.getMessage() + ")\nwhile saving file to " + editor[0].name + "\nProceed?"), "Could Not Save Image Markup Tool", JOptionPane.YES_NO_OPTION) == JOptionPane.NO_OPTION) {
@@ -496,6 +584,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		this.resourceNameList.removeDataListListener(dll);
 	}
 	
+	private static final Pattern matcherTypePattern = Pattern.compile("[a-zA-Z][a-zA-Z0-9\\-\\_]+(\\:[a-zA-Z][a-zA-Z0-9\\-\\_]+)?");
 	private class DpImageMarkupTool implements ImageMarkupTool, Resource {
 		final String name;
 		final String label;
@@ -507,12 +596,13 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		final boolean useAsSelectionAction;
 		
 		final LinkedHashMap toolsMenuPreclusions;
-		final String[] selectionActionFilters;
+		final String[] selectionActionMatchers;
+		final String[] selectionActionMatcherTypes;
 		
 		final DocumentProcessorManager processorProvider;
 		final String processorName;
 		
-		DpImageMarkupTool(String name, String label, String tooltip, int xmlWrapperFlags, String dpName, DocumentProcessorManager dpManager, boolean useInToolsMenu, LinkedHashMap toolsMenuPreclusions, boolean useAsSelectionAction, String[] selectionActionFilters) {
+		DpImageMarkupTool(String name, String label, String tooltip, int xmlWrapperFlags, String dpName, DocumentProcessorManager dpManager, boolean useInToolsMenu, LinkedHashMap toolsMenuPreclusions, boolean useAsSelectionAction, String[] selectionActionMatchers) {
 			this.name = name;
 			this.label = label;
 			this.tooltip = tooltip;
@@ -522,7 +612,17 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			if (toolsMenuPreclusions != null)
 				this.toolsMenuPreclusions.putAll(toolsMenuPreclusions);
 			this.useAsSelectionAction = useAsSelectionAction;
-			this.selectionActionFilters = selectionActionFilters;
+			this.selectionActionMatchers = selectionActionMatchers;
+			if (this.selectionActionMatchers == null)
+				this.selectionActionMatcherTypes = null;
+			else {
+				this.selectionActionMatcherTypes = new String[this.selectionActionMatchers.length];
+				for (int m = 0; m < this.selectionActionMatchers.length; m++) {
+					Matcher mtm = matcherTypePattern.matcher(this.selectionActionMatchers[m]);
+					if (mtm.find() && (mtm.start() == 0))
+						this.selectionActionMatcherTypes[m] = mtm.group();
+				}
+			}
 			this.processorProvider = dpManager;
 			this.processorName = dpName;
 		}
@@ -531,7 +631,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			return this.name;
 		}
 		public String getTypeLabel() {
-			return "Image Markup Tool";
+			return "DP Image Markup Tool";
 		}
 		public String getProviderClassName() {
 			return ImageMarkupToolManager.class.getName();
@@ -608,13 +708,16 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			}
 			return warning;
 		}
-		boolean displayFor(QueriableAnnotation annot) {
+		boolean displayFor(String annotType, QueriableAnnotation annotDoc) {
 			if (!this.useAsSelectionAction)
 				return false;
-			if (this.selectionActionFilters == null)
-				return true;
-			for (int f = 0; f < this.selectionActionFilters.length; f++) {
-				if (GPath.evaluateExpression(this.selectionActionFilters[f], annot, null).asBoolean().value)
+			if (this.selectionActionMatchers == null)
+				return false;
+			for (int f = 0; f < this.selectionActionMatchers.length; f++) {
+				if (this.selectionActionMatcherTypes[f] == null) {}
+				else if (this.selectionActionMatcherTypes[f].equals(annotType)) {}
+				else continue;
+				if (GPath.evaluateExpression(this.selectionActionMatchers[f], annotDoc, null).asBoolean().value)
 					return true;
 			}
 			return false;
@@ -650,7 +753,9 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		STREAM_NORMALIZATION_LEVEL,
 	};
 	
-	private static final String FILTER_ATTRIBUTE = "FILTER";
+//	/** @deprecated store as MATCHER */
+//	private static final String FILTER_ATTRIBUTE = "FILTER"; // TODO remove this
+	private static final String MATCHER_ATTRIBUTE = "MATCHER";
 	
 	private static final String PRECLUSION_ATTRIBUTE_PREFIX = "PRECLUSION";
 	private static final String PRECLUSION_FILTER_ATTRIBUTE_SUFFIX = "FILTER";
@@ -723,7 +828,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			String label = settings.getSetting(LABEL_ATTRIBUTE, "");
 			String tooltip = settings.getSetting(TOOLTIP_ATTRIBUTE, "");
 			
-			int xmlWrapperFlags = Integer.parseInt(settings.getSetting(XML_WRAPPER_FLAGS_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_WORDS)));
+			int xmlWrapperFlags = Integer.parseInt(settings.getSetting(XML_WRAPPER_FLAGS_ATTRIBUTE, ("" + ImDocumentRoot.NORMALIZATION_LEVEL_WORDS)), 16);
 			
 			String processorName = settings.getSetting(PROCESSOR_NAME_ATTRIBUTE);
 			String processorProviderClassName = settings.getSetting(PROCESSOR_PROVIDER_CLASS_NAME_ATTRIBUTE);
@@ -748,15 +853,17 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 						preclusions.put(filter, message);
 				}
 			
-			ArrayList filters = new ArrayList();
+			ArrayList matchers = new ArrayList();
 			if (location.indexOf(SELECTION_ACTION_LOCATION) != -1)
 				for (int f = 0; f < settings.size(); f++) {
-					String filter = settings.getSetting(FILTER_ATTRIBUTE + f);
-					if (filter != null)
-						filters.add(filter);
+					String matcher = settings.getSetting(MATCHER_ATTRIBUTE + f);
+//					if (matcher == null)
+//						matcher = settings.getSetting(FILTER_ATTRIBUTE + f);
+					if (matcher != null)
+						matchers.add(matcher);
 				}
 			
-			return new DpImageMarkupTool(name, label, tooltip, xmlWrapperFlags, processorName, dpm, (location.indexOf(TOOLS_MENU_LOCATION) != -1), (preclusions.isEmpty() ? null : preclusions), (location.indexOf(SELECTION_ACTION_LOCATION) != -1), (filters.isEmpty() ? null : ((String[]) filters.toArray(new String[filters.size()]))));
+			return new DpImageMarkupTool(name, label, tooltip, xmlWrapperFlags, processorName, dpm, (location.indexOf(TOOLS_MENU_LOCATION) != -1), (preclusions.isEmpty() ? null : preclusions), (location.indexOf(SELECTION_ACTION_LOCATION) != -1), (matchers.isEmpty() ? null : ((String[]) matchers.toArray(new String[matchers.size()]))));
 		}
 		catch (Exception e) {
 			e.printStackTrace();
@@ -772,7 +879,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		private String imtName = null;
 		
 		CreateImageMarkupToolDialog(DpImageMarkupTool imt, String name) {
-			super("Create Image Markup Tool", true);
+			super("Create DP Image Markup Tool", true);
 			
 			this.nameField = new JTextField((name == null) ? "New Image Markup Tool" : name);
 			this.nameField.setBorder(BorderFactory.createLoweredBevelBorder());
@@ -853,8 +960,8 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		private JCheckBox showWordsAnnotations = new JCheckBox("Show Word Annotations");
 		
 		private LinkedHashMap preclusions = new LinkedHashMap();
-		private String[] filters = new String[0];
-		private JButton editPreclusionsAndFilters = new JButton("Preclusions (0) & Filters (0)");
+		private String[] matchers = new String[0];
+		private JButton editPreclusionsAndMatchers = new JButton("Preclusions (0) & Matchers (0)");
 		
 		private DocumentProcessorManager processorProvider;
 		private String processorName;
@@ -870,10 +977,10 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			this.location.setSelectedItem(TOOLS_MENU_LOCATION);
 			this.normalizationLevel.setEditable(false);
 			this.normalizationLevel.setSelectedItem(PARAGRAPH_NORMALIZATION_LEVEL);
-			this.editPreclusionsAndFilters.setBorder(BorderFactory.createRaisedBevelBorder());
-			this.editPreclusionsAndFilters.addActionListener(new ActionListener() {
+			this.editPreclusionsAndMatchers.setBorder(BorderFactory.createRaisedBevelBorder());
+			this.editPreclusionsAndMatchers.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
-					editPreclusionsAndFilters();
+					editPreclusionsAndMatchers();
 				}
 			});
 			
@@ -903,9 +1010,9 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 				
 				if (imt.toolsMenuPreclusions != null)
 					this.preclusions.putAll(imt.toolsMenuPreclusions);
-				if (imt.selectionActionFilters != null)
-					this.filters = imt.selectionActionFilters;
-				this.editPreclusionsAndFilters.setText("Preclusions (" + this.preclusions.size() + ") & Filters (" + this.filters.length + ")");
+				if (imt.selectionActionMatchers != null)
+					this.matchers = imt.selectionActionMatchers;
+				this.editPreclusionsAndMatchers.setText("Preclusions (" + this.preclusions.size() + ") & Matchers (" + this.matchers.length + ")");
 			}
 			this.processorLabel.addMouseListener(new MouseAdapter() {
 				public void mouseClicked(MouseEvent me) {
@@ -984,7 +1091,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			functionPanel.add(this.location, gbc.clone());
 			gbc.gridx = 2;
 			gbc.weightx = 0;
-			functionPanel.add(this.editPreclusionsAndFilters, gbc.clone());
+			functionPanel.add(this.editPreclusionsAndMatchers, gbc.clone());
 			
 			gbc.gridy ++;
 			gbc.gridx = 0;
@@ -1053,15 +1160,12 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		}
 		
 		public void changedUpdate(DocumentEvent de) {}
-		
 		public void insertUpdate(DocumentEvent de) {
 			this.dirty = true;
 		}
-		
 		public void removeUpdate(DocumentEvent de) {
 			this.dirty = true;
 		}
-		
 		public void itemStateChanged(ItemEvent ie) {
 			this.dirty = true;
 		}
@@ -1078,8 +1182,8 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			else this.processorLabel.setText("<No DocumentProcessor selected yet>");
 		}
 		
-		private void editPreclusionsAndFilters() {
-			PreclusionFilterEditorDialog pfed = new PreclusionFilterEditorDialog(this.name, this.preclusions, this.filters);
+		private void editPreclusionsAndMatchers() {
+			PreclusionMatcherEditorDialog pfed = new PreclusionMatcherEditorDialog(this.name, this.preclusions, this.matchers);
 			pfed.setVisible(true);
 			if (pfed.isCommitted()) {
 				LinkedHashMap preclusions = pfed.getPreclusions();
@@ -1087,10 +1191,10 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 					this.preclusions.clear();
 					this.preclusions.putAll(preclusions);
 				}
-				String[] filters = pfed.getFilters();
-				if (filters != null)
-					this.filters = filters;
-				this.editPreclusionsAndFilters.setText("Preclusions (" + this.preclusions.size() + ") & Filters (" + this.filters.length + ")");
+				String[] matchers = pfed.getMatchers();
+				if (matchers != null)
+					this.matchers = matchers;
+				this.editPreclusionsAndMatchers.setText("Preclusions (" + this.preclusions.size() + ") & Matchers (" + this.matchers.length + ")");
 				this.dirty = true;
 			}
 		}
@@ -1194,7 +1298,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			if (this.showWordsAnnotations.isSelected())
 				xmlWrapperFlags |= ImDocumentRoot.SHOW_TOKENS_AS_WORD_ANNOTATIONS;
 			
-			set.setSetting(XML_WRAPPER_FLAGS_ATTRIBUTE, ("" + xmlWrapperFlags));
+			set.setSetting(XML_WRAPPER_FLAGS_ATTRIBUTE, Integer.toString(xmlWrapperFlags, 16).toUpperCase());
 			
 			int preclusionCount = 0;
 			for (Iterator fit = this.preclusions.keySet().iterator(); fit.hasNext();) {
@@ -1204,8 +1308,8 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 				preclusionCount++;
 			}
 			
-			for (int f = 0; f < this.filters.length; f++)
-				set.setSetting((FILTER_ATTRIBUTE + f), this.filters[f]);
+			for (int f = 0; f < this.matchers.length; f++)
+				set.setSetting((MATCHER_ATTRIBUTE + f), this.matchers[f]);
 			
 			if (this.helpTextDirty && (this.helpText != null)) try {
 				storeStringResource((this.name + ".help.html"), this.helpText);
@@ -1215,15 +1319,15 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		}
 	}
 	
-	private class PreclusionFilterEditorDialog extends DialogPanel {
+	private class PreclusionMatcherEditorDialog extends DialogPanel {
 		
 		private PreclusionEditorPanel preclusionEditor;
 		private LinkedHashMap preclusions = null;
-		private FilterEditorPanel filterEditor;
-		private String[] filters = null;
+		private MatcherEditorPanel matcherEditor;
+		private String[] matchers = null;
 		
-		PreclusionFilterEditorDialog(String name, LinkedHashMap preclusions, String[] filters) {
-			super(("Edit Preclusions & Filters for '" + name + "'"), true);
+		PreclusionMatcherEditorDialog(String name, LinkedHashMap preclusions, String[] matchers) {
+			super(("Edit Preclusions & Matchers for '" + name + "'"), true);
 			
 			//	initialize main buttons
 			JButton commitButton = new JButton("OK");
@@ -1231,8 +1335,8 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			commitButton.setPreferredSize(new Dimension(100, 21));
 			commitButton.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
-					PreclusionFilterEditorDialog.this.preclusions = preclusionEditor.getPreclusions();
-					PreclusionFilterEditorDialog.this.filters = filterEditor.getFilters();
+					PreclusionMatcherEditorDialog.this.preclusions = preclusionEditor.getPreclusions();
+					PreclusionMatcherEditorDialog.this.matchers = matcherEditor.getMatchers();
 					dispose();
 				}
 			});
@@ -1242,8 +1346,8 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			abortButton.setPreferredSize(new Dimension(100, 21));
 			abortButton.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
-					PreclusionFilterEditorDialog.this.preclusions = null;
-					PreclusionFilterEditorDialog.this.filters = null;
+					PreclusionMatcherEditorDialog.this.preclusions = null;
+					PreclusionMatcherEditorDialog.this.matchers = null;
 					dispose();
 				}
 			});
@@ -1255,12 +1359,14 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			
 			//	initialize editors
 			this.preclusionEditor = new PreclusionEditorPanel(preclusions);
-			this.filterEditor = new FilterEditorPanel(filters);
+			this.matcherEditor = new MatcherEditorPanel(matchers);
 			
 			//	put editor in tabs
 			JTabbedPane tabs = new JTabbedPane();
 			tabs.addTab("Preclusions", this.preclusionEditor);
-			tabs.addTab("Filters", this.filterEditor);
+			tabs.addTab("Matchers", this.matcherEditor);
+			if (preclusions.isEmpty() && (matchers.length != 0))
+					tabs.setSelectedComponent(this.matcherEditor);
 			
 			//	put the whole stuff together
 			this.setLayout(new BorderLayout());
@@ -1273,15 +1379,15 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		}
 		
 		boolean isCommitted() {
-			return ((this.filters != null) && (this.preclusions != null));
+			return ((this.matchers != null) && (this.preclusions != null));
 		}
 		
 		LinkedHashMap getPreclusions() {
 			return this.preclusions;
 		}
 		
-		String[] getFilters() {
-			return this.filters;
+		String[] getMatchers() {
+			return this.matchers;
 		}
 	}
 	
@@ -1972,22 +2078,22 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 		}
 	}
 	
-	private class FilterEditorPanel extends JPanel {
-		private ArrayList filters = new ArrayList();
-		private int selectedFilter = -1;
+	private class MatcherEditorPanel extends JPanel {
+		private ArrayList matchers = new ArrayList();
+		private int selectedMatcher = -1;
 		
-		private JLabel filterLabel = new JLabel("Filter", JLabel.CENTER);
+		private JLabel matcherLabel = new JLabel("Matcher", JLabel.CENTER);
 		private JPanel linePanelSpacer = new JPanel();
 		private JPanel linePanel = new JPanel(new GridBagLayout());
 		
-		FilterEditorPanel(String[] filters) {
+		MatcherEditorPanel(String[] matchers) {
 			super(new BorderLayout(), true);
 			
-			this.filterLabel.setBorder(BorderFactory.createRaisedBevelBorder());
-			this.filterLabel.setPreferredSize(new Dimension(160, 21));
-			this.filterLabel.addMouseListener(new MouseAdapter() {
+			this.matcherLabel.setBorder(BorderFactory.createRaisedBevelBorder());
+			this.matcherLabel.setPreferredSize(new Dimension(160, 21));
+			this.matcherLabel.addMouseListener(new MouseAdapter() {
 				public void mouseClicked(MouseEvent me) {
-					selectFilter(-1);
+					selectMatcher(-1);
 					linePanel.requestFocusInWindow();
 				}
 			});
@@ -1995,7 +2101,7 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			this.linePanelSpacer.setBackground(Color.WHITE);
 			this.linePanelSpacer.addMouseListener(new MouseAdapter() {
 				public void mouseClicked(MouseEvent me) {
-					selectFilter(-1);
+					selectMatcher(-1);
 					linePanel.requestFocusInWindow();
 				}
 			});
@@ -2007,10 +2113,10 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 	        this.linePanel.getActionMap().put(upKey, new AbstractAction() {
 	            public void actionPerformed(ActionEvent ae) {
 	                System.out.println(upKey);
-	                if (selectedFilter > 0)
-	                	selectFilter(selectedFilter - 1);
-	                else if (selectedFilter == -1)
-                		selectFilter(FilterEditorPanel.this.filters.size() - 1);
+	                if (selectedMatcher > 0)
+	                	selectMatcher(selectedMatcher - 1);
+	                else if (selectedMatcher == -1)
+                		selectMatcher(MatcherEditorPanel.this.matchers.size() - 1);
 	            }
 	        });
 	        
@@ -2019,36 +2125,36 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 	        this.linePanel.getActionMap().put(downKey, new AbstractAction() {
 	            public void actionPerformed(ActionEvent ae) {
 	                System.out.println(downKey);
-                	if (selectedFilter == -1)
-                		selectFilter(0);
-                	else if ((selectedFilter + 1) < FilterEditorPanel.this.filters.size())
-	                	selectFilter(selectedFilter + 1);
+                	if (selectedMatcher == -1)
+                		selectMatcher(0);
+                	else if ((selectedMatcher + 1) < MatcherEditorPanel.this.matchers.size())
+	                	selectMatcher(selectedMatcher + 1);
 	            }
 	        });
 
 			JScrollPane linePanelBox = new JScrollPane(this.linePanel);
 			
-			JButton addFilterButton = new JButton("Add Filter");
-			addFilterButton.setBorder(BorderFactory.createRaisedBevelBorder());
-			addFilterButton.addActionListener(new ActionListener() {
+			JButton addMatcherButton = new JButton("Add Matcher");
+			addMatcherButton.setBorder(BorderFactory.createRaisedBevelBorder());
+			addMatcherButton.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
-					addFilter();
+					addMatcher();
 				}
 			});
 			
-			JButton testFilterButton = new JButton("Test Filter");
-			testFilterButton.setBorder(BorderFactory.createRaisedBevelBorder());
-			testFilterButton.addActionListener(new ActionListener() {
+			JButton testMatcherButton = new JButton("Test Matcher");
+			testMatcherButton.setBorder(BorderFactory.createRaisedBevelBorder());
+			testMatcherButton.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
-					testFilter();
+					testMatcher();
 				}
 			});
 			
-			JButton removeFilterButton = new JButton("Remove Filter");
-			removeFilterButton.setBorder(BorderFactory.createRaisedBevelBorder());
-			removeFilterButton.addActionListener(new ActionListener() {
+			JButton removeMatcherButton = new JButton("Remove Matcher");
+			removeMatcherButton.setBorder(BorderFactory.createRaisedBevelBorder());
+			removeMatcherButton.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
-					removeFilter();
+					removeMatcher();
 				}
 			});
 			
@@ -2065,19 +2171,19 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			gbc.fill = GridBagConstraints.BOTH;
 			gbc.gridy = 0;
 			gbc.gridx = 0;
-			buttonPanel.add(addFilterButton, gbc.clone());
+			buttonPanel.add(addMatcherButton, gbc.clone());
 			gbc.gridx = 1;
-			buttonPanel.add(testFilterButton, gbc.clone());
+			buttonPanel.add(testMatcherButton, gbc.clone());
 			gbc.gridx = 2;
-			buttonPanel.add(removeFilterButton, gbc.clone());
+			buttonPanel.add(removeMatcherButton, gbc.clone());
 			
 			this.add(linePanelBox, BorderLayout.CENTER);
 			this.add(buttonPanel, BorderLayout.SOUTH);
 			
-			this.setContent(filters);
+			this.setContent(matchers);
 		}
 		
-		void layoutFilters() {
+		void layoutMatchers() {
 			this.linePanel.removeAll();
 			
 			GridBagConstraints gbc = new GridBagConstraints();
@@ -2093,14 +2199,14 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			gbc.gridwidth = 1;
 			gbc.fill = GridBagConstraints.BOTH;
 			
-			this.linePanel.add(this.filterLabel, gbc.clone());
+			this.linePanel.add(this.matcherLabel, gbc.clone());
 			gbc.gridy++;
 			
-			for (int l = 0; l < this.filters.size(); l++) {
-				ImageMarkupToolFilter line = ((ImageMarkupToolFilter) this.filters.get(l));
+			for (int l = 0; l < this.matchers.size(); l++) {
+				ImageMarkupToolMatcher line = ((ImageMarkupToolMatcher) this.matchers.get(l));
 				line.index = l;
 				
-				this.linePanel.add(line.filterPanel, gbc.clone());
+				this.linePanel.add(line.matcherPanel, gbc.clone());
 				gbc.gridy++;
 			}
 			
@@ -2111,18 +2217,18 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			this.repaint();
 		}
 		
-		void selectFilter(int index) {
-			if (this.selectedFilter == index)
+		void selectMatcher(int index) {
+			if (this.selectedMatcher == index)
 				return;
-			this.selectedFilter = index;
+			this.selectedMatcher = index;
 			
-			for (int l = 0; l < this.filters.size(); l++) {
-				ImageMarkupToolFilter line = ((ImageMarkupToolFilter) this.filters.get(l));
-				if (l == this.selectedFilter)
-					line.filterPanel.setBorder(BorderFactory.createLineBorder(Color.BLUE));
+			for (int l = 0; l < this.matchers.size(); l++) {
+				ImageMarkupToolMatcher line = ((ImageMarkupToolMatcher) this.matchers.get(l));
+				if (l == this.selectedMatcher)
+					line.matcherPanel.setBorder(BorderFactory.createLineBorder(Color.BLUE));
 				else {
 					line.setEditing(false);
-					line.filterPanel.setBorder(BorderFactory.createLineBorder(this.getBackground()));
+					line.matcherPanel.setBorder(BorderFactory.createLineBorder(this.getBackground()));
 				}
 			}
 			
@@ -2130,47 +2236,47 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			this.linePanel.repaint();
 		}
 		
-		void addFilter() {
-			AddFilterDialog acd = new AddFilterDialog();
+		void addMatcher() {
+			AddMatcherDialog acd = new AddMatcherDialog();
 			acd.setVisible(true);
-			String filter = acd.getFilter();
-			if (filter != null)
-				this.addFilter(filter);
+			String matcher = acd.getMatcher();
+			if (matcher != null)
+				this.addMatcher(matcher);
 		}
 		
-		void addFilter(String filter) {
-			ImageMarkupToolFilter line = new ImageMarkupToolFilter(filter);
-			line.filterPanel.setBorder(BorderFactory.createLineBorder(this.getBackground()));
-			this.filters.add(line);
-			this.layoutFilters();
-			this.selectFilter(this.filters.size() - 1);
+		void addMatcher(String matcher) {
+			ImageMarkupToolMatcher line = new ImageMarkupToolMatcher(matcher);
+			line.matcherPanel.setBorder(BorderFactory.createLineBorder(this.getBackground()));
+			this.matchers.add(line);
+			this.layoutMatchers();
+			this.selectMatcher(this.matchers.size() - 1);
 		}
 		
-		void removeFilter() {
-			if (this.selectedFilter == -1) return;
-			int newSelectedFilter = this.selectedFilter;
-			this.filters.remove(this.selectedFilter);
-			this.selectedFilter = -1;
-			this.layoutFilters();
-			if (newSelectedFilter == this.filters.size())
-				newSelectedFilter--;
-			this.selectFilter(newSelectedFilter);
+		void removeMatcher() {
+			if (this.selectedMatcher == -1) return;
+			int newSelectedMatcher = this.selectedMatcher;
+			this.matchers.remove(this.selectedMatcher);
+			this.selectedMatcher = -1;
+			this.layoutMatchers();
+			if (newSelectedMatcher == this.matchers.size())
+				newSelectedMatcher--;
+			this.selectMatcher(newSelectedMatcher);
 		}
 		
-		boolean validateFilter(String filter) {
-			if (filter.length() != 0) try {
-				GPathParser.parseExpression(filter);
+		boolean validateMatcher(String matcher) {
+			if (matcher.length() != 0) try {
+				GPathParser.parseExpression(matcher);
 				return true;
 			} catch (Exception e) {}
 			return false;
 		}
 		
-		void testFilter() {
-			if (this.selectedFilter == -1) return;
-			this.testFilter(((ImageMarkupToolFilter) this.filters.get(this.selectedFilter)).getFilter());
+		void testMatcher() {
+			if (this.selectedMatcher == -1) return;
+			this.testMatcher(((ImageMarkupToolMatcher) this.matchers.get(this.selectedMatcher)).getMatcher());
 		}
-		void testFilter(String filter) {
-			if (filter.length() == 0)
+		void testMatcher(String matcher) {
+			if (matcher.length() == 0)
 				return;
 			
 			QueriableAnnotation testDoc = Gamta.getTestDocument();
@@ -2179,10 +2285,10 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			
 			GPathExpression gpe;
 			try {
-				gpe = GPathParser.parseExpression(filter);
+				gpe = GPathParser.parseExpression(matcher);
 			}
 			catch (Exception e) {
-				DialogFactory.alert(("The filter expression is invalid:\n" + e.getMessage()), "Filter Expression Invalid", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert(("The matcher expression is invalid:\n" + e.getMessage()), "Matcher Expression Invalid", JOptionPane.ERROR_MESSAGE);
 				return;
 			}
 			
@@ -2195,39 +2301,41 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 			}
 			Annotation[] matchAnnots = ((Annotation[]) matchAnnotList.toArray(new Annotation[matchAnnotList.size()]));
 			
-			AnnotationDisplayDialog add;
+//			AnnotationDisplayDialog add;
 			Window top = DialogPanel.getTopWindow();
-			if (top instanceof JDialog)
-				add = new AnnotationDisplayDialog(((JDialog) top), "Matches of Filter", matchAnnots, true);
-			else if (top instanceof JFrame)
-				add = new AnnotationDisplayDialog(((JFrame) top), "Matches of Filter", matchAnnots, true);
-			else add = new AnnotationDisplayDialog(((JFrame) null), "Matches of Filter", matchAnnots, true);
-			add.setLocationRelativeTo(top);
-			add.setVisible(true);
+//			if (top instanceof JDialog)
+//				add = new AnnotationDisplayDialog(((JDialog) top), "Matches of Matcher", matchAnnots, true);
+//			else if (top instanceof JFrame)
+//				add = new AnnotationDisplayDialog(((JFrame) top), "Matches of Matcher", matchAnnots, true);
+//			else add = new AnnotationDisplayDialog(((JFrame) null), "Matches of Matcher", matchAnnots, true);
+//			add.setLocationRelativeTo(top);
+//			add.setVisible(true);
+			AnnotationSelectorPanel asp = new AnnotationSelectorPanel(matchAnnots, false);
+			asp.showDialog(top, "Matches of Matcher Experssion", "OK");
 		}
 		
-		private class ImageMarkupToolFilter {
+		private class ImageMarkupToolMatcher {
 			int index = 0;
 			private boolean isEditing = false;
 			
-			private String filter;
-			private boolean filterDirty = false;
-			private int filterInputPressedKey = -1;
+			private String matcher;
+			private boolean matcherDirty = false;
+			private int matcherInputPressedKey = -1;
 			
-			JPanel filterPanel = new JPanel(new BorderLayout(), true);
-			private JLabel filterDisplay = new JLabel("", JLabel.LEFT);
-			private JPanel filterEditor = new JPanel(new BorderLayout(), true);
-			private JTextField filterInput = new JTextField("");
-			private JButton filterTest = new JButton("Test");
+			JPanel matcherPanel = new JPanel(new BorderLayout(), true);
+			private JLabel matcherDisplay = new JLabel("", JLabel.LEFT);
+			private JPanel matcherEditor = new JPanel(new BorderLayout(), true);
+			private JTextField matcherInput = new JTextField("");
+			private JButton matcherTest = new JButton("Test");
 			
-			ImageMarkupToolFilter(String filter) {
-				this.filter = filter;
+			ImageMarkupToolMatcher(String matcher) {
+				this.matcher = matcher;
 				
-				this.filterDisplay.setText(this.filter);
-				this.filterDisplay.setOpaque(true);
-				this.filterDisplay.setBackground(Color.WHITE);
-				this.filterDisplay.setBorder(BorderFactory.createLineBorder(Color.WHITE, 2));
-				this.filterDisplay.addMouseListener(new MouseAdapter() {
+				this.matcherDisplay.setText(this.matcher);
+				this.matcherDisplay.setOpaque(true);
+				this.matcherDisplay.setBackground(Color.WHITE);
+				this.matcherDisplay.setBorder(BorderFactory.createLineBorder(Color.WHITE, 2));
+				this.matcherDisplay.addMouseListener(new MouseAdapter() {
 					public void mouseClicked(MouseEvent me) {
 						if (me.getButton() != MouseEvent.BUTTON1) return;
 						if (me.getClickCount() > 1)
@@ -2236,130 +2344,130 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 					}
 				});
 				
-				this.filterInput.setText(this.filter);
-				this.filterInput.setBorder(BorderFactory.createLoweredBevelBorder());
-				this.filterInput.addKeyListener(new KeyAdapter() {
+				this.matcherInput.setText(this.matcher);
+				this.matcherInput.setBorder(BorderFactory.createLoweredBevelBorder());
+				this.matcherInput.addKeyListener(new KeyAdapter() {
 					public void keyPressed(KeyEvent ke) {
-						filterInputPressedKey = ke.getKeyCode();
+						matcherInputPressedKey = ke.getKeyCode();
 					}
 					public void keyReleased(KeyEvent ke) {
-						filterInputPressedKey = -1;
+						matcherInputPressedKey = -1;
 					}
 					public void keyTyped(KeyEvent ke) {
-						if (filterInputPressedKey == KeyEvent.VK_ESCAPE) {
-							revertFilter();
+						if (matcherInputPressedKey == KeyEvent.VK_ESCAPE) {
+							revertMatcher();
 							setEditing(false);
 						}
-						filterDirty = true;
+						matcherDirty = true;
 					}
 				});
-				this.filterInput.addFocusListener(new FocusAdapter() {
+				this.matcherInput.addFocusListener(new FocusAdapter() {
 					public void focusLost(FocusEvent fe) {
-						updateFilter();
+						updateMatcher();
 					}
 				});
-				this.filterInput.addActionListener(new ActionListener() {
+				this.matcherInput.addActionListener(new ActionListener() {
 					public void actionPerformed(ActionEvent ae) {
 						setEditing(false);
 					}
 				});
 				
-				this.filterTest.setBorder(BorderFactory.createRaisedBevelBorder());
-				this.filterTest.addActionListener(new ActionListener() {
+				this.matcherTest.setBorder(BorderFactory.createRaisedBevelBorder());
+				this.matcherTest.addActionListener(new ActionListener() {
 					public void actionPerformed(ActionEvent ae) {
-						testFilter(getFilter());
+						testMatcher(getMatcher());
 					}
 				});
 				
-				this.filterEditor.add(this.filterInput, BorderLayout.CENTER);
-				this.filterEditor.add(this.filterTest, BorderLayout.EAST);
+				this.matcherEditor.add(this.matcherInput, BorderLayout.CENTER);
+				this.matcherEditor.add(this.matcherTest, BorderLayout.EAST);
 				
-				this.filterPanel.setPreferredSize(new Dimension(160, 21));
+				this.matcherPanel.setPreferredSize(new Dimension(160, 21));
 				
 				this.layoutParts(false);
 			}
-			String getFilter() {
-				this.updateFilter();
-				return this.filter;
+			String getMatcher() {
+				this.updateMatcher();
+				return this.matcher;
 			}
-			private void updateFilter() {
-				if (!this.filterDirty) return;
+			private void updateMatcher() {
+				if (!this.matcherDirty) return;
 				
-				this.filter = this.filterInput.getText().trim();
-				this.filterDisplay.setText(this.filter);
-				if (validateFilter(this.filter)) {
-					this.filterDisplay.setBackground(Color.WHITE);
-					this.filterInput.setBackground(Color.WHITE);
+				this.matcher = this.matcherInput.getText().trim();
+				this.matcherDisplay.setText(this.matcher);
+				if (validateMatcher(this.matcher)) {
+					this.matcherDisplay.setBackground(Color.WHITE);
+					this.matcherInput.setBackground(Color.WHITE);
 				}
 				else {
-					this.filterDisplay.setBackground(Color.ORANGE);
-					this.filterInput.setBackground(Color.ORANGE);
+					this.matcherDisplay.setBackground(Color.ORANGE);
+					this.matcherInput.setBackground(Color.ORANGE);
 				}
 				
-				this.filterDirty = false;
+				this.matcherDirty = false;
 			}
-			private void revertFilter() {
-				this.filterInput.setText(this.filter);
-				this.filterDirty = true;
-				this.updateFilter();
+			private void revertMatcher() {
+				this.matcherInput.setText(this.matcher);
+				this.matcherDirty = true;
+				this.updateMatcher();
 			}
 			void setEditing(boolean editing) {
 				if (this.isEditing == editing)
 					return;
 				if (this.isEditing)
-					this.updateFilter();
+					this.updateMatcher();
 				this.isEditing = editing;
 				this.layoutParts(this.isEditing);
 				if (!this.isEditing)
 					linePanel.requestFocusInWindow();
 			}
 			void layoutParts(boolean editing) {
-				this.filterPanel.removeAll();
+				this.matcherPanel.removeAll();
 				if (editing)
-					this.filterPanel.add(this.filterEditor, BorderLayout.CENTER);
-				else this.filterPanel.add(this.filterDisplay, BorderLayout.CENTER);
-				this.filterPanel.validate();
-				this.filterPanel.repaint();
+					this.matcherPanel.add(this.matcherEditor, BorderLayout.CENTER);
+				else this.matcherPanel.add(this.matcherDisplay, BorderLayout.CENTER);
+				this.matcherPanel.validate();
+				this.matcherPanel.repaint();
 			}
 			void select() {
-				selectFilter(this.index);
+				selectMatcher(this.index);
 			}
 		}
 		
-		private class AddFilterDialog extends DialogPanel {
+		private class AddMatcherDialog extends DialogPanel {
 			private boolean committed = true;
-			private JTextField filterInput;
+			private JTextField matcherInput;
 			
-			AddFilterDialog() {
-				super("Add Filter", true);
+			AddMatcherDialog() {
+				super("Add Matcher", true);
 				
-				this.filterInput = new JTextField();
-				this.filterInput.setBorder(BorderFactory.createLoweredBevelBorder());
-				this.filterInput.setEditable(true);
+				this.matcherInput = new JTextField();
+				this.matcherInput.setBorder(BorderFactory.createLoweredBevelBorder());
+				this.matcherInput.setEditable(true);
 				
 				JPanel inputPanel = new JPanel(new BorderLayout(), true);
-				inputPanel.add(this.filterInput, BorderLayout.CENTER);
+				inputPanel.add(this.matcherInput, BorderLayout.CENTER);
 				
-				JButton addFilterButton = new JButton("Add Filter");
-				addFilterButton.setPreferredSize(new Dimension(100, 21));
-				addFilterButton.setBorder(BorderFactory.createRaisedBevelBorder());
-				addFilterButton.addActionListener(new ActionListener() {
+				JButton addMatcherButton = new JButton("Add Matcher");
+				addMatcherButton.setPreferredSize(new Dimension(100, 21));
+				addMatcherButton.setBorder(BorderFactory.createRaisedBevelBorder());
+				addMatcherButton.addActionListener(new ActionListener() {
 					public void actionPerformed(ActionEvent ae) {
-						String filter = getFilter();
-						if (!validateFilter(filter)) {
-							DialogFactory.alert(("'" + filter + "' is not a valid GPath expression or filter name."), "Invalid Filter", JOptionPane.ERROR_MESSAGE);
+						String matcher = getMatcher();
+						if (!validateMatcher(matcher)) {
+							DialogFactory.alert(("'" + matcher + "' is not a valid GPath expression or matcher name."), "Invalid Matcher", JOptionPane.ERROR_MESSAGE);
 							return;
 						}
 						dispose();
 					}
 				});
 				
-				JButton testFilterButton = new JButton("Test Filter");
-				testFilterButton.setPreferredSize(new Dimension(100, 21));
-				testFilterButton.setBorder(BorderFactory.createRaisedBevelBorder());
-				testFilterButton.addActionListener(new ActionListener() {
+				JButton testMatcherButton = new JButton("Test Matcher");
+				testMatcherButton.setPreferredSize(new Dimension(100, 21));
+				testMatcherButton.setBorder(BorderFactory.createRaisedBevelBorder());
+				testMatcherButton.addActionListener(new ActionListener() {
 					public void actionPerformed(ActionEvent ae) {
-						testFilter(getFilter());
+						testMatcher(getMatcher());
 					}
 				});
 				
@@ -2374,15 +2482,15 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 				});
 				
 				JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER), true);
-				buttonPanel.add(addFilterButton);
-				buttonPanel.add(testFilterButton);
+				buttonPanel.add(addMatcherButton);
+				buttonPanel.add(testMatcherButton);
 				buttonPanel.add(cancelButton);
 				
 				this.setLayout(new BorderLayout());
 				this.add(inputPanel, BorderLayout.NORTH);
 				this.add(new JLabel("<HTML>" +
-						"Enter the filter to whose matches the custom function is applicable.<br>" +
-						"The filter can be changed later in the table.</HTML>"
+						"Enter the matcher to whose matches the custom function is applicable.<br>" +
+						"The matcher can be changed later in the table.</HTML>"
 						), BorderLayout.CENTER);
 				this.add(buttonPanel, BorderLayout.SOUTH);
 				this.setSize(500, 180);
@@ -2390,31 +2498,31 @@ public class ImageMarkupToolManager extends AbstractDocumentProcessorManager imp
 				this.setLocationRelativeTo(this.getOwner());
 			}
 			
-			String getFilter() {
-				return (this.committed ? this.filterInput.getText().trim() : null);
+			String getMatcher() {
+				return (this.committed ? this.matcherInput.getText().trim() : null);
 			}
 		}
 		
-		void setContent(String[] filters) {
-			this.filters.clear();
-			this.selectedFilter = -1;
-			for (int f = 0; f < filters.length; f++)
-				this.addFilter(filters[f]);
-			this.layoutFilters();
-			this.selectFilter(0);
+		void setContent(String[] matchers) {
+			this.matchers.clear();
+			this.selectedMatcher = -1;
+			for (int f = 0; f < matchers.length; f++)
+				this.addMatcher(matchers[f]);
+			this.layoutMatchers();
+			this.selectMatcher(0);
 		}
 		
-		String[] getFilters() {
-			ArrayList filters = new ArrayList(this.filters.size());
+		String[] getMatchers() {
+			ArrayList matchers = new ArrayList(this.matchers.size());
 			
-			for (int c = 0; c < this.filters.size(); c++) {
-				ImageMarkupToolFilter mc = ((ImageMarkupToolFilter) this.filters.get(c));
-				String filter = mc.getFilter();
-				if (this.validateFilter(filter))
-					filters.add(filter);
+			for (int c = 0; c < this.matchers.size(); c++) {
+				ImageMarkupToolMatcher mc = ((ImageMarkupToolMatcher) this.matchers.get(c));
+				String matcher = mc.getMatcher();
+				if (this.validateMatcher(matcher))
+					matchers.add(matcher);
 			}
 			
-			return ((String[]) filters.toArray(new String[filters.size()]));
+			return ((String[]) matchers.toArray(new String[matchers.size()]));
 		}
 	}
 }

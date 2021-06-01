@@ -57,6 +57,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 import javax.swing.BorderFactory;
+import javax.swing.ButtonGroup;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
@@ -64,6 +65,7 @@ import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
@@ -240,7 +242,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 		
 		SymbolTable symbolTable;
 		SymbolTable.Owner symbolTableOwner;
-		SymbolTable.Owner symbolTableTarger;
+		SymbolTable.Owner symbolTableTarget;
 		
 		FontEditorDialog(ImDocument doc, ImFont[] fonts) {
 			super(((fonts.length == 1) ? ("Edit Font '" + fonts[0].name + "'") : "Edit Fonts"), true);
@@ -293,16 +295,16 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			
 			this.symbolTableOwner = new SymbolTable.Owner() {
 				public void useSymbol(char symbol) {
-					symbolTableTarger.useSymbol(symbol);
+					symbolTableTarget.useSymbol(symbol);
 				}
 				public Color getColor() {
-					return symbolTableTarger.getColor();
+					return symbolTableTarget.getColor();
 				}
 				public Point getLocation() {
-					return symbolTableTarger.getLocation();
+					return symbolTableTarget.getLocation();
 				}
 				public Dimension getSize() {
-					return symbolTableTarger.getSize();
+					return symbolTableTarget.getSize();
 				}
 				public void symbolTableClosed() {
 					symbolTable = null;
@@ -317,7 +319,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 		}
 		
 		void showSymbolTableFor(SymbolTable.Owner target) {
-			this.symbolTableTarger = target;
+			this.symbolTableTarget = target;
 			if (this.symbolTable == null) {
 				this.symbolTable = SymbolTable.getSharedSymbolTable();
 				this.symbolTable.setOwner(this.symbolTableOwner);
@@ -564,7 +566,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 				
 				//	paint word box white
 				prg.setColor(Color.WHITE);
-				prg.fillRect(imw.bounds.left, imw.bounds.top, (imw.bounds.right - imw.bounds.left), (imw.bounds.bottom - imw.bounds.top));
+				prg.fillRect(imw.bounds.left, imw.bounds.top, imw.bounds.getWidth(), imw.bounds.getHeight());
 				
 				//	prepare rendering font
 				prg.setColor(Color.BLACK);
@@ -734,8 +736,11 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 			final ImFont font;
 			private JCheckBox bold;
 			private JCheckBox italics;
-			private JCheckBox serif;
-			private JCheckBox monospaced;
+//			private JCheckBox serif;
+//			private JCheckBox monospaced;
+			private JRadioButton sansSerif = new JRadioButton("Sans-Serif");
+			private JRadioButton serif = new JRadioButton("Serif");
+			private JRadioButton monospaced = new JRadioButton("Monospaced");
 			CharEditorPanel[] ceps = null;
 			FontEditorPanel(ImFont font) {
 				super(new BorderLayout(), true);
@@ -743,8 +748,17 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 				
 				this.bold = new JCheckBox("Bold", this.font.isBold());
 				this.italics = new JCheckBox("Italics", this.font.isItalics());
-				this.serif = new JCheckBox("Serif", this.font.isSerif());
-				this.monospaced = new JCheckBox("Monospaced", this.font.isMonospaced());
+//				this.serif = new JCheckBox("Serif", this.font.isSerif());
+//				this.monospaced = new JCheckBox("Monospaced", this.font.isMonospaced());
+				ButtonGroup ctbg = new ButtonGroup();
+				ctbg.add(this.sansSerif);
+				ctbg.add(this.serif);
+				ctbg.add(this.monospaced);
+				if (this.font.isMonospaced())
+					this.monospaced.setSelected(true);
+				else if (this.font.isSerif())
+					this.serif.setSelected(true);
+				else this.sansSerif.setSelected(true);
 				
 				int[] cids = this.font.getCharacterIDs();
 				BufferedImage[] cis = new BufferedImage[cids.length];
@@ -766,6 +780,7 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 				JPanel flagsPanel = new JPanel(new GridLayout(1, 0));
 				flagsPanel.add(this.bold);
 				flagsPanel.add(this.italics);
+				flagsPanel.add(this.sansSerif);
 				flagsPanel.add(this.serif);
 				flagsPanel.add(this.monospaced);
 				JButton swb = new JButton("Words");
@@ -825,8 +840,11 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 					cCidSet.add(FONT_FLAGS_CHANGED);
 					this.font.setBold(this.bold.isSelected());
 					this.font.setItalics(this.italics.isSelected());
-					this.font.setSerif(this.serif.isSelected());
-					this.font.setMonospaced(this.monospaced.isSelected());
+//					this.font.setSerif(this.serif.isSelected());
+//					this.font.setMonospaced(this.monospaced.isSelected());
+					if (this.monospaced.isSelected())
+						this.font.setMonospaced(true);
+					else this.font.setSerif(this.serif.isSelected()); // setting serif to false sets type back to sans-serif
 				}
 				for (int c = 0; c < this.ceps.length; c++) {
 					if (this.ceps[c].commitChange())
@@ -1001,8 +1019,8 @@ public class FontEditorProvider extends AbstractImageMarkupToolProvider implemen
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u0309'), "hook");
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u030A'), "ring");
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u030B'), "dblacute");
-		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u030F'), "dblgrave");
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u030C'), "caron");
+		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u030F'), "dblgrave");
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u0323'), "dotbelow");
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u0327'), "cedilla");
 		COMBINABLE_ACCENT_MAPPINGS.put(new Character('\u0328'), "ogonek");

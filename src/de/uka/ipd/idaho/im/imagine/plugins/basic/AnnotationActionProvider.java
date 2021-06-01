@@ -68,6 +68,7 @@ import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImPage;
+import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.gamta.ImDocumentRoot;
 import de.uka.ipd.idaho.im.gamta.ImTokenSequence;
@@ -522,6 +523,10 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 				
 				//	make sure not to merge across table cell boundaries
 				if (ImWord.TEXT_STREAM_TYPE_TABLE.equals(annot.getFirstWord().getTextStreamType()))
+					continue;
+				
+				//	make sure not to merge across paragraph breaks
+				if (annot.getLastWord().getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
 					continue;
 				
 				//	find closest end of annotations starting before current one
@@ -1028,9 +1033,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					protected boolean isAtomicAction() {
 						return false;
 					}
-					public ImWord getFirstWord() {
+					public boolean performAction(ImPage secondPage, Point secondPoint) {
+						return false;
+					}
+					public ImRegion getFirstRegion() {
 						return start;
 					}
+//					public ImWord getFirstWord() {
+//						return start;
+//					}
 					public boolean performAction(ImWord secondWord) {
 						return copyAnnotationAttributes(spanningAnnots[0], idmp, secondWord);
 					}
@@ -1175,11 +1186,17 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 						}
 						return pm;
 					}
-					public ImWord getFirstWord() {
-						return start;
-					}
+//					public ImWord getFirstWord() {
+//						return start;
+//					}
 					public boolean performAction(ImWord secondWord) {
 						return copyAnnotationAttributes(this.sourceAnnot, idmp, secondWord);
+					}
+					public boolean performAction(ImPage secondPage, Point secondPoint) {
+						return false;
+					}
+					public ImRegion getFirstRegion() {
+						return start;
 					}
 					public String getActiveLabel() {
 						return ("Copy attributes of " + this.sourceAnnot.getType() + " annotation at '" + start.getString() + "'");
@@ -1304,9 +1321,15 @@ public class AnnotationActionProvider extends AbstractSelectionActionProvider im
 					idmp.setAnnotationsPainted(imAnnot.getType(), true);
 					return true;
 				}
-				public ImWord getFirstWord() {
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return false;
+				}
+				public ImRegion getFirstRegion() {
 					return start;
 				}
+//				public ImWord getFirstWord() {
+//					return start;
+//				}
 				public String getActiveLabel() {
 					return ("Add annotation starting from '" + start.getString() + "'");
 				}

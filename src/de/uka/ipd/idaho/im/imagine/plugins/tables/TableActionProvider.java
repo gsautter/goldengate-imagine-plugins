@@ -58,9 +58,11 @@ import java.util.Properties;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
+import javax.swing.JRadioButtonMenuItem;
 
 import de.uka.ipd.idaho.gamta.util.CountingSet;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
@@ -87,6 +89,8 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.TwoClickSelectionAction;
+import de.uka.ipd.idaho.im.util.ImObjectTransformer;
+import de.uka.ipd.idaho.im.util.ImObjectTransformer.AttributeTransformer;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.stringUtils.StringVector;
 
@@ -117,6 +121,47 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	public String getPluginName() {
 		return "IM Table Actions";
 	}
+	
+	/* (non-Javadoc)
+	 * @see de.uka.ipd.idaho.im.imagine.plugins.AbstractGoldenGateImaginePlugin#initImagine()
+	 */
+	public void initImagine() {
+		ImObjectTransformer.addGlobalAttributeTransformer(new AttributeTransformer() {
+			public boolean canTransformAttribute(String name) {
+				return ("colsContinueFrom".equals(name) || "colsContinueIn".equals(name) || "rowsContinueFrom".equals(name) || "rowsContinueIn".equals(name));
+			}
+			public Object transformAttributeValue(ImObject object, String name, Object value, ImObjectTransformer transformer) {
+				if (value == null)
+					return null;
+				String wordId = value.toString();
+				int split = wordId.indexOf(".");
+				if (split == -1)
+					return value;
+				try {
+					int pageId = Integer.parseInt(wordId.substring(0, split));
+					if (pageId != transformer.fromPageId)
+						return value;
+					BoundingBox bounds = BoundingBox.parse(wordId.substring(split + ".".length()));
+					return (transformer.toPageId + "." + transformer.transformBounds(bounds));
+				}
+				catch (RuntimeException re) {
+					return value;
+				}
+			}
+		});
+	}
+	
+	/* TODO visualize connected table columns or rows:
+	 * - use display extension provider ...
+	 * - ... to thicken connected edges of tables
+	 * - only if table regions displaying
+	 * - use lower-alpha version of table region color
+	 * - thicken region edge by some 10-20 pixels
+	 * - maybe generate some kind of outward pointing triangles (like paper ripped off over a respective blade)
+	 * 
+	 * ==> saves a ton of attribute checking
+	 * ==> change display extensions when table attributes change
+	 */
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#init()
@@ -212,15 +257,21 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	offer merging rows across tables
 		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && !startTable.hasAttribute("rowsContinueIn"))
 			actions.add(new TwoClickSelectionAction("tableExtendRows", "Connect Table Rows", "Connect the rows in this table to those in another table, merging the tables left to right.") {
-				private ImWord artificialStartWord = null;
+//				private ImWord artificialStartWord = null;
 				public boolean performAction(ImWord secondWord) {
 					return connectTableRows(startTable, secondWord);
 				}
-				public ImWord getFirstWord() {
-					if (this.artificialStartWord == null)
-						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
-					return this.artificialStartWord;
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return connectTableRows(startTable, secondPage, secondPoint);
 				}
+				public ImRegion getFirstRegion() {
+					return startTable;
+				}
+//				public ImWord getFirstWord() {
+//					if (this.artificialStartWord == null)
+//						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
+//					return this.artificialStartWord;
+//				}
 				public String getActiveLabel() {
 					return ("Click some word in the table to connect rows to");
 				}
@@ -229,46 +280,150 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	offer merging columns across tables
 		if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && !startTable.hasAttribute("colsContinueIn"))
 			actions.add(new TwoClickSelectionAction("tableExtendCols", "Connect Table Columns", "Connect the columns in this table to those in another table, merging the tables top to bottom.") {
-				private ImWord artificialStartWord = null;
+//				private ImWord artificialStartWord = null;
 				public boolean performAction(ImWord secondWord) {
 					return connectTableCols(startTable, secondWord);
 				}
-				public ImWord getFirstWord() {
-					if (this.artificialStartWord == null)
-						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
-					return this.artificialStartWord;
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return connectTableCols(startTable, secondPage, secondPoint);
 				}
+				public ImRegion getFirstRegion() {
+					return startTable;
+				}
+//				public ImWord getFirstWord() {
+//					if (this.artificialStartWord == null)
+//						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
+//					return this.artificialStartWord;
+//				}
 				public String getActiveLabel() {
 					return ("Click some word in the table to connect columns to");
 				}
 			});
 		
 		//	offer dissecting as rows and columns
-		if (startTable.hasAttribute("rowsContinueFrom") || startTable.hasAttribute("rowsContinueIn"))
+		if (startTable.hasAttribute("rowsContinueFrom") && startTable.hasAttribute("rowsContinueIn"))
 			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows", "Disconnect the rows in this table from the other tables they are connected to.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return disconnectTableRows(idmp.document, startTable);
+//					return disconnectTableRows(idmp.document, startTable);
+					return false;
+				}
+				public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+					JMenu pm = new JMenu("Disconnect Table Rows");
+					JMenuItem mi;
+					mi = new JMenuItem("Left");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, false, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Right");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(false, true, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Left & Right");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, true, invoker);
+						}
+					});
+					pm.add(mi);
+					return pm;
+				}
+				private void disconnectTables(boolean left, boolean right, ImDocumentMarkupPanel invoker) {
+					invoker.beginAtomicAction("Disconnect Table Rows (" + ((left && right) ? "Left & Right" : (left ? "Left" : "Right")) + ")");
+					disconnectTableRows(idmp.document, startTable, left, right);
+					invoker.endAtomicAction();
+					invoker.validate();
+					invoker.repaint();
 				}
 			});
-		if (startTable.hasAttribute("colsContinueFrom") || startTable.hasAttribute("colsContinueIn"))
+		else if (startTable.hasAttribute("rowsContinueFrom"))
+			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows (Left)", "Disconnect the rows in this table from the table to the left they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableRows(idmp.document, startTable, true, false);
+				}
+			});
+		else if (startTable.hasAttribute("rowsContinueIn"))
+			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows (Right)", "Disconnect the rows in this table from the table to the right they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableRows(idmp.document, startTable, false, true);
+				}
+			});
+		if (startTable.hasAttribute("colsContinueFrom") && startTable.hasAttribute("colsContinueIn"))
 			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns", "Disconnect the columns in this table from the other tables they are connected to.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return disconnectTableCols(idmp.document, startTable);
+//					return disconnectTableCols(idmp.document, startTable);
+					return false;
+				}
+				public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+					JMenu pm = new JMenu("Disconnect Table Columns");
+					JMenuItem mi;
+					mi = new JMenuItem("Up");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, false, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Down");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(false, true, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Up & Down");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, true, invoker);
+						}
+					});
+					pm.add(mi);
+					return pm;
+				}
+				private void disconnectTables(boolean up, boolean down, ImDocumentMarkupPanel invoker) {
+					invoker.beginAtomicAction("Disconnect Table Columns (" + ((up && down) ? "Up & Down" : (up ? "Up" : "Down")) + ")");
+					disconnectTableCols(idmp.document, startTable, up, down);
+					invoker.endAtomicAction();
+					invoker.validate();
+					invoker.repaint();
+				}
+			});
+		else if (startTable.hasAttribute("colsContinueFrom"))
+			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns", "Disconnect the columns in this table from the table above it they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableCols(idmp.document, startTable, true, false);
+				}
+			});
+		else if (startTable.hasAttribute("colsContinueIn"))
+			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns", "Disconnect the columns in this table from the table below it they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableCols(idmp.document, startTable, false, true);
 				}
 			});
 		
 		//	offer assigning caption with second click
 		if (!startTable.hasAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE))
 			actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
-				private ImWord artificialStartWord = null;
+//				private ImWord artificialStartWord = null;
 				public boolean performAction(ImWord secondWord) {
 					return assignTableCaption(idmp.document, startTable, secondWord);
 				}
-				public ImWord getFirstWord() {
-					if (this.artificialStartWord == null)
-						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
-					return this.artificialStartWord;
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return false;
 				}
+				public ImRegion getFirstRegion() {
+					return startTable;
+				}
+//				public ImWord getFirstWord() {
+//					if (this.artificialStartWord == null)
+//						this.artificialStartWord = new ImWord(startTable.getDocument(), startTable.pageId, startTable.bounds, "TABLE");
+//					return this.artificialStartWord;
+//				}
 				public String getActiveLabel() {
 					return ("Click on a caption to assign it to the table at " + startTable.bounds.toString() + " on page " + (startTable.pageId + 1));
 				}
@@ -285,6 +440,16 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		for (int t = 0; t < imwPageTables.length; t++) {
 			if (imwPageTables[t].bounds.includes(imw.bounds, false))
 				return imwPageTables[t];
+		}
+		return null;
+	}
+	private ImRegion getTableAt(ImPage page, Point point) {
+		ImRegion[] pageTables = page.getRegions(ImRegion.TABLE_TYPE);
+		if (pageTables.length == 0)
+			return null;
+		for (int t = 0; t < pageTables.length; t++) {
+			if (pageTables[t].bounds.includes(point))
+				return pageTables[t];
 		}
 		return null;
 	}
@@ -375,7 +540,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				continue;
 			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + region.pageId));
 			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, region.bounds.toString());
-			captionAnnots[a].setAttribute("targetIsTable");
+			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_IS_TABLE_ATTRIBUTE);
 			return;
 		}
 		
@@ -383,7 +548,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		if (captionAnnots.length != 0) {
 			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + region.pageId));
 			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, region.bounds.toString());
-			captionAnnots[0].setAttribute("targetIsTable");
+			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_IS_TABLE_ATTRIBUTE);
 		}
 	}
 	
@@ -924,17 +1089,81 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			}
 		});
 		
+		
+		//	offer adjusting block text direction
+		if (idmp.areTextStreamsPainted())
+			actions.add(new SelectionAction("textDirectionTable", "Set Table Text Direction", "Adjust the (general, predominant) text direction of the table.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return false;
+				}
+				public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+					String tableTextDirection = ((String) selTables[0].getAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, ImRegion.TEXT_DIRECTION_LEFT_RIGHT));
+					JMenu pm = new JMenu("Table Text Direction");
+					ButtonGroup bg = new ButtonGroup();
+					final JMenuItem lrmi = new JRadioButtonMenuItem("Left-Right", ImRegion.TEXT_DIRECTION_LEFT_RIGHT.equals(tableTextDirection));
+					lrmi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							if (lrmi.isSelected())
+								setTextDirection(ImRegion.TEXT_DIRECTION_LEFT_RIGHT, invoker);
+						}
+					});
+					pm.add(lrmi);
+					bg.add(lrmi);
+					final JMenuItem bumi = new JRadioButtonMenuItem("Bottom-Up", ImRegion.TEXT_DIRECTION_BOTTOM_UP.equals(tableTextDirection));
+					bumi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							if (bumi.isSelected())
+								setTextDirection(ImRegion.TEXT_DIRECTION_BOTTOM_UP, invoker);
+						}
+					});
+					pm.add(bumi);
+					bg.add(bumi);
+					final JMenuItem tdmi = new JRadioButtonMenuItem("Top-Down", ImRegion.TEXT_DIRECTION_TOP_DOWN.equals(tableTextDirection));
+					tdmi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							if (tdmi.isSelected())
+								setTextDirection(ImRegion.TEXT_DIRECTION_TOP_DOWN, invoker);
+						}
+					});
+					pm.add(tdmi);
+					bg.add(tdmi);
+					final JMenuItem udmi = new JRadioButtonMenuItem("Right-Left & Upside-Down", ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN.equals(tableTextDirection));
+					udmi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							if (udmi.isSelected())
+								setTextDirection(ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN, invoker);
+						}
+					});
+					pm.add(udmi);
+					bg.add(udmi);
+					pm.setToolTipText(this.tooltip);
+					Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.TABLE_TYPE);
+					if (regionTypeColor != null) {
+						pm.setOpaque(true);
+						pm.setBackground(regionTypeColor);
+					}
+					return pm;
+				}
+				private void setTextDirection(String textDirection, ImDocumentMarkupPanel invoker) {
+					invoker.beginAtomicAction(this.label);
+					TableActionProvider.this.setTextDirection(selTables[0], textDirection);
+					invoker.endAtomicAction();
+					invoker.validate();
+					invoker.repaint();
+				}
+			});
+		
 		//	offer assigning caption with second click
 		if (!selTables[0].hasAttribute(ImRegion.IN_LINE_OBJECT_MARKER_ATTRIBUTE))
 			actions.add(new TwoClickSelectionAction("assignCaptionTable", "Assign Caption", "Assign a caption to this table with a second click.") {
-				private ImWord artificialStartWord = null;
 				public boolean performAction(ImWord secondWord) {
 					return assignTableCaption(idmp.document, selTables[0], secondWord);
 				}
-				public ImWord getFirstWord() {
-					if (this.artificialStartWord == null)
-						this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
-					return this.artificialStartWord;
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return false;
+				}
+				public ImRegion getFirstRegion() {
+					return selTables[0];
 				}
 				public String getActiveLabel() {
 					return ("Click on a caption to assign it to the table at " + selTables[0].bounds.toString() + " on page " + (selTables[0].pageId + 1));
@@ -943,15 +1172,15 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	offer merging rows across tables
 		if (idmp.areRegionsPainted(ImRegion.TABLE_ROW_TYPE) && !selTables[0].hasAttribute("rowsContinueIn"))
-			actions.add(new TwoClickSelectionAction("tableExtendRows", "Connect Table Rows", "Connect the rows in this table to those in another table, merging the tables left to right.") {
-				private ImWord artificialStartWord = null;
+			actions.add(new TwoClickSelectionAction("tableExtendRows", "Connect Table Rows (Right)", "Connect the rows in this table to those in another table, merging the tables left to right.") {
 				public boolean performAction(ImWord secondWord) {
 					return connectTableRows(selTables[0], secondWord);
 				}
-				public ImWord getFirstWord() {
-					if (this.artificialStartWord == null)
-						this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
-					return this.artificialStartWord;
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return connectTableRows(selTables[0], secondPage, secondPoint);
+				}
+				public ImRegion getFirstRegion() {
+					return selTables[0];
 				}
 				public String getActiveLabel() {
 					return ("Click some word in the table to connect rows to");
@@ -960,32 +1189,124 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	offer merging columns across tables
 		if (idmp.areRegionsPainted(ImRegion.TABLE_COL_TYPE) && !selTables[0].hasAttribute("colsContinueIn"))
-			actions.add(new TwoClickSelectionAction("tableExtendCols", "Connect Table Columns", "Connect the columns in this table to those in another table, merging the tables top to bottom.") {
-				private ImWord artificialStartWord = null;
+			actions.add(new TwoClickSelectionAction("tableExtendCols", "Connect Table Columns (Down)", "Connect the columns in this table to those in another table, merging the tables top to bottom.") {
 				public boolean performAction(ImWord secondWord) {
 					return connectTableCols(selTables[0], secondWord);
 				}
-				public ImWord getFirstWord() {
-					if (this.artificialStartWord == null)
-						this.artificialStartWord = new ImWord(selTables[0].getDocument(), selTables[0].pageId, selTables[0].bounds, "TABLE");
-					return this.artificialStartWord;
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return connectTableCols(selTables[0], secondPage, secondPoint);
+				}
+				public ImRegion getFirstRegion() {
+					return selTables[0];
 				}
 				public String getActiveLabel() {
 					return ("Click some word in the table to connect columns to");
 				}
 			});
 		
-		//	offer dissecting as rows and columns
-		if (selTables[0].hasAttribute("rowsContinueFrom") || selTables[0].hasAttribute("rowsContinueIn"))
+		//	offer dissecting as rows and columns TODO distinguish upward cut and downward cut, distinguish leftward and rightward cut
+		if (selTables[0].hasAttribute("rowsContinueFrom") && selTables[0].hasAttribute("rowsContinueIn"))
 			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows", "Disconnect the rows in this table from the other tables they are connected to.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return disconnectTableRows(idmp.document, selTables[0]);
+//					return disconnectTableRows(idmp.document, selTables[0]);
+					return false;
+				}
+				public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+					JMenu pm = new JMenu("Disconnect Table Rows");
+					JMenuItem mi;
+					mi = new JMenuItem("Left");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, false, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Right");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(false, true, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Left & Right");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, true, invoker);
+						}
+					});
+					pm.add(mi);
+					return pm;
+				}
+				private void disconnectTables(boolean left, boolean right, ImDocumentMarkupPanel invoker) {
+					invoker.beginAtomicAction("Disconnect Table Rows (" + ((left && right) ? "Left & Right" : (left ? "Left" : "Right")) + ")");
+					disconnectTableRows(idmp.document, selTables[0], left, right);
+					invoker.endAtomicAction();
+					invoker.validate();
+					invoker.repaint();
 				}
 			});
-		if (selTables[0].hasAttribute("colsContinueFrom") || selTables[0].hasAttribute("colsContinueIn"))
+		else if (selTables[0].hasAttribute("rowsContinueFrom"))
+			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows (Left)", "Disconnect the rows in this table from the table to the left they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableRows(idmp.document, selTables[0], true, false);
+				}
+			});
+		else if (selTables[0].hasAttribute("rowsContinueIn"))
+			actions.add(new SelectionAction("tableCutRows", "Disconnect Table Rows (Right)", "Disconnect the rows in this table from the table to the right they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableRows(idmp.document, selTables[0], false, true);
+				}
+			});
+		if (selTables[0].hasAttribute("colsContinueFrom") && selTables[0].hasAttribute("colsContinueIn"))
 			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns", "Disconnect the columns in this table from the other tables they are connected to.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return disconnectTableCols(idmp.document, selTables[0]);
+//					return disconnectTableCols(idmp.document, selTables[0]);
+					return false;
+				}
+				public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+					JMenu pm = new JMenu("Disconnect Table Columns");
+					JMenuItem mi;
+					mi = new JMenuItem("Up");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, false, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Down");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(false, true, invoker);
+						}
+					});
+					pm.add(mi);
+					mi = new JMenuItem("Up & Down");
+					mi.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							disconnectTables(true, true, invoker);
+						}
+					});
+					pm.add(mi);
+					return pm;
+				}
+				private void disconnectTables(boolean up, boolean down, ImDocumentMarkupPanel invoker) {
+					invoker.beginAtomicAction("Disconnect Table Columns (" + ((up && down) ? "Up & Down" : (up ? "Up" : "Down")) + ")");
+					disconnectTableCols(idmp.document, selTables[0], up, down);
+					invoker.endAtomicAction();
+					invoker.validate();
+					invoker.repaint();
+				}
+			});
+		else if (selTables[0].hasAttribute("colsContinueFrom"))
+			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns (Up)", "Disconnect the columns in this table from the table above it they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableCols(idmp.document, selTables[0], true, false);
+				}
+			});
+		else if (selTables[0].hasAttribute("colsContinueIn"))
+			actions.add(new SelectionAction("tableCutCols", "Disconnect Table Columns (Down)", "Disconnect the columns in this table from the table below it they are connected to.") {
+				public boolean performAction(ImDocumentMarkupPanel invoker) {
+					return disconnectTableCols(idmp.document, selTables[0], false, true);
 				}
 			});
 		
@@ -1072,6 +1393,52 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
+	}
+	
+	void setTextDirection(ImRegion table, String textDirection) {
+		
+		//	assess word direction before normalizing argument for attribute setting
+		ImWord[] tableWords = table.getWords();
+		CountingSet wordDirections = new CountingSet(new HashMap());
+		for (int w = 0; w < tableWords.length; w++)
+			wordDirections.add((String) tableWords[w].getAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, ImRegion.TEXT_DIRECTION_LEFT_RIGHT));
+		int inDirectionWordCount = wordDirections.getCount(textDirection);
+		
+		//	prepare effective attribute value (default is omitted)
+		if (ImRegion.TEXT_DIRECTION_LEFT_RIGHT.equals(textDirection))
+			textDirection = null;
+		
+		//	set text direction of column or block proper
+		if (textDirection == null)
+			table.removeAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE);
+		else table.setAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, textDirection);
+		
+		//	set text direction of columns, rows, and cells
+		ImRegion[] cols = table.getRegions(ImRegion.TABLE_COL_TYPE);
+		setRegionTextDirection(cols, textDirection);
+		ImRegion[] rows = table.getRegions(ImRegion.TABLE_ROW_TYPE);
+		setRegionTextDirection(rows, textDirection);
+		setRegionTextDirection(table.getRegions(ImRegion.TABLE_CELL_TYPE), textDirection);
+		
+		//	touching words proper only if majority is off direction
+		if ((wordDirections.size() - inDirectionWordCount) < inDirectionWordCount)
+			return;
+		
+		//	TODO multiple text directions, need to turn
+		if (wordDirections.elementCount() > 1)
+			return;
+		
+		//	update word text direction
+		setRegionTextDirection(tableWords, textDirection);
+		ImUtils.orderTableWords(ImUtils.getTableCells(table, rows, cols));
+	}
+	
+	private static void setRegionTextDirection(ImRegion[] regions, String textDirection) {
+		for (int r = 0; r < regions.length; r++) {
+			if (textDirection == null)
+				regions[r].removeAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE);
+			else regions[r].setAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, textDirection);
+		}
 	}
 	
 	/**
@@ -1502,42 +1869,217 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		this.cleanupTableAnnotations(table.getDocument(), table);
 	}
 	
+	private static class TableRowLine {
+		final ImWord[] words;
+		final ImRegion table;
+		final HashSet overlappingLines = new HashSet();
+		final HashSet overlappingWords = new HashSet();
+		int top;
+		int bottom;
+		TableRowLine(ImWord[] words, ImRegion table) {
+			this.words = words;
+			int top = Integer.MAX_VALUE;
+			int bottom = Integer.MIN_VALUE;
+			for (int w = 0; w < this.words.length; w++) {
+				top = Math.min(top, this.words[w].bounds.top);
+				bottom = Math.max(bottom, this.words[w].bounds.bottom);
+			}
+			this.top = top;
+			this.bottom = bottom;
+			this.table = table;
+			System.out.println("   - " + this.getBounds());
+		}
+		BoundingBox getBounds() {
+			return new BoundingBox(this.table.bounds.left, this.table.bounds.right, this.top, this.bottom);
+		}
+	}
+	
 	private boolean splitTableRowToLines(ImPage page, ImRegion table, ImRegion toSplitRow) {
+//		System.out.println("Splitting " + toSplitRow.bounds + " to lines");
 		
 		//	get table row words
 		ImWord[] toSplitRowWords = toSplitRow.getWords();
 		ImUtils.sortLeftRightTopDown(toSplitRowWords);
+//		System.out.println(" - words sorted");
 		
 		//	sort words into rows
 		int rowStartWordIndex = 0;
+		ArrayList rowLines = new ArrayList();
+//		System.out.println(" - collecting line rows");
 		for (int w = 0; w < toSplitRowWords.length; w++)
 			if (((w+1) == toSplitRowWords.length) || (toSplitRowWords[w+1].centerY > toSplitRowWords[w].bounds.bottom)) {
-				BoundingBox rowWordBox = ImLayoutObject.getAggregateBox(toSplitRowWords, rowStartWordIndex, (w+1));
-				new ImRegion(table.getPage(), new BoundingBox(table.bounds.left, table.bounds.right, rowWordBox.top, rowWordBox.bottom), ImRegion.TABLE_ROW_TYPE);
+				rowLines.add(new TableRowLine(Arrays.copyOfRange(toSplitRowWords, rowStartWordIndex, (w+1)), table));
 				rowStartWordIndex = (w+1);
 			}
+//		System.out.println(" - line rows collected");
+		
+		//	check for conflicts
+		System.out.println(" - checking for conflicts");
+		for (int l = 0; l < rowLines.size(); l++) {
+			TableRowLine rowLine = ((TableRowLine) rowLines.get(l));
+			for (int cl = 0; cl < rowLines.size(); cl++) {
+				if (cl == l)
+					continue;
+				TableRowLine cRowLine = ((TableRowLine) rowLines.get(cl));
+				if (cRowLine.bottom <= rowLine.top)
+					continue;
+				if (rowLine.bottom <= cRowLine.top)
+					break;
+				rowLine.overlappingLines.add(cRowLine);
+				cRowLine.overlappingLines.add(rowLine);
+			}
+//			System.out.println("   - found " + rowLine.overlappingLines.size() + " conflicts for " + rowLine.getBounds());
+		}
+		
+		//	resolve conflicts, and collect between-line words
+		HashSet betweenLineWords = new HashSet();
+		System.out.println(" - resolving conflicts");
+		for (boolean lineOverlapResolved = true; lineOverlapResolved;) {
+			lineOverlapResolved = false;
+			
+			//	find line overlapping maximum number of other lines
+			int maxOverlappingLines = 0;
+			TableRowLine maxOverlappedLine = null;
+			ArrayList maxOverlappedLines = new ArrayList();
+			for (int l = 0; l < rowLines.size(); l++) {
+				TableRowLine rowLine = ((TableRowLine) rowLines.get(l));
+				if (maxOverlappingLines < rowLine.overlappingLines.size()) {
+					maxOverlappingLines = rowLine.overlappingLines.size();
+					maxOverlappedLine = rowLine;
+					maxOverlappedLines.clear();
+					maxOverlappedLines.add(rowLine);
+				}
+				else if (maxOverlappingLines == 0) {}
+				else if (maxOverlappingLines == rowLine.overlappingLines.size())
+					maxOverlappedLines.add(rowLine);
+			}
+			if (maxOverlappedLine == null)
+				break;
+			
+			//	if we have multiple lines with same number of conflicting rows, first take care of the one with most non-conflicting words
+			if (maxOverlappedLines.size() > 1) {
+//				System.out.println(" - choosing between " + maxOverlappedLines.size() + " lines overlapping with " + maxOverlappingLines + " others");
+				int maxNonOverlappingWordCount = 0;
+				for (int l = 0; l < maxOverlappedLines.size(); l++) {
+					TableRowLine rowLine = ((TableRowLine) maxOverlappedLines.get(l));
+					HashSet nonOverlappingWords = new HashSet(Arrays.asList(rowLine.words));
+					for (Iterator olit = rowLine.overlappingLines.iterator(); olit.hasNext();) {
+						TableRowLine oRowLine = ((TableRowLine) olit.next());
+						for (int w = 0; w < rowLine.words.length; w++) {
+							if (rowLine.words[w].bounds.bottom <= oRowLine.top) { /* word above conflicting line */ }
+							else if (oRowLine.bottom <= rowLine.words[w].bounds.top) { /* word below conflicting line */ }
+							else nonOverlappingWords.remove(rowLine.words[w]);
+						}
+					}
+//					System.out.println("   - " + rowLine.getBounds() + " has " + nonOverlappingWords.size() + " non-conflicting words");
+					if (maxNonOverlappingWordCount < nonOverlappingWords.size()) {
+						maxNonOverlappingWordCount = nonOverlappingWords.size();
+						maxOverlappedLine = rowLine;
+					}
+				}
+//				System.out.println("   ==> selected " + maxOverlappedLine.getBounds() + " with " + maxNonOverlappingWordCount + " non-conflicting words");
+			}
+			lineOverlapResolved = true; // we're going to resolve this one ... somehow ...
+//			System.out.println("   - shrinking " + maxOverlappedLine.getBounds() + " with " + maxOverlappedLine.overlappingLines.size() + " overlapping lines");
+			
+			//	collect words in said line that don't overlap other lines
+			HashSet nonOverlappingWords = new HashSet(Arrays.asList(maxOverlappedLine.words));
+			for (Iterator olit = maxOverlappedLine.overlappingLines.iterator(); olit.hasNext();) {
+				TableRowLine oRowLine = ((TableRowLine) olit.next());
+				for (int w = 0; w < maxOverlappedLine.words.length; w++) {
+					if (maxOverlappedLine.words[w].bounds.bottom <= oRowLine.top) { /* word above conflicting line */ }
+					else if (oRowLine.bottom <= maxOverlappedLine.words[w].bounds.top) { /* word below conflicting line */ }
+					else nonOverlappingWords.remove(maxOverlappedLine.words[w]);
+				}
+			}
+			
+			//	no words remaining, eliminate it and collect words for latter cell mergers
+			if (nonOverlappingWords.isEmpty()) {
+				betweenLineWords.addAll(Arrays.asList(maxOverlappedLine.words));
+				rowLines.remove(maxOverlappedLine);
+				for (int l = 0; l < rowLines.size(); l++)
+					((TableRowLine) rowLines.get(l)).overlappingLines.remove(maxOverlappedLine);
+//				System.out.println("     ==> eliminated altogether (1)");
+				continue;
+			}
+			
+			//	shrink line to non-conflicting dimensions
+			int nonOverlappingTop = Integer.MAX_VALUE;
+			int nonOverlappingBottom = Integer.MIN_VALUE;
+			for (Iterator nowit = nonOverlappingWords.iterator(); nowit.hasNext();) {
+				ImWord noWord = ((ImWord) nowit.next());
+				nonOverlappingTop = Math.min(nonOverlappingTop, noWord.bounds.top);
+				nonOverlappingBottom = Math.max(nonOverlappingBottom, noWord.bounds.bottom);
+			}
+			if (nonOverlappingBottom <= nonOverlappingTop) {
+				betweenLineWords.addAll(Arrays.asList(maxOverlappedLine.words));
+				rowLines.remove(maxOverlappedLine);
+				System.out.println("     ==> eliminated altogether (2)");
+			}
+			else {
+				maxOverlappedLine.top = nonOverlappingTop;
+				maxOverlappedLine.bottom = nonOverlappingBottom;
+				for (int w = 0; w < maxOverlappedLine.words.length; w++) {
+					if (!nonOverlappingWords.contains(maxOverlappedLine.words[w]))
+						maxOverlappedLine.overlappingWords.add(maxOverlappedLine.words[w]);
+				}
+//				System.out.println("     ==> shrunk to " + maxOverlappedLine.getBounds());
+//				System.out.println("     ==> got conflict inducing words " + maxOverlappedLine.overlappingWords);
+			}
+			for (int l = 0; l < rowLines.size(); l++)
+				((TableRowLine) rowLines.get(l)).overlappingLines.remove(maxOverlappedLine);
+			maxOverlappedLine.overlappingLines.clear();
+		}
+		
+		//	mark line rows
+		ImRegion[] sRows = new ImRegion[rowLines.size()];
+		for (int l = 0; l < rowLines.size(); l++)
+			sRows[l] = new ImRegion(table.getPage(), ((TableRowLine) rowLines.get(l)).getBounds(), ImRegion.TABLE_ROW_TYPE);
+//		System.out.println(" - line rows added");
 		
 		//	remove selected row
 		table.getPage().removeRegion(toSplitRow);
+//		System.out.println(" - to split row removed");
 		
 		//	get split rows and existing cells
-		ImRegion[] sRows = getRegionsInside(page, toSplitRow.bounds, ImRegion.TABLE_ROW_TYPE, false);
-		Arrays.sort(sRows, ImUtils.topDownOrder);
+//		System.out.println(" - got " + sRows.length + " line rows");
 		ImRegion[] toSplitRowCells = getRegionsOverlapping(page, toSplitRow.bounds, ImRegion.TABLE_CELL_TYPE);
 		Arrays.sort(toSplitRowCells, ImUtils.leftRightOrder);
+//		System.out.println(" - got " + toSplitRowCells.length + " cells to split");
 		
 		//	create new cells left to right
 		for (int c = 0; c < toSplitRowCells.length; c++) {
+//			System.out.println(" - splitting cell " + toSplitRowCells[c].bounds);
 			
 			//	create split cells
 			for (int r = 0; r < sRows.length; r++) {
 				int sCellTop = ((r == 0) ? toSplitRowCells[c].bounds.top : sRows[r].bounds.top);
 				int sCellBottom = (((r+1) == sRows.length) ? toSplitRowCells[c].bounds.bottom : sRows[r].bounds.bottom);
-				this.markTableCell(page, new BoundingBox(toSplitRowCells[c].bounds.left, toSplitRowCells[c].bounds.right, sCellTop, sCellBottom), true, false);
+				ImRegion sCell = this.markTableCell(page, new BoundingBox(toSplitRowCells[c].bounds.left, toSplitRowCells[c].bounds.right, sCellTop, sCellBottom), true, false);
+//				System.out.println("   - " + sCell.bounds);
 			}
 			
 			//	clean up
 			page.removeRegion(toSplitRowCells[c]);
+//			System.out.println("   - cell removed");
+		}
+		
+		//	merge cells with overlapping content
+		for (int l = 0; l < rowLines.size(); l++)
+			betweenLineWords.addAll(((TableRowLine) rowLines.get(l)).overlappingWords);
+		for (Iterator blwit = betweenLineWords.iterator(); blwit.hasNext();) {
+			ImWord blWord = ((ImWord) blwit.next());
+//			System.out.println(" - merging cells overlapping " + blWord);
+			ImRegion[] blWordCells = getRegionsOverlapping(page, blWord.bounds, ImRegion.TABLE_CELL_TYPE);
+//			System.out.println("   - got " + blWordCells.length + " overlapping cells");
+			if (blWordCells.length < 2)
+				continue;
+			BoundingBox mCellBounds = ImLayoutObject.getAggregateBox(blWordCells);
+			ImRegion mCell = this.markTableCell(page, mCellBounds, true, false);
+//			System.out.println("   - got merged cell " + mCell.bounds);
+			for (int c = 0; c < blWordCells.length; c++)
+				page.removeRegion(blWordCells[c]);
+//			System.out.println("   - merged cells removed");
 		}
 		
 		//	clean up table structure
@@ -3648,7 +4190,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		}
 		
 		//	we have no graphically marked row gaps at all ==> take topmost (column header) row gap out of average
-		else if (rowOccupationGaps.size() != 0) {
+		else if (rowOccupationGaps.size() > 1) {
 			int rowMarginCount = rowOccupationGaps.size();
 			RowOccupationGap topRog = ((RowOccupationGap) rowOccupationGaps.iterator().next());
 			rowMarginCount--;
@@ -3659,9 +4201,8 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 			avgNonPeakRowMargin = ((nonPeakRowMarginCount == 0) ? avgRowMargin : ((nonPeakRowMarginSum + (nonPeakRowMarginCount / 2)) / nonPeakRowMarginCount));
 		}
 		
-		for (int r = 0; r < areaRows.length; r += 2) {
+		for (int r = 0; r < areaRows.length; r += 2)
 			System.out.println("Row " + (r / 2) + ": " + areaRows[r].occupiedCellCount + " cells occupied, space below is " + areaRows[r].belowRowGap);
-		}
 		
 		//	determine row gap margin threshold that will leave us with sensible number of rows
 		//	TODO try accumulation point analysis
@@ -4579,7 +5120,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 				continue;
 			}
 			
-			//	do we have a sparse column TODO test thresholds, as well as separating 10
+			//	do we have a sparse column TODO test thresholds, as well as pivot 10
 			if (((areaRows.length < 10) ? 1 : 2) < areaCols[c].occupiedCellCount)
 				continue;
 			
@@ -4709,9 +5250,6 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	private static class TableAreaRow extends TableAreaSlice {
 		int aboveRowGap = -1;
 		int belowRowGap = -1;
-//		
-//		int bridgedAboveCount = 0;
-//		int bridgedBelowCount = 0;
 		
 		int occupiedCellCount = 0;
 		int disjointOccupiedCellCount = 0;
@@ -5018,7 +5556,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return true;
 	}
 	
-	//	TODO remove this method, does nothing but call some constructor
+	//	TODO-not remove this method, does nothing but call some constructor
 	private ImRegion markTableCell(ImPage page, BoundingBox bounds, boolean shrinkLeftRight, boolean shrinkTopBottom) {
 //		//	TODOne DO NOT SHRINK !!!
 //		//	TODOne TEST WITHOUT SHRINKING !!! ==> TODOne only need to shrink _columns_ before marking cells
@@ -5361,34 +5899,39 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		//	set attributes
 		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, table.bounds.toString());
 		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + table.pageId));
-		wordCaption.setAttribute("targetIsTable");
+		wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_IS_TABLE_ATTRIBUTE);
 		return true;
 	}
 	
 	private boolean connectTableRows(ImRegion startTable, ImWord secondWord) {
-		ImRegion secondWordTable = getTableAt(secondWord);
+		ImRegion secondWordTable = this.getTableAt(secondWord);
 		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
 			DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 			return false;
 		}
-		if ((startTable.pageId == secondWordTable.pageId) && startTable.bounds.equals(secondWordTable.bounds)) {
-			DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the to-merge table\nA table cannot be merged with itself"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+		return this.connectTableRows(startTable, secondWordTable);
+	}
+	private boolean connectTableRows(ImRegion startTable, ImPage secondPage, Point secondPoint) {
+		ImRegion secondPointTable = this.getTableAt(secondPage, secondPoint);
+		if (secondPointTable == null)
+			return false;
+		return this.connectTableRows(startTable, secondPointTable);
+	}
+	private boolean connectTableRows(ImRegion startTable, ImRegion secondTable) {
+		if ((startTable.pageId == secondTable.pageId) && startTable.bounds.equals(secondTable.bounds)) {
+			DialogFactory.alert("A table cannot be merged with itself", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 			return false;
 		}
 		
-//		if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable, true)) {
-//			DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
-//			return false;
-//		}
-		if (!ImUtils.areTableRowsCompatible(startTable, secondWordTable, false)) {
+		if (!ImUtils.areTableRowsCompatible(startTable, secondTable, false)) {
 			DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have the same number of rows", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 			return false;
 		}
 		
 		String[] labels1 = ImUtils.getTableRowLabels(startTable);
-		String[] labels2 = ImUtils.getTableRowLabels(secondWordTable);
+		String[] labels2 = ImUtils.getTableRowLabels(secondTable);
 		if ((labels1 == null) || (labels2 == null) || (labels1.length != labels2.length)) {
-			DialogFactory.alert("The two tables are not compatible; in order to merge rows, two tables have to have the same number of rows", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
+			DialogFactory.alert(("The two tables are not compatible; in order to merge rows, two tables have to have the same number of rows"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 			return false;
 		}
 		
@@ -5409,7 +5952,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		}
 		
 		ImRegion[] startTables = ImUtils.getColumnConnectedTables(startTable);
-		ImRegion[] secondWordTables = ImUtils.getColumnConnectedTables(secondWordTable);
+		ImRegion[] secondWordTables = ImUtils.getColumnConnectedTables(secondTable);
 		if (startTables.length != secondWordTables.length) {
 			DialogFactory.alert("The two tables are connected to other tables, and the rows not compatible;\nin order to merge rows, two tables have to have\n- the same number of rows\n- the same label on each one but the first (column header) row\nTry establishing all column extension relations first", "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 			return false;
@@ -5431,25 +5974,31 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return true;
 	}
 	
-	private boolean disconnectTableRows(ImDocument doc, ImRegion table) {
-		ImRegion[] conTables = ImUtils.getColumnConnectedTables(table);
-		ImRegion leftTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("rowsContinueFrom"))));
-		ImRegion[] leftTables = null;
-		if (leftTable != null) {
-			leftTables = ImUtils.getColumnConnectedTables(leftTable);
-			for (int t = 0; t < leftTables.length; t++)
-				leftTables[t].removeAttribute("rowsContinueIn");
-			for (int t = 0; t < conTables.length; t++)
-				conTables[t].removeAttribute("rowsContinueFrom");
+	private boolean disconnectTableRows(ImDocument doc, ImRegion table, boolean left, boolean right) {
+		ImRegion[] colTables = ImUtils.getColumnConnectedTables(table);
+		ImRegion leftTable = null;
+		if (left) {
+			leftTable = ImUtils.getTableForId(doc, ((String) table.getAttribute("rowsContinueFrom")));
+			ImRegion[] leftTables = null;
+			if (leftTable != null) {
+				leftTables = ImUtils.getColumnConnectedTables(leftTable);
+				for (int t = 0; t < leftTables.length; t++)
+					leftTables[t].removeAttribute("rowsContinueIn");
+				for (int t = 0; t < colTables.length; t++)
+					colTables[t].removeAttribute("rowsContinueFrom");
+			}
 		}
-		ImRegion rightTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("rowsContinueIn"))));
-		ImRegion[] rightTables = null;
-		if (rightTable != null) {
-			rightTables = ImUtils.getColumnConnectedTables(rightTable);
-			for (int t = 0; t < conTables.length; t++)
-				conTables[t].removeAttribute("rowsContinueIn");
-			for (int t = 0; t < rightTables.length; t++)
-				rightTables[t].removeAttribute("rowsContinueFrom");
+		ImRegion rightTable = null;
+		if (right) {
+			rightTable = ImUtils.getTableForId(doc, ((String) table.getAttribute("rowsContinueIn")));
+			ImRegion[] rightTables = null;
+			if (rightTable != null) {
+				rightTables = ImUtils.getColumnConnectedTables(rightTable);
+				for (int t = 0; t < colTables.length; t++)
+					colTables[t].removeAttribute("rowsContinueIn");
+				for (int t = 0; t < rightTables.length; t++)
+					rightTables[t].removeAttribute("rowsContinueFrom");
+			}
 		}
 		if ((leftTable != null) && (rightTable != null))
 			ImUtils.connectTableRows(leftTable, rightTable);
@@ -5458,27 +6007,32 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 	}
 	
 	private boolean connectTableCols(ImRegion startTable, ImWord secondWord) {
-		ImRegion secondWordTable = getTableAt(secondWord);
+		ImRegion secondWordTable = this.getTableAt(secondWord);
 		if (!ImWord.TEXT_STREAM_TYPE_TABLE.equals(secondWord.getTextStreamType()) || (secondWordTable == null)) {
-			DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+			DialogFactory.alert(("'" + secondWord.getString() + "' does not belong to a table"), "Cannot Merge Rows", JOptionPane.ERROR_MESSAGE);
 			return false;
 		}
-		if ((startTable.pageId == secondWordTable.pageId) && startTable.bounds.equals(secondWordTable.bounds)) {
-			DialogFactory.alert(("'" + secondWord.getString() + "' belongs to the to-merge table\nA table cannot be merged with itself"), "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
+		return this.connectTableCols(startTable, secondWordTable);
+	}
+	private boolean connectTableCols(ImRegion startTable, ImPage secondPage, Point secondPoint) {
+		ImRegion secondPointTable = this.getTableAt(secondPage, secondPoint);
+		if (secondPointTable == null)
+			return false;
+		return this.connectTableCols(startTable, secondPointTable);
+	}
+	private boolean connectTableCols(ImRegion startTable, ImRegion secondTable) {
+		if ((startTable.pageId == secondTable.pageId) && startTable.bounds.equals(secondTable.bounds)) {
+			DialogFactory.alert("A table cannot be merged with itself", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 			return false;
 		}
 		
-//		if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable, true)) {
-//			DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have\n- the same number of coumns\n- the same header on each one but the first (row label) column", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
-//			return false;
-//		}
-		if (!ImUtils.areTableColumnsCompatible(startTable, secondWordTable, false)) {
+		if (!ImUtils.areTableColumnsCompatible(startTable, secondTable, false)) {
 			DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have the same number of columns", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 			return false;
 		}
 		
 		String[] labels1 = ImUtils.getTableColumnHeaders(startTable);
-		String[] labels2 = ImUtils.getTableColumnHeaders(secondWordTable);
+		String[] labels2 = ImUtils.getTableColumnHeaders(secondTable);
 		if ((labels1 == null) || (labels2 == null) || (labels1.length != labels2.length)) {
 			DialogFactory.alert("The two tables are not compatible; in order to merge columns, two tables have to have the same number of columns", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 			return false;
@@ -5501,7 +6055,7 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		}
 		
 		ImRegion[] startTables = ImUtils.getRowConnectedTables(startTable);
-		ImRegion[] secondWordTables = ImUtils.getRowConnectedTables(secondWordTable);
+		ImRegion[] secondWordTables = ImUtils.getRowConnectedTables(secondTable);
 		if (startTables.length != secondWordTables.length) {
 			DialogFactory.alert("The two tables are connected to other tables, and the columns not compatible;\nin order to merge columns, two tables have to have\n- the same number of columns\n- the same label on each one but the first (row label) column\nTry establishing all row extension relations first", "Cannot Merge Columns", JOptionPane.ERROR_MESSAGE);
 			return false;
@@ -5523,25 +6077,31 @@ public class TableActionProvider extends AbstractSelectionActionProvider impleme
 		return true;
 	}
 	
-	private boolean disconnectTableCols(ImDocument doc, ImRegion table) {
-		ImRegion[] conTables = ImUtils.getColumnConnectedTables(table);
-		ImRegion topTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("colsContinueFrom"))));
-		ImRegion[] topTables = null;
-		if (topTable != null) {
-			topTables = ImUtils.getRowConnectedTables(topTable);
-			for (int t = 0; t < topTables.length; t++)
-				topTables[t].removeAttribute("colsContinueIn");
-			for (int t = 0; t < conTables.length; t++)
-				conTables[t].removeAttribute("colsContinueFrom");
+	private boolean disconnectTableCols(ImDocument doc, ImRegion table, boolean up, boolean down) {
+		ImRegion[] rowTables = ImUtils.getColumnConnectedTables(table);
+		ImRegion topTable = null;
+		if (up) {
+			topTable = ImUtils.getTableForId(doc, ((String) table.getAttribute("colsContinueFrom")));
+			ImRegion[] topTables = null;
+			if (topTable != null) {
+				topTables = ImUtils.getRowConnectedTables(topTable);
+				for (int t = 0; t < topTables.length; t++)
+					topTables[t].removeAttribute("colsContinueIn");
+				for (int t = 0; t < rowTables.length; t++)
+					rowTables[t].removeAttribute("colsContinueFrom");
+			}
 		}
-		ImRegion bottomTable = ImUtils.getTableForId(doc, ((String) (table.getAttribute("colsContinueIn"))));
-		ImRegion[] bottomTables = null;
-		if (bottomTable != null) {
-			bottomTables = ImUtils.getRowConnectedTables(bottomTable);
-			for (int t = 0; t < conTables.length; t++)
-				conTables[t].removeAttribute("colsContinueIn");
-			for (int t = 0; t < bottomTables.length; t++)
-				bottomTables[t].removeAttribute("colsContinueFrom");
+		ImRegion bottomTable = null;
+		if (down) {
+			bottomTable = ImUtils.getTableForId(doc, ((String) table.getAttribute("colsContinueIn")));
+			ImRegion[] bottomTables = null;
+			if (bottomTable != null) {
+				bottomTables = ImUtils.getRowConnectedTables(bottomTable);
+				for (int t = 0; t < rowTables.length; t++)
+					rowTables[t].removeAttribute("colsContinueIn");
+				for (int t = 0; t < bottomTables.length; t++)
+					bottomTables[t].removeAttribute("colsContinueFrom");
+			}
 		}
 		if ((topTable != null) && (bottomTable != null))
 			ImUtils.connectTableColumns(topTable, bottomTable);

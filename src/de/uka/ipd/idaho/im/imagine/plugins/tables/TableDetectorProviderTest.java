@@ -38,13 +38,15 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Properties;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.util.CountingSet;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.PropertiesData;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImLayoutObject;
 import de.uka.ipd.idaho.im.ImPage;
@@ -1507,7 +1509,10 @@ When marking a table, keep using current approach of optimizing column count and
 		ImPage[] pages = doc.getPages();
 		TableDetectorProvider tdp = new TableDetectorProvider();
 		tdp.init();
-		tdp.detectTables(doc, DocumentStyle.getStyleFor(doc), null, null);
+		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
+		if (docStyle == null)
+			docStyle = new DocumentStyle(new PropertiesData(new Properties()));
+		tdp.detectTables(doc, docStyle, null, null);
 		if (true)
 			return;
 		

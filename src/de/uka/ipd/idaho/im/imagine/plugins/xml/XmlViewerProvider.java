@@ -212,26 +212,11 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 				annotTypeColors.put(annotTypes[t], this.documentEditor.getAnnotationColor(annotTypes[t]));
 			return annotTypeColors;
 		}
-//		
-//		Color getAnnotationColor(String type) {
-//			return this.documentEditor.getAnnotationColor(type);
-//		}
 		
 		boolean areChangesCommitted() {
 			return this.changesCommitted;
 		}
 	}
-//	
-//	private static final String RAW_NORMALIZATION_LEVEL = "Raw (words strictly in layout order)";
-//	private static final String WORD_NORMALIZATION_LEVEL = "Words (words in layout order, but de-hyphenated)";
-//	private static final String PARAGRAPH_NORMALIZATION_LEVEL = "Paragraphs (logical paragraphs kept together)";
-//	private static final String STREAM_NORMALIZATION_LEVEL = "Text Streams (logical text streams one after another)";
-//	private static final String[] NORMALIZATION_LEVELS = {
-//		RAW_NORMALIZATION_LEVEL,
-//		WORD_NORMALIZATION_LEVEL,
-//		PARAGRAPH_NORMALIZATION_LEVEL,
-//		STREAM_NORMALIZATION_LEVEL,
-//	};
 	
 	public boolean showXmlView(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp) {
 		return this.showXmlView(doc, annot, this.xmlWrapperFlags, idmp);
@@ -452,6 +437,12 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return showXmlView(idmp.document, spanningAnnots[0], idmp);
 				}
+				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+					JMenuItem mi = super.getMenuItem(invoker);
+					if (mi != null)
+						mi.setBackground(idmp.getAnnotationColor(spanningAnnots[0].getType()));
+					return mi;
+				}
 			});
 		
 		//	show XML view of existing annotations
@@ -465,6 +456,7 @@ public class XmlViewerProvider extends AbstractImageMarkupToolProvider implement
 				for (int a = 0; a < spanningAnnots.length; a++) {
 					final ImAnnotation spanningAnnot = spanningAnnots[a];
 					mi = new JMenuItem("- " + spanningAnnot.getType() + " '" + getAnnotationShortValue(spanningAnnot.getFirstWord(), spanningAnnot.getLastWord()) + "'");
+					mi.setBackground(idmp.getAnnotationColor(spanningAnnot.getType()));
 					mi.addActionListener(new ActionListener() {
 						public void actionPerformed(ActionEvent ae) {
 							try {

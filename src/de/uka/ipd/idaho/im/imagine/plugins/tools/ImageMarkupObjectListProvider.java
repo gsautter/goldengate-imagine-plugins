@@ -2426,6 +2426,8 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 						int[] selectedRows = objectTable.getSelectedRows();
 						if (selectedRows.length == 1)
 							editObjectAttributes(selectedRows[0]);
+						else if (selectedRows.length > 1)
+							editObjectAttributes(selectedRows);
 					}
 				});
 				
@@ -2482,13 +2484,16 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 				}
 				else {
 					Arrays.sort(rows);
-					int fRow = rows[0];
-					int lRow = rows[rows.length-1];
+//					int fRow = rows[0];
+//					int lRow = rows[rows.length-1];
+					boolean isSingleTypeSelection = this.isSingleTypeSelection(rows);
 					this.mergeButton.setEnabled(this.isMergeableSelection(rows));
-					this.renameButton.setEnabled(this.isSingleTypeSelection(rows));
+//					this.renameButton.setEnabled(this.isSingleTypeSelection(rows));
+					this.renameButton.setEnabled(isSingleTypeSelection);
 					this.removeButton.setEnabled(true);
 					this.deleteButton.setEnabled(true);
-					this.editAttributesButton.setEnabled(fRow == lRow);
+//					this.editAttributesButton.setEnabled(fRow == lRow);
+					this.editAttributesButton.setEnabled(isSingleTypeSelection);
 					this.renameAttributeButton.setEnabled(true);
 					this.modifyAttributeButton.setEnabled(true);
 					this.removeAttributeButton.setEnabled(true);
@@ -2662,6 +2667,23 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 					refreshObjectList(false);
 			}
 			
+			void editObjectAttributes(int[] objectIndexes) {
+				Annotation[] allObjects = new Annotation[this.objectTrays.length];
+				for (int o = 0; o < this.objectTrays.length; o++)
+					allObjects[o] = this.objectTrays[o].wrappedObject;
+				Annotation[] selObjects = new Annotation[objectIndexes.length];
+				for (int oi = 0; oi < objectIndexes.length; oi++)
+					selObjects[oi] = this.objectTrays[objectIndexes[oi]].wrappedObject;
+				
+				//	create dialog
+				AttributeEditorDialog aed = new AttributeEditorDialog(ObjectListDialog.this.getDialog(), selObjects, allObjects);
+				aed.setVisible(true);
+				
+				//	finish
+				if (aed.isDirty())
+					refreshObjectList(false);
+			}
+			
 			private class AttributeEditorDialog extends DialogPanel {
 				private int objectIndex;
 				private boolean dirty = false;
@@ -2728,6 +2750,50 @@ public class ImageMarkupObjectListProvider extends AbstractResourceManager imple
 					buttons.add(ok);
 					buttons.add(cancel);
 					buttons.add(next);
+					
+					//	assemble the whole thing
+					this.add(this.attributeEditor, BorderLayout.CENTER);
+					this.add(buttons, BorderLayout.SOUTH);
+				}
+				
+				AttributeEditorDialog(Window owner, Annotation[] selObjects, Annotation[] allObjects) {
+					super(owner, ("Edit " + layoutObjectName + " Attributes [" + selObjects.length + "]"), true);
+					this.objectIndex = -1;
+					
+					//	set size and location
+					this.setSize(attributeDialogSize);
+					if (attributeDialogLocation == null)
+						this.setLocationRelativeTo(owner);
+					else this.setLocation(attributeDialogLocation);
+					
+					//	create attribute editor
+					this.attributeEditor = new AttributeEditor(selObjects, allObjects);
+					
+					//	create buttons
+					JButton ok = new JButton("OK");
+					ok.setBorder(BorderFactory.createRaisedBevelBorder());
+					ok.setPreferredSize(new Dimension(80, 21));
+					ok.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							AttributeEditorDialog.this.objectIndex = -1;
+							AttributeEditorDialog.this.dirty = attributeEditor.writeChanges();
+							AttributeEditorDialog.this.dispose();
+						}
+					});
+					JButton cancel = new JButton("Cancel");
+					cancel.setBorder(BorderFactory.createRaisedBevelBorder());
+					cancel.setPreferredSize(new Dimension(80, 21));
+					cancel.addActionListener(new ActionListener() {
+						public void actionPerformed(ActionEvent ae) {
+							AttributeEditorDialog.this.objectIndex = -1;
+							AttributeEditorDialog.this.dispose();
+						}
+					});
+					
+					//	tray up buttons
+					JPanel buttons = new JPanel(new FlowLayout(FlowLayout.CENTER));
+					buttons.add(ok);
+					buttons.add(cancel);
 					
 					//	assemble the whole thing
 					this.add(this.attributeEditor, BorderLayout.CENTER);

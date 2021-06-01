@@ -56,6 +56,7 @@ import de.uka.ipd.idaho.im.analysis.Imaging;
 import de.uka.ipd.idaho.im.analysis.Imaging.AnalysisImage;
 import de.uka.ipd.idaho.im.analysis.Imaging.ImagePartRectangle;
 import de.uka.ipd.idaho.im.analysis.PageImageAnalysis;
+import de.uka.ipd.idaho.im.analysis.PageImageAnalysis.BlockLine;
 import de.uka.ipd.idaho.im.analysis.PageImageAnalysis.Line;
 import de.uka.ipd.idaho.im.analysis.WordImageAnalysis;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
@@ -263,6 +264,9 @@ public class BlockOcrProvider extends AbstractSelectionActionProvider implements
 //		BlockData bData = analyzeBlock(bRect, pageBiDpi, pm);
 //		ImagePartRectangle[] bLines = bData.getBlockLines();
 		Line[] bLines = PageImageAnalysis.findBlockLines(bRect, pageBiDpi, pm);
+//		TODO use below two lines instead !!!
+//		AnalysisImage pageAi = Imaging.wrapImage(pageBi, null);
+//		BlockLine[] bLines = PageImageAnalysis.getBlockLinesAndWords(pageAi, pageBiDpi, blockBounds, pm);
 		
 		//	compute line offsets
 		int[] bLineOffsets = new int[bLines.length];
@@ -305,6 +309,9 @@ public class BlockOcrProvider extends AbstractSelectionActionProvider implements
 					bLineRegionColorFrequencies[l][bRegionColors[c][r]]++;
 			}
 		}
+		
+		//	TODO use region coloring based line detection ...
+		//	TODO ... provided block doesn't whitespace split into lines (check this first)
 		
 		//	generate block image, with line offsets
 		pm.setStep("Generating expanded block image");

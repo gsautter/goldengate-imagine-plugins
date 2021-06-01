@@ -32,6 +32,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.GridLayout;
 import java.awt.Point;
 import java.awt.Shape;
 import java.awt.event.ActionEvent;
@@ -63,6 +64,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map.Entry;
 import java.util.Properties;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.Vector;
@@ -73,6 +75,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
@@ -88,19 +91,21 @@ import javax.swing.WindowConstants;
 
 import de.uka.ipd.idaho.easyIO.settings.Settings;
 import de.uka.ipd.idaho.gamta.Annotation;
+import de.uka.ipd.idaho.gamta.AnnotationUtils;
 import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.TokenSequence;
 import de.uka.ipd.idaho.gamta.TokenSequenceUtils;
 import de.uka.ipd.idaho.gamta.defaultImplementation.AbstractAttributed;
 import de.uka.ipd.idaho.gamta.util.CountingSet;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.ParameterDescription;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.ParameterGroupDescription;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.PropertiesData;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.TestableElement;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.feedback.html.renderers.BufferedLineWriter;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterDescription;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterGroupDescription;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.TestableElement;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.goldenGate.plugins.PluginDataProviderFileBased;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
@@ -124,6 +129,7 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtension;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtensionGraphics;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
+import de.uka.ipd.idaho.im.util.ImDocumentStyle;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefConstants;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefDataSource;
@@ -134,7 +140,6 @@ import de.uka.ipd.idaho.plugins.bibRefs.BibRefTypeSystem.BibRefType;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefUtils;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefUtils.AuthorData;
 import de.uka.ipd.idaho.plugins.bibRefs.BibRefUtils.RefData;
-import de.uka.ipd.idaho.plugins.dateTime.DateTimeUtils;
 import de.uka.ipd.idaho.stringUtils.StringUtils;
 import de.uka.ipd.idaho.stringUtils.StringVector;
 
@@ -144,7 +149,6 @@ import de.uka.ipd.idaho.stringUtils.StringVector;
  * @author sautter
  */
 public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvider implements SelectionActionProvider, GoldenGateImagineDocumentListener, BibRefConstants {
-	
 	private static final String META_DATA_EDITOR_IMT_NAME = "MetaDataEditor";
 	private ImageMarkupTool metaDataEditor = new MetaDataEditor(META_DATA_EDITOR_IMT_NAME);
 	private static final String META_DATA_ADDER_IMT_NAME = "MetaDataAdder";
@@ -153,9 +157,11 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	private BibRefTypeSystem refTypeSystem = BibRefTypeSystem.getDefaultInstance();
 	private String refTypeDefault = null;
 	private String[] refIdTypes = {};
+	private HashSet searchRefIdTypes = new HashSet();
 	private String[] authorDetails = {};
 	
 	private BibRefDataSource[] refDataSources = null;
+	private boolean inMasterConfiguration = false;
 	
 	/** public zero-argument constructor for class loading */
 	public DocumentMetaDataEditorProvider() {}
@@ -164,13 +170,16 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractResourceManager#getPluginName()
 	 */
 	public String getPluginName() {
-		return "IM Document Meta Data Editor";
+		return "IM Document Metadata Editor";
 	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.goldenGate.plugins.AbstractGoldenGatePlugin#init()
 	 */
 	public void init() {
+		
+		//	check verbosity
+		this.inMasterConfiguration = this.parent.getConfiguration().isMasterConfiguration();
 		
 		//	load configuration
 		Settings set = new Settings();
@@ -183,7 +192,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		refIdTypes.addAll(Arrays.asList((" " + set.getSetting("refIdTypes", "DOI Handle ISBN ISSN")).split("\\s+")));
 		this.refIdTypes = ((String[]) refIdTypes.toArray(new String[refIdTypes.size()]));
 		
-		//	get publication ID types
+		//	get publication ID types suitable for searching sources searchRefIdTypes
+		this.searchRefIdTypes.addAll(Arrays.asList((set.getSetting("searchRefIdTypes", "DOI ISBN")).split("\\s+")));
+		
+		//	get author detail types
 		LinkedHashSet authorDetails = new LinkedHashSet();
 		authorDetails.addAll(Arrays.asList((" " + set.getSetting("authorDetails", "")).split("\\s+")));
 		authorDetails.remove("");
@@ -193,7 +205,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		this.refTypeDefault = set.getSetting("refTypeDefault");
 		if (this.refTypeSystem.getBibRefType(this.refTypeDefault) == null) {
 			if (this.refTypeDefault != null)
-				System.out.println("DocumentMetaDataEditorProvider: invalid default reference type '" + this.refTypeDefault + "', available reference types are " + Arrays.toString(this.refTypeSystem.getBibRefTypeNames()));
+				this.logInMasterConfiguration("DocumentMetaDataEditorProvider: invalid default reference type '" + this.refTypeDefault + "', available reference types are " + Arrays.toString(this.refTypeSystem.getBibRefTypeNames()));
 			this.refTypeDefault = null;
 		}
 		
@@ -201,14 +213,23 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		ParameterGroupDescription pgd = new ParameterGroupDescription("docMeta");
 		pgd.setLabel("Document Metadata");
 		pgd.setDescription("General parameters for locating document metadata as a whole. Not all metadata attributes need to be used in all types of publications: For instance, a template tailored to articles published in a specific journal will likely not extract any publisher or location of publishing.");
+		pgd.setParamLabel("minPageId", "Skip Over Pages From Start");
+		pgd.setParamDescription("minPageId", "The number of pages to skip over from the document start before searching for metadata attributes, treating first page as 0 (aimed at skipping over title pages, etc.)");
 		pgd.setParamLabel("maxPageId", "Maximum Page From Start");
 		pgd.setParamDescription("maxPageId", "Maximum page from document start to search for metadata attributes, treating first page as 0 (aimed at front matter data)");
 		pgd.setParamLabel("maxFromEndPageId", "Maximum Page From End");
 		pgd.setParamDescription("maxFromEndPageId", "Maximum page from document end to search for metadata attributes, treating last page as 1 (aimed at back matter data)");
 		pgd.setParamLabel("docRefPresent", "Extract Document Reference?");
 		pgd.setParamDescription("docRefPresent", "Extract a self-document reference, i.e., a bibliographic reference to the document proper?");
-		pgd.setParamLabel("useDataSources", "Use External Sources to Complete Metadata?");
-		pgd.setParamDescription("useDataSources", "Use lookups in external data sources like RefBank to complete the metadata if (only if not completely extractable from document proper)?");
+		pgd.setParamLabel("dataSourceMode", "How to Use External Sources of Metadata");
+		pgd.setParamDescription("dataSourceMode", "Behavior of lookups in external data sources like RefBank, to complete the metadata");
+		String[] dsModes = {"noLookup", "completeBasic", "completeAll", "importSelected", "importAll"};
+		pgd.setParamValues("dataSourceMode", dsModes);
+		pgd.setParamValueLabel("dataSourceMode", "noLookup", "Never do a lookup");
+		pgd.setParamValueLabel("dataSourceMode", "completeBasic", "Only do a lookup if basic attributes missing");
+		pgd.setParamValueLabel("dataSourceMode", "completeAll", "Always do a lookup, and fill empty fields with result");
+		pgd.setParamValueLabel("dataSourceMode", "importSelected", "Always do a lookup, and apply peferences to fields");
+		pgd.setParamValueLabel("dataSourceMode", "importAll", "Always do a lookup, and use all values from result");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	... and individual attributes ...
@@ -217,7 +238,9 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				addParameterGroupDescription(extractableFieldNames[f], "Year of Publication", "Parameters for automated extraction of the year a document was published", false);
 			else if (PUBLICATION_DATE_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
 				addParameterGroupDescription(extractableFieldNames[f], "Exact Date of Publication", "Parameters for automated extraction of the exact date a document was published", false);
-			else if (VOLUME_DESIGNATOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]) || ISSUE_DESIGNATOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
+			else if (SERIES_IN_JOURNAL_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
+				addParameterGroupDescription(extractableFieldNames[f], "Series in Journal", "Parameters for automated extraction of the series within a multi-series journal", false);
+			else if (VOLUME_DESIGNATOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]) || ISSUE_DESIGNATOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]) || NUMERO_DESIGNATOR_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
 				addParameterGroupDescription(extractableFieldNames[f], (extractableFieldNames[f].substring(0, 1).toUpperCase() + extractableFieldNames[f].substring(1) + " Number"), ("Parameters for automated extraction of the " + extractableFieldNames[f] + " number of a document"), false);
 			else if (VOLUME_TITLE_ANNOTATION_TYPE.equals(extractableFieldNames[f]))
 				addParameterGroupDescription(extractableFieldNames[f], "Volume Title", "Parameters for automated extraction of the volume title, i.e., the title of a publication target documents are a part of (mostly for book chapters, the overall book title)", false);
@@ -340,14 +363,6 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		DocumentStyle.addParameterGroupDescription(pgd);
 	}
 	
-	private void checkRefDataSources() {
-		if (this.refDataSources != null)
-			return;
-		BibRefDataSource[] refDataSources = BibRefDataSource.getDataSources();
-		if (refDataSources.length != 0)
-			this.refDataSources = refDataSources;
-	}
-	
 	private static ParameterGroupDescription addParameterGroupDescription(String name, String label, String description, boolean isAuthorDetail) {
 		ParameterGroupDescription pgd = new TestableParameterGroupDescription("docMeta" + "." + name);
 		pgd.setLabel(label);
@@ -396,7 +411,33 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			pgd.setParamDescription("filterPatterns", ("Regular expression patterns excluding specific values as " + pgd.getLabel() + " (useful for filtering out specific values if actual values vary widely)."));
 		}
 		
-		if (JOURNAL_NAME_ANNOTATION_TYPE.equals(name) || PUBLISHER_ANNOTATION_TYPE.equals(name) || LOCATION_ANNOTATION_TYPE.equals(name) || "ID-ISSN".equals(name) || YEAR_ANNOTATION_TYPE.equals(name) || (AUTHOR_ANNOTATION_TYPE + ".details." + AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE).equals(name) || EDITOR_ANNOTATION_TYPE.equals(name)) {
+		if (!isAuthorDetail) {
+			pgd.setParamLabel("dataSourceResultMergeMode", "External Data Merge Mode");
+			pgd.setParamDescription("dataSourceResultPreference", ("Indication of how to merge the " + pgd.getLabel() + " from external data sources with the ones extracted from the document."));
+			String[] dsrMergeModes = {"document", "sources"};
+			pgd.setParamValues("dataSourceResultMergeMode", dsrMergeModes);
+			pgd.setParamValueLabel("dataSourceResultMergeMode", "document", "Prefer values extracted from document");
+			pgd.setParamValueLabel("dataSourceResultMergeMode", "sources", "Prefer values from external sources");
+		}
+		
+		if (PAGINATION_ANNOTATION_TYPE.equals(name)) {
+			/* TODO_maybe add template parameter indicating preferred source of pagination:
+			 * - "metadata only" (only extract via template, or take from lookup)
+			 * - "prefer metadata" (extract via template, or take from lookup, and fall back to page numbers if former two fail)
+			 * - "prefer page numbers" (count out from page numbers if latter given, extract via template, or take from lookup if page numbers absent)
+			 * - "page numbers only" (only counted out from page numbers)
+			 * 
+			 * TODO_maybe add template parameter indicating how to count out start page number:
+			 * - "first page" (always use first page in document, extrapolated or not)
+			 * - "first explicit page number" (use number from first page that explicitly has a marked page number on it)
+			 * 
+			 * TODO_maybe add template parameter indicating how to count out end page number:
+			 * - "last page" (always use last page in document, extrapolated or not)
+			 * - "last explicit page number" (use number from last page that explicitly has a marked page number on it)
+			 */
+		}
+		
+		if (fixableFieldNames.contains(name)) {
 			pgd.setParamLabel("fixedValue", "Fixed Value");
 			pgd.setParamDescription("fixedValue", ("A fixed value to use as the " + pgd.getLabel() + " (mostly for journal names)."));
 			markFixedValueExcludingAll(pgd);
@@ -449,10 +490,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		public DisplayExtensionGraphics[] getExtensionGraphics(ImPage page, ImDocumentMarkupPanel idmp) {
 			if (this.localPnp == null)
 				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
-			DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
-			DocumentStyle metaDataStyle = docStyle.getSubset("docMeta");
-			DocumentStyle attributeStyle = metaDataStyle.getSubset(this.localPnp);
-			if (attributeStyle.isEmpty())
+			ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(idmp.document);
+			if (docStyle == null)
+				docStyle = new ImDocumentStyle(new PropertiesData(new Properties()));
+			ImDocumentStyle metaDataStyle = docStyle.getImSubset("docMeta");
+			ImDocumentStyle attributeStyle = metaDataStyle.getImSubset(this.localPnp);
+			if (attributeStyle.getPropertyNames().length == 0)
 				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
 			
 			//	observe minimum and maximum page
@@ -477,7 +520,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			ArrayList attributeValues = new ArrayList();
 			boolean gotDegs;
 			if (this.localPnp.startsWith(AUTHOR_ANNOTATION_TYPE + "." + "details" + ".")) {
-				DocumentStyle allDetailsStyle = metaDataStyle.getSubset(AUTHOR_ANNOTATION_TYPE + "." + "details");
+				ImDocumentStyle allDetailsStyle = metaDataStyle.getImSubset(AUTHOR_ANNOTATION_TYPE + "." + "details");
 				String detailName = this.localPnp.substring((AUTHOR_ANNOTATION_TYPE + "." + "details" + ".").length());
 				gotDegs = extractAuthorDetail(null, detailName, !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(detailName), page, page.getImageDPI(), attributeStyle, allDetailsStyle, null, attributeValues, log);
 			}
@@ -501,7 +544,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			//	nothing to show right now
 			else return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
 		}
-		public void test(Properties paramGroup) {
+		public void test(DocumentStyle paramGroup) {
 			if (attributeExtractionLogDisplay == null)
 				attributeExtractionLogDisplay = new AttributeExtractionLogDisplay();
 			attributeExtractionLogDisplay.setVisible(true);
@@ -582,10 +625,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			return true;
 		}
 		public DisplayExtensionGraphics[] getExtensionGraphics(ImPage page, ImDocumentMarkupPanel idmp) {
-			DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
-			DocumentStyle metaDataStyle = docStyle.getSubset("docMeta");
-			DocumentStyle detailStyle = metaDataStyle.getSubset(this.localPnp);
-			if (detailStyle.isEmpty())
+			ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(idmp.document);
+			if (docStyle == null)
+				docStyle = new ImDocumentStyle(new PropertiesData(new Properties()));
+			ImDocumentStyle metaDataStyle = docStyle.getImSubset("docMeta");
+			ImDocumentStyle detailStyle = metaDataStyle.getImSubset(this.localPnp);
+			if (detailStyle.getPropertyNames().length == 0)
 				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
 			
 			//	observe minimum and maximum page
@@ -596,7 +641,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			else return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS; // page out of range
 			
 			//	get detail association data
-			String associationData = detailStyle.getProperty("indexChars");
+			String associationData = detailStyle.getStringProperty("indexChars", null);
 			
 			//	highlight areas relative to author annotations
 			if ("BELOW".equals(associationData) || "RIGHT".equals(associationData) || "ABOVE".equals(associationData) || "LEFT".equals(associationData)) {
@@ -633,7 +678,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			//	display nothing for other involved fields
 			return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
 		}
-		private DisplayExtensionGraphics[] getAreaVisualizationGraphics(ImPage page, DocumentStyle detailStyle) {
+		private DisplayExtensionGraphics[] getAreaVisualizationGraphics(ImPage page, ImDocumentStyle detailStyle) {
 			BoundingBox area = detailStyle.getBoxProperty("area", null, page.getImageDPI());
 			if (area == null)
 				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
@@ -659,6 +704,19 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				}
 			};
 		}
+	}
+	
+	private void checkRefDataSources() {
+		if (this.refDataSources != null)
+			return;
+		BibRefDataSource[] refDataSources = BibRefDataSource.getDataSources();
+		if (refDataSources.length != 0)
+			this.refDataSources = refDataSources;
+	}
+	
+	private void logInMasterConfiguration(String output) {
+		if (this.inMasterConfiguration)
+			System.out.println(output);
 	}
 	
 	/* (non-Javadoc)
@@ -922,7 +980,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		//	mark document reference if metadata complete
 		if (this.refTypeSystem.classify(ref) != null)
-			annotateDocReference(idmp.document, ref);
+			this.annotateDocReference(idmp.document, ref);
 		
 		//	finally ...
 		idmp.endAtomicAction();
@@ -993,101 +1051,125 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 	}
 	
 	private static String sanitizeAttributeValue(String type, String value, boolean isIdentifier) {
-		
-		//	normalize dashes and whitespace
-		String sValue = sanitizeString(value, (AUTHOR_ANNOTATION_TYPE.equals(type) || EDITOR_ANNOTATION_TYPE.equals(type)), isIdentifier);
+//		
+//		//	normalize dashes and whitespace
+//		String sValue = sanitizeString(value, (AUTHOR_ANNOTATION_TYPE.equals(type) || EDITOR_ANNOTATION_TYPE.equals(type)), isIdentifier);
 		
 		//	check numeric attributes, translating Roman numbers in the process
 		if (YEAR_ANNOTATION_TYPE.equals(type)) {
-			sValue = sValue.replaceAll("\\s", "");
-			sValue = removeLeadingZeros(sValue);
-			if (StringUtils.isRomanNumber(sValue))
-				sValue = ("" + StringUtils.parseRomanNumber(sValue));
-			return (sValue.matches("[12][0-9]{3}") ? sValue : null);
+//			sValue = sValue.replaceAll("\\s", "");
+//			sValue = removeLeadingZeros(sValue);
+//			if (StringUtils.isRomanNumber(sValue))
+//				sValue = ("" + StringUtils.parseRomanNumber(sValue));
+//			return (sValue.matches("[12][0-9]{3}") ? sValue : null);
+			return BibRefUtils.sanitizeAttributeValue(type, value);
 		}
 		else if (PUBLICATION_DATE_ANNOTATION_TYPE.equals(type)) {
-//			return DateTimeUtils.parseTextDate(sValue);
-			String sDate = DateTimeUtils.parseTextDate(sValue);
-			if (sDate != null)
-				return sDate;
-			
-			//	substitute 16 as the day to get month parsed
-			String tsValue;
-			if (sValue.matches("[12][0-9]{3}.*"))
-				tsValue = (sValue + " 16"); // add day tailing if year leading
-			else if (sValue.matches(".*?[12][0-9]{3}"))
-				tsValue = ("16 " + sValue); // add day leading if year tailing
-			else return sDate;
-			String tsDate = DateTimeUtils.parseTextDate(tsValue);
-			if (tsDate == null)
-				return sDate;
-			
-			//	extract month and determine last day
-			String sMonth = tsDate.substring("1999-".length(), "1999-12".length());
-			String sDay;
-			if ("02".equals(sMonth))
-				sDay = "28";
-			else if ("04 06 09 11".indexOf(sMonth) != -1)
-				sDay = "30";
-			else sDay = "31";
-			String rsValue;
-			if (sValue.matches("[12][0-9]{3}.*"))
-				rsValue = (sValue + " " + sDay); // add day tailing if year leading
-			else if (sValue.matches(".*?[12][0-9]{3}"))
-				rsValue = (sDay + " " + sValue); // add day leading if year tailing
-			else return sDate;
-			
-			//	finally ...
-			return DateTimeUtils.parseTextDate(StringUtils.normalizeString(rsValue));
+//			String sDate = DateTimeUtils.parseTextDate(sValue);
+//			if (sDate != null)
+//				return sDate;
+//			
+//			//	substitute 16 as the day to get month parsed
+//			String tsValue;
+//			if (sValue.matches("[12][0-9]{3}.*"))
+//				tsValue = (sValue + " 16"); // add day tailing if year leading
+//			else if (sValue.matches(".*?[12][0-9]{3}"))
+//				tsValue = ("16 " + sValue); // add day leading if year tailing
+//			else return sDate;
+//			String tsDate = DateTimeUtils.parseTextDate(tsValue);
+//			if (tsDate == null)
+//				return sDate;
+//			
+//			//	extract month and determine last day
+//			String sMonth = tsDate.substring("1999-".length(), "1999-12".length());
+//			String sDay;
+//			if ("02".equals(sMonth))
+//				sDay = "28";
+//			else if ("04 06 09 11".indexOf(sMonth) != -1)
+//				sDay = "30";
+//			else sDay = "31";
+//			String rsValue;
+//			if (sValue.matches("[12][0-9]{3}.*"))
+//				rsValue = (sValue + " " + sDay); // add day tailing if year leading
+//			else if (sValue.matches(".*?[12][0-9]{3}"))
+//				rsValue = (sDay + " " + sValue); // add day leading if year tailing
+//			else return sDate;
+//			
+//			//	finally ...
+//			return DateTimeUtils.parseTextDate(StringUtils.normalizeString(rsValue));
+			return BibRefUtils.sanitizeAttributeValue(type, value);
 		}
-		else if (VOLUME_DESIGNATOR_ANNOTATION_TYPE.equals(type) || ISSUE_DESIGNATOR_ANNOTATION_TYPE.equals(type)) {
-			sValue = sValue.replaceAll("\\s", "");
-			sValue = removeLeadingZeros(sValue);
-			if (StringUtils.isRomanNumber(sValue))
-				sValue = ("" + StringUtils.parseRomanNumber(sValue));
-			return (sValue.matches("[1-9][0-9]*") ? sValue : null);
+		else if (VOLUME_DESIGNATOR_ANNOTATION_TYPE.equals(type) || ISSUE_DESIGNATOR_ANNOTATION_TYPE.equals(type) || NUMERO_DESIGNATOR_ANNOTATION_TYPE.equals(type)) {
+//			sValue = sValue.replaceAll("\\s", "");
+//			String sValuePrefix = "";
+//			if (sValue.startsWith("e") || sValue.startsWith("s") || sValue.startsWith("E") || sValue.startsWith("S")) {
+//				sValuePrefix = sValue.substring(0,1);
+//				sValue = sValue.substring(1);
+//			}
+//			if (sValue.indexOf('-') == -1) {
+//				sValue = removeLeadingZeros(sValue);
+//				return ((sValue.matches("[1-9][0-9]*") || StringUtils.isRomanNumber(sValue)) ? (sValuePrefix + sValue) : null);
+//			}
+//			else {
+//				String[] valueParts = sValue.split("\\s*\\-\\s*");
+//				if (valueParts.length != 2)
+//					return null;
+//				String fpd = sanitizeAttributeValue(type, valueParts[0], isIdentifier);
+//				if (fpd == null)
+//					return null;
+//				String lpd = sanitizeAttributeValue(type, valueParts[1], isIdentifier);
+//				if (lpd == null)
+//					return null;
+//				if ((fpd.matches("[1-9][0-9]*")) && (lpd.length() < fpd.length()))
+//					lpd = (fpd.substring(0, (fpd.length() - lpd.length())) + lpd);
+//				return (sValuePrefix + fpd + "-" + lpd);
+//			}
+			return BibRefUtils.sanitizeAttributeValue(type, value);
 		}
 		else if (PAGINATION_ANNOTATION_TYPE.equals(type)) {
-			sValue = sValue.replaceAll("\\s", "");
-			if (sValue.indexOf('-') == -1) {
-				sValue = removeLeadingZeros(sValue);
-				if (StringUtils.isRomanNumber(sValue))
-					sValue = ("" + StringUtils.parseRomanNumber(sValue));
-				return (sValue.matches("e?[1-9][0-9]*") ? sValue : null);
-			}
-			else if (sValue.indexOf('-') == sValue.lastIndexOf('-')) {
-				String[] valueParts = sValue.split("\\s*\\-\\s*");
-				if (valueParts.length != 2)
-					return null;
-				String fpn = sanitizeAttributeValue(type, valueParts[0], isIdentifier);
-				if (fpn == null)
-					return null;
-				String lpn = sanitizeAttributeValue(type, valueParts[1], isIdentifier);
-				if (lpn == null)
-					return null;
-				if (lpn.length() < fpn.length())
-					lpn = (fpn.substring(0, (fpn.length() - lpn.length())) + lpn);
-				return (fpn + "-" + lpn);
-			}
-			else return null;
+//			sValue = sValue.replaceAll("\\s", "");
+//			if (sValue.indexOf('-') == -1) {
+//				sValue = removeLeadingZeros(sValue);
+//				if (StringUtils.isRomanNumber(sValue))
+//					sValue = ("" + StringUtils.parseRomanNumber(sValue));
+//				return (sValue.matches("e?[1-9][0-9]*") ? sValue : null);
+//			}
+//			else if (sValue.indexOf('-') == sValue.lastIndexOf('-')) {
+//				String[] valueParts = sValue.split("\\s*\\-\\s*");
+//				if (valueParts.length != 2)
+//					return null;
+//				String fpn = sanitizeAttributeValue(type, valueParts[0], isIdentifier);
+//				if (fpn == null)
+//					return null;
+//				String lpn = sanitizeAttributeValue(type, valueParts[1], isIdentifier);
+//				if (lpn == null)
+//					return null;
+//				if (lpn.length() < fpn.length())
+//					lpn = (fpn.substring(0, (fpn.length() - lpn.length())) + lpn);
+//				return (fpn + "-" + lpn);
+//			}
+//			else return null;
+			return BibRefUtils.sanitizeAttributeValue(type, value);
 		}
 		
 		//	for person name attributes (author and editor), try and convert to <lastName>, <firstName>
-		else if (AUTHOR_ANNOTATION_TYPE.equals(type) || EDITOR_ANNOTATION_TYPE.equals(type))
+		else if (AUTHOR_ANNOTATION_TYPE.equals(type) || EDITOR_ANNOTATION_TYPE.equals(type)) {
+			String sValue = sanitizeString(value, true, isIdentifier);
 			return flipNameParts(sValue, value);
+		}
 		
 		//	return normalized value for all other attributes
-		else return sValue;
+		else return sanitizeString(value, false, isIdentifier);
 	}
-	
-	private static String removeLeadingZeros(String value) {
-		if (value == null)
-			return null;
-		value = value.trim();
-		while (value.startsWith("0"))
-			value = value.substring("0".length()).trim();
-		return value;
-	}
+//	
+//	private static String removeLeadingZeros(String value) {
+//		if (value == null)
+//			return null;
+//		value = value.trim();
+//		while (value.startsWith("0"))
+//			value = value.substring("0".length()).trim();
+//		return value;
+//	}
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.SelectionActionProvider#getActions(java.awt.Point, java.awt.Point, de.uka.ipd.idaho.im.ImPage, de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel)
@@ -1114,6 +1196,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		PUBLICATION_DATE_ANNOTATION_TYPE,
 		PAGINATION_ANNOTATION_TYPE,
 		JOURNAL_NAME_ANNOTATION_TYPE,
+		SERIES_IN_JOURNAL_ANNOTATION_TYPE,
 		VOLUME_DESIGNATOR_ANNOTATION_TYPE,
 		ISSUE_DESIGNATOR_ANNOTATION_TYPE,
 		NUMERO_DESIGNATOR_ANNOTATION_TYPE,
@@ -1124,6 +1207,19 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		PUBLICATION_URL_ANNOTATION_TYPE,
 	};
 	
+	private static Set fixableFieldNames = Collections.synchronizedSet(new HashSet());
+	static {
+		fixableFieldNames.add(JOURNAL_NAME_ANNOTATION_TYPE);
+		fixableFieldNames.add(SERIES_IN_JOURNAL_ANNOTATION_TYPE);
+		fixableFieldNames.add(PUBLISHER_ANNOTATION_TYPE);
+		fixableFieldNames.add(LOCATION_ANNOTATION_TYPE);
+		fixableFieldNames.add(YEAR_ANNOTATION_TYPE);
+		fixableFieldNames.add(EDITOR_ANNOTATION_TYPE);
+		fixableFieldNames.add("ID-ISSN");
+		fixableFieldNames.add(AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE);
+		fixableFieldNames.add(AUTHOR_ANNOTATION_TYPE + ".details." + AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE);
+	}
+	
 	private class MetaDataEditor implements ImageMarkupTool, WebDocumentViewer {
 		private String name;
 		MetaDataEditor(String name) {
@@ -1131,16 +1227,16 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 		public String getLabel() {
 			if (META_DATA_EDITOR_IMT_NAME.equals(this.name))
-				return "Edit Document Meta Data";
+				return "Edit Document Metadata";
 			else if (META_DATA_ADDER_IMT_NAME.equals(this.name))
-				return "Add Document Meta Data";
+				return "Add Document Metadata";
 			else return null;
 		}
 		public String getTooltip() {
 			if (META_DATA_EDITOR_IMT_NAME.equals(this.name))
-				return "Edit the bibliographic meta data of the document";
+				return "Edit the bibliographic metadata of the document";
 			else if (META_DATA_ADDER_IMT_NAME.equals(this.name))
-				return "Import or extract the bibliographic meta data of the document";
+				return "Import or extract the bibliographic metadata of the document";
 			else return null;
 		}
 		public String getHelpText() {
@@ -1159,7 +1255,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				protected void preProcess(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp) {
 					
 					//	get bibliographic data from document
-					this.ref = getRefData(doc, this.attributesToValues, true);
+					this.ref = getRefData(doc, getMetaDataStyle(doc), this.attributesToValues, true);
 				}
 				protected void postProcess(ImDocument doc, ImAnnotation annot, ImDocumentMarkupPanel idmp) {
 					
@@ -1436,15 +1532,23 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		this.extractDocumentMetaData(doc, false, pm);
 	}
 	
+	static ImDocumentStyle getMetaDataStyle(ImDocument doc) {
+		ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(doc);
+		if (docStyle == null)
+			docStyle = new ImDocumentStyle(new PropertiesData(new Properties()));
+		return docStyle.getImSubset("docMeta");
+	}
+	
 	private void extractDocumentMetaData(ImDocument doc, boolean allowPrompt, ProgressMonitor pm) {
+		ImDocumentStyle metaDataStyle = getMetaDataStyle(doc);
 		
 		//	get bibliographic data from document
 		HashMap attributesToValues = new HashMap();
-		RefData ref = this.getRefData(doc, attributesToValues, allowPrompt);
+		RefData ref = this.getRefData(doc, metaDataStyle, attributesToValues, allowPrompt);
 		
-		//	open meta data for editing if allowed to
+		//	open metadata for editing if allowed to
 		if (allowPrompt) {
-			ref = this.editRefData(doc, ref, attributesToValues);
+			ref = this.editRefData(doc, ref, metaDataStyle, attributesToValues);
 			
 			//	editing cancelled
 			if (ref == null)
@@ -1470,19 +1574,19 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		this.storeRefData(doc, ref, attributesToValues, !allowPrompt);
 	}
 	
-	private RefData getRefData(ImDocument doc, HashMap attributesToValues, boolean willPrompt) {
+	private RefData getRefData(ImDocument doc, ImDocumentStyle metaDataStyle, HashMap attributesToValues, boolean willPrompt) {
 		
 		//	put attributes from document in BibRef object
 		RefData ref = BibRefUtils.modsAttributesToRefData(doc);
 		
 		//	use document style template if given
-		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
-		DocumentStyle metaDataStyle = docStyle.getSubset("docMeta");
-		boolean useDataSources = metaDataStyle.getBooleanProperty("useDataSources", false);
+//		boolean useDataSources = metaDataStyle.getBooleanProperty("useDataSources", false);
+		String dataSourceMode = metaDataStyle.getStringProperty("dataSourceMode", "noLookup");
+		int metaDataMinFromStartPageId = metaDataStyle.getIntProperty("minPageId", 0);
 		int metaDataMaxFromStartPageId = metaDataStyle.getIntProperty("maxPageId", 0);
 		int metaDataMaxFromEndPageId = metaDataStyle.getIntProperty("maxFromEndPageId", 0);
 		ImPage[] pages = doc.getPages();
-		if (extractAttribute(AUTHOR_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, true, ref, attributesToValues)) {
+		if (extractAttribute(AUTHOR_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, true, ref, attributesToValues)) {
 			String[] authors = ref.getAttributeValues(AUTHOR_ANNOTATION_TYPE);
 			for (int a = 0; a < authors.length; a++) {
 				String oAuthor = authors[a];
@@ -1495,20 +1599,21 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				else ref.addAttribute(AUTHOR_ANNOTATION_TYPE, authors[a]);
 			}
 		}
-		extractAttribute(YEAR_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
-		extractAttribute(PUBLICATION_DATE_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
-		extractAttribute(TITLE_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(YEAR_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(PUBLICATION_DATE_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(TITLE_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
 		
-		extractAttribute(JOURNAL_NAME_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
-		extractAttribute(VOLUME_DESIGNATOR_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
-		extractAttribute(ISSUE_DESIGNATOR_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
-		extractAttribute(NUMERO_DESIGNATOR_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(JOURNAL_NAME_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(SERIES_IN_JOURNAL_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(VOLUME_DESIGNATOR_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(ISSUE_DESIGNATOR_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(NUMERO_DESIGNATOR_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
 		
-		extractAttribute(PUBLISHER_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
-		extractAttribute(LOCATION_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(PUBLISHER_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		extractAttribute(LOCATION_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
 		
-		extractAttribute(VOLUME_TITLE_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
-		if (extractAttribute(EDITOR_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, true, ref, attributesToValues)) {
+		extractAttribute(VOLUME_TITLE_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues);
+		if (extractAttribute(EDITOR_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, true, ref, attributesToValues)) {
 			String[] editors = ref.getAttributeValues(EDITOR_ANNOTATION_TYPE);
 			for (int e = 0; e < editors.length; e++) {
 				String oEditor = editors[e];
@@ -1522,25 +1627,25 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			}
 		}
 		
-		if (extractAttribute(PAGINATION_ANNOTATION_TYPE, false, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues))
+		if (extractAttribute(PAGINATION_ANNOTATION_TYPE, false, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues))
 			ref.setAttribute(PAGINATION_ANNOTATION_TYPE, ref.getAttribute(PAGINATION_ANNOTATION_TYPE).trim().replaceAll("[^0-9]+", "-"));
 		
 		for (int t = 0; t < this.refIdTypes.length; t++) {
 			if (this.refIdTypes[t].length() == 0)
 				continue; // skip over wildcard ID type
-			if (extractAttribute(("ID-" + this.refIdTypes[t]), true, pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues))
+			if (extractAttribute(("ID-" + this.refIdTypes[t]), true, pages, metaDataMinFromStartPageId, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, metaDataStyle, false, ref, attributesToValues))
 				ref.setIdentifier(this.refIdTypes[t], ref.getIdentifier(this.refIdTypes[t]).replaceAll("\\s", ""));
 		}
 		
 		//	extract author details
 		if ((this.authorDetails != null) && (this.authorDetails.length != 0)) {
-			DocumentStyle authorDetailsStyle = metaDataStyle.getSubset(AUTHOR_ANNOTATION_TYPE + ".details");
+			ImDocumentStyle authorDetailsStyle = metaDataStyle.getImSubset(AUTHOR_ANNOTATION_TYPE + ".details");
 			ArrayList extractedAuthorNames = ((ArrayList) attributesToValues.get(AUTHOR_ANNOTATION_TYPE));
 			if ((extractedAuthorNames != null) && (extractedAuthorNames.size() != 0)) {
 				ExtractedAttributeValue[] docAuthors = ((ExtractedAttributeValue[]) extractedAuthorNames.toArray(new ExtractedAttributeValue[extractedAuthorNames.size()]));
 				for (int d = 0; d < this.authorDetails.length; d++) {
 					if (!AuthorData.AUTHOR_NAME_ATTRIBUTE.equals(this.authorDetails[d]))
-						extractAuthorDetail(docAuthors, this.authorDetails[d], !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(this.authorDetails[d]), pages, metaDataMaxFromStartPageId, metaDataMaxFromEndPageId, authorDetailsStyle, ref, attributesToValues, System.out);
+						extractAuthorDetail(docAuthors, this.authorDetails[d], !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(this.authorDetails[d]), authorDetailsStyle, ref, attributesToValues, System.out);
 				}
 			}
 		}
@@ -1552,6 +1657,20 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				ref.setAttribute(TITLE_ANNOTATION_TYPE, title);
 		}
 		
+		/* TODO_maybe add template parameter indicating preferred source of pagination:
+		 * - "metadata only" (only extract via template, or take from lookup)
+		 * - "prefer metadata" (extract via template, or take from lookup, and fall back to page numbers if former two fail)
+		 * - "prefer page numbers" (count out from page numbers if latter given, extract via template, or take from lookup if page numbers absent)
+		 * - "page numbers only" (only counted out from page numbers)
+		 * 
+		 * TODO_maybe add template parameter indicating how to count out start page number:
+		 * - "first page" (always use first page in document, extrapolated or not)
+		 * - "first explicit page number" (use number from first page that explicitly has a marked page number on it)
+		 * 
+		 * TODO_maybe add template parameter indicating how to count out end page number:
+		 * - "last page" (always use last page in document, extrapolated or not)
+		 * - "last explicit page number" (use number from last page that explicitly has a marked page number on it)
+		 */
 		//	try and add pagination from document if not already given
 		if ((pages.length != 0) && pages[0].hasAttribute(PAGE_NUMBER_ATTRIBUTE) && pages[pages.length-1].hasAttribute(PAGE_NUMBER_ATTRIBUTE) && !ref.hasAttribute(PAGINATION_ANNOTATION_TYPE)) try {
 			int firstPageNumber = Integer.parseInt((String) pages[0].getAttribute(PAGE_NUMBER_ATTRIBUTE));
@@ -1578,51 +1697,45 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				ref.setAttribute(PUBLICATION_TYPE_ATTRIBUTE, type);
 		}
 		
-		//	this one is all set
-		if (ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE))
+//		//	this one is all set
+//		if (ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE))
+//			return ref;
+//		
+//		//	this one will be taken care of by user, or we're not allowed to use our data sources
+//		if (!useDataSources || willPrompt)
+//			return ref;
+//		
+		//	this one will be taken care of by user
+		if (willPrompt)
 			return ref;
 		
-		//	this one will be taken care of by user, or we're not allowed to use our data sources
-		if (!useDataSources || willPrompt)
+		//	no lookups at all
+		if ("noLookup".equals(dataSourceMode))
+			return ref;
+		
+		//	this one is all set, and we aren't augmenting
+		if ("completeBasic".equals(dataSourceMode) && ref.hasAttribute(PUBLICATION_TYPE_ATTRIBUTE))
 			return ref;
 		
 		//	use web lookup if we have something to work with
-		System.out.println("Completing metadata via data source lookup");
+		this.logInMasterConfiguration("Completing metadata via data source lookup");
 		Vector dsRefs = this.searchRefData(ref);
 		if ((dsRefs == null) || dsRefs.isEmpty()) {
-			System.out.println(" ==> no references found");
+			this.logInMasterConfiguration(" ==> no references found");
 			return ref;
 		}
 		
 		//	use what we found (best match tends to come first anyway)
 		RefDataListElement dsRes = ((RefDataListElement) dsRefs.get(0));
-		System.out.println(" ==> found " + dsRes.toString());
+		this.logInMasterConfiguration(" ==> found " + dsRes.toString());
 		RefData dsRef = dsRes.ref;
-		for (int a = 0; a < lookupTransferAttributeNames.length; a++) {
-			if (ref.hasAttribute(lookupTransferAttributeNames[a]))
-				continue;
-			if (!dsRef.hasAttribute(lookupTransferAttributeNames[a]))
-				continue;
-			System.out.println(" - importing " + lookupTransferAttributeNames[a]);
-			if (AUTHOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a]) || AUTHOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a])) {
-				String[] dsRefAvs = dsRef.getAttributeValues(lookupTransferAttributeNames[a]);
-				for (int v = 0; v < dsRefAvs.length; v++) {
-					if (v == 0)
-						ref.setAttribute(lookupTransferAttributeNames[a], dsRefAvs[v]);
-					else ref.addAttribute(lookupTransferAttributeNames[a], dsRefAvs[v]);
-				}
-				System.out.println("   ==> " + dsRef.getAttributeValueString(lookupTransferAttributeNames[a], " & "));
-			}
-			else {
-				ref.setAttribute(lookupTransferAttributeNames[a], dsRef.getAttribute(lookupTransferAttributeNames[a]));
-				System.out.println("   ==> " + dsRef.getAttribute(lookupTransferAttributeNames[a]));
-			}
-		}
-		String[] dsRefIts = dsRef.getIdentifierTypes();
-		for (int i = 0; i < dsRefIts.length; i++) {
-			if (ref.getIdentifier(dsRefIts[i]) == null)
-				ref.setIdentifier(dsRefIts[i], dsRef.getIdentifier(dsRefIts[i]));
-		}
+		AttributesTransferPolicy atp;
+		if ("completeBasic".equals(dataSourceMode) || "completeAll".equals(dataSourceMode))
+			atp = preferTransferTarget;
+		else if ("importAll".equals(dataSourceMode))
+			atp = preferTransferSource;
+		else atp = new DocumentStyleAttributesTransferPolicy(metaDataStyle);
+		transferSearchResultAttributes(dsRef, ref, atp);
 		
 		//	check for errors one last time
 		String type = this.refTypeSystem.classify(ref);
@@ -1640,6 +1753,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		TITLE_ANNOTATION_TYPE,
 		
 		JOURNAL_NAME_ANNOTATION_TYPE,
+		SERIES_IN_JOURNAL_ANNOTATION_TYPE,
 		VOLUME_DESIGNATOR_ANNOTATION_TYPE,
 		ISSUE_DESIGNATOR_ANNOTATION_TYPE,
 		NUMERO_DESIGNATOR_ANNOTATION_TYPE,
@@ -1655,9 +1769,114 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		PUBLICATION_URL_ANNOTATION_TYPE
 	};
 	
-	private void storeRefData(ImDocument doc, RefData ref, HashMap attributesToValues, boolean auto) {
+	private static abstract class AttributesTransferPolicy {
+		abstract boolean transferAttribute(String name, String fromRefValue, String toRefValue);
+	}
+	private static final AttributesTransferPolicy preferTransferSource = new AttributesTransferPolicy() {
+		boolean transferAttribute(String name, String fromRefValue, String toRefValue) {
+			return true;
+		}
+	};
+	private static final AttributesTransferPolicy preferTransferTarget = new AttributesTransferPolicy() {
+		boolean transferAttribute(String name, String fromRefValue, String toRefValue) {
+			return (toRefValue == null); // nothing to overwrite, use search result
+		}
+	};
+	private class DocumentStyleAttributesTransferPolicy extends AttributesTransferPolicy {
+		DocumentStyle docStyle;
+		DocumentStyleAttributesTransferPolicy(DocumentStyle docStyle) {
+			this.docStyle = docStyle;
+		}
+		boolean transferAttribute(String name, String fromRefValue, String toRefValue) {
+			if (toRefValue == null)
+				return true; // nothing to overwrite, use search result
+			String mergeMode = this.docStyle.getStringProperty((name + "." + "dataSourceResultMergeMode"), null);
+			logInMasterConfiguration(" - merge mode is '" + ((mergeMode == null) ? "(default) document" : mergeMode) + "'");
+			return "sources".equals(mergeMode);
+		}
+	};
+	
+	void transferSearchResultAttributes(RefData fromRef, RefData toRef, AttributesTransferPolicy atp) {
 		
-		//	store meta data in respective attributes
+		//	transfer attributes
+		for (int a = 0; a < lookupTransferAttributeNames.length; a++) {
+			this.logInMasterConfiguration(" - importing " + lookupTransferAttributeNames[a]);
+			String fromRefValue = fromRef.getAttribute(lookupTransferAttributeNames[a]);
+			if (fromRefValue == null)
+				continue;
+			String toRefValue = toRef.getAttribute(lookupTransferAttributeNames[a]);
+			if (atp.transferAttribute(lookupTransferAttributeNames[a], fromRefValue, toRefValue)) {
+				toRef.setAttribute(lookupTransferAttributeNames[a], fromRefValue);
+				if (AUTHOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a]) || EDITOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a])) {
+					String[] fromRefValues = fromRef.getAttributeValues(lookupTransferAttributeNames[a]);
+					for (int v = 1; v < fromRefValues.length; v++)
+						toRef.addAttribute(lookupTransferAttributeNames[a], fromRefValues[v]);
+					this.logInMasterConfiguration("   =transfer=> " + fromRef.getAttributeValueString(lookupTransferAttributeNames[a], " & "));
+				}
+				else this.logInMasterConfiguration("   =transfer=> " + fromRefValue);
+			}
+			else this.logInMasterConfiguration("   =retain=> " + toRefValue);
+		}
+		
+		//	transfer identifiers (TODOne only the ones we're observing, though)
+//		String[] fromRefIdTypes = fromRef.getIdentifierTypes();
+//		for (int i = 0; i < fromRefIdTypes.length; i++) {
+//			this.logInMasterConfiguration(" - importing ID-" + fromRefIdTypes[i]);
+//			String fromRefId = fromRef.getIdentifier(fromRefIdTypes[i]);
+//			String toRefId = toRef.getIdentifier(fromRefIdTypes[i]);
+//			if (atp.transferAttribute(("ID-" + fromRefIdTypes[i]), fromRefId, toRefId)) {
+//				toRef.setIdentifier(fromRefIdTypes[i], fromRefId);
+//				this.logInMasterConfiguration("   =transfer=> " + fromRefId);
+//			}
+//			else this.logInMasterConfiguration("   =retain=> " + toRefId);
+//		}
+		for (int i = 0; i < this.refIdTypes.length; i++) {
+			String fromRefId = fromRef.getIdentifier(this.refIdTypes[i]);
+			if (fromRefId == null)
+				continue;
+			this.logInMasterConfiguration(" - importing ID-" + this.refIdTypes[i]);
+			String toRefId = toRef.getIdentifier(this.refIdTypes[i]);
+			if (atp.transferAttribute(("ID-" + this.refIdTypes[i]), fromRefId, toRefId)) {
+				toRef.setIdentifier(this.refIdTypes[i], fromRefId);
+				this.logInMasterConfiguration("   =transfer=> " + fromRefId);
+			}
+			else this.logInMasterConfiguration("   =retain=> " + toRefId);
+		}
+	}
+//	static void transferSearchResultAttributes(RefData fromRef, RefData toRef) {
+//		//	TODOne_above observe preferences !!!
+//		for (int a = 0; a < lookupTransferAttributeNames.length; a++) {
+//			if (toRef.hasAttribute(lookupTransferAttributeNames[a]))
+//				continue;
+//			if (!fromRef.hasAttribute(lookupTransferAttributeNames[a]))
+//				continue;
+//			System.out.println(" - importing " + lookupTransferAttributeNames[a]);
+//			if (AUTHOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a]) || EDITOR_ANNOTATION_TYPE.equals(lookupTransferAttributeNames[a])) {
+//				String[] fromRefAvs = fromRef.getAttributeValues(lookupTransferAttributeNames[a]);
+//				for (int v = 0; v < fromRefAvs.length; v++) {
+//					if (v == 0)
+//						toRef.setAttribute(lookupTransferAttributeNames[a], fromRefAvs[v]);
+//					else toRef.addAttribute(lookupTransferAttributeNames[a], fromRefAvs[v]);
+//				}
+//				System.out.println("   ==> " + fromRef.getAttributeValueString(lookupTransferAttributeNames[a], " & "));
+//			}
+//			else {
+//				toRef.setAttribute(lookupTransferAttributeNames[a], fromRef.getAttribute(lookupTransferAttributeNames[a]));
+//				System.out.println("   ==> " + fromRef.getAttribute(lookupTransferAttributeNames[a]));
+//			}
+//		}
+//		
+//		//	TODOne_above observe preferences !!!
+//		String[] fromRefIdTypes = fromRef.getIdentifierTypes();
+//		for (int i = 0; i < fromRefIdTypes.length; i++) {
+//			if (toRef.getIdentifier(fromRefIdTypes[i]) == null)
+//				toRef.setIdentifier(fromRefIdTypes[i], fromRef.getIdentifier(fromRefIdTypes[i]));
+//		}
+//	}
+	
+	void storeRefData(ImDocument doc, RefData ref, HashMap attributesToValues, boolean auto) {
+		
+		//	store metadata in respective attributes
 		this.setDocumentAttributes(doc, ref);
 		
 		//	if we have a pagination, set page numbers by counting through pages (only if no page numbers yet, though)
@@ -1680,20 +1899,20 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		} catch (NumberFormatException nfe) {}
 		
 		//	annotate attribute values in document head
-		annotateAttributeValues(ref, ref.getAttributeNames(), extractableFieldNames, false, doc, attributesToValues, auto);
-		annotateAttributeValues(ref, ref.getIdentifierTypes(), this.refIdTypes, true, doc, attributesToValues, auto);
+		this.annotateAttributeValues(ref, ref.getAttributeNames(), extractableFieldNames, false, doc, attributesToValues, auto);
+		this.annotateAttributeValues(ref, ref.getIdentifierTypes(), this.refIdTypes, true, doc, attributesToValues, auto);
 		
 		//	annotate author details
 		String[] refAuthorNames = ref.getAttributeValues(AUTHOR_ANNOTATION_TYPE);
-		System.out.println(Arrays.toString(refAuthorNames));
-		System.out.println(Arrays.toString(this.authorDetails));
-		annotateAuthorDetailValues(ref, refAuthorNames, ref.getAuthorAttributeNames(), this.authorDetails, doc, attributesToValues, auto);
+		this.logInMasterConfiguration(Arrays.toString(refAuthorNames));
+		this.logInMasterConfiguration(Arrays.toString(this.authorDetails));
+		this.annotateAuthorDetailValues(ref, refAuthorNames, ref.getAuthorAttributeNames(), this.authorDetails, doc, attributesToValues, auto);
 		
 		//	annotate document reference
-		annotateDocReference(doc, ref);
+		this.annotateDocReference(doc, ref);
 	}
 	
-	private static void annotateDocReference(ImDocument doc, RefData ref) {
+	private void annotateDocReference(ImDocument doc, RefData ref) {
 		
 		//	check for existing annotations
 		ImAnnotation[] docRefAnnots = doc.getAnnotations("docRef");
@@ -1701,8 +1920,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			return;
 		
 		//	use document style template if given
-		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
-		DocumentStyle metaDataStyle = docStyle.getSubset("docMeta");
+		ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(doc);
+		if (docStyle == null)
+			return;
+		ImDocumentStyle metaDataStyle = docStyle.getImSubset("docMeta");
 		if (!metaDataStyle.getBooleanProperty("docRefPresent", false))
 			return;
 		
@@ -1739,9 +1960,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 		
 		//	get extraction parameters
+		int metaDataMinFromStartPageId = metaDataStyle.getIntProperty("minPageId", 0);
 		int metaDataMaxFromStartPageId = metaDataStyle.getIntProperty("maxPageId", 0);
 		int metaDataMaxFromEndPageId = metaDataStyle.getIntProperty("maxFromEndPageId", 0);
-		DocumentStyle docRefStyle = metaDataStyle.getSubset("docRef");
+		ImDocumentStyle docRefStyle = metaDataStyle.getImSubset("docRef");
 		int fontSize = docRefStyle.getIntProperty("fontSize", -1);
 		int minFontSize = docRefStyle.getIntProperty("minFontSize", ((fontSize == -1) ? 0 : fontSize));
 		int maxFontSize = docRefStyle.getIntProperty("maxFontSize", ((fontSize == -1) ? 72 : fontSize));
@@ -1751,14 +1973,15 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		ArrayList docRefCandidates = new ArrayList();
 		
 		//	try extraction from document start first
+		int minFromStartPageId = docRefStyle.getIntProperty("minPageId", metaDataMinFromStartPageId);
 		int maxFromStartPageId = docRefStyle.getIntProperty("maxPageId", metaDataMaxFromStartPageId);
-		for (int p = 0; (p <= maxFromStartPageId) && (p < pages.length); p++)
-			addDocReferenceCandidates(doc, pages[p], minFontSize, maxFontSize, refDataTokens, refIdTokens, docRefCandidates);
+		for (int p = minFromStartPageId; (p <= maxFromStartPageId) && (p < pages.length); p++)
+			this.addDocReferenceCandidates(doc, pages[p], minFontSize, maxFontSize, refDataTokens, refIdTokens, docRefCandidates);
 		
 		//	try extraction from document end only second
 		int maxFromEndPageId = docRefStyle.getIntProperty("maxFromEndPageId", metaDataMaxFromEndPageId);
 		for (int p = (pages.length - maxFromEndPageId); p < pages.length; p++)
-			addDocReferenceCandidates(doc, pages[p], minFontSize, maxFontSize, refDataTokens, refIdTokens, docRefCandidates);
+			this.addDocReferenceCandidates(doc, pages[p], minFontSize, maxFontSize, refDataTokens, refIdTokens, docRefCandidates);
 		
 		//	anything to work with?
 		if (docRefCandidates.isEmpty())
@@ -1812,21 +2035,21 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 	}
 	
-	private static void addDocReferenceCandidates(ImDocument doc, ImPage page, int minFontSize, int maxFontSize, CountingSet refDataTokens, CountingSet refIdTokens, ArrayList docRefCandidates) {
+	private void addDocReferenceCandidates(ImDocument doc, ImPage page, int minFontSize, int maxFontSize, CountingSet refDataTokens, CountingSet refIdTokens, ArrayList docRefCandidates) {
 		
 		//	work through paragraphs
 		ImRegion[] paragraphs = page.getRegions(ImRegion.PARAGRAPH_TYPE);
 		for (int p = 0; p < paragraphs.length; p++) {
 			ImWord[] words = paragraphs[p].getWords();
-			System.out.println("Checking paragraph " + page.pageId + "." + paragraphs[p].bounds + " for document reference");
+			this.logInMasterConfiguration("Checking paragraph " + page.pageId + "." + paragraphs[p].bounds + " for document reference");
 			
 			//	check length first
 			if ((refDataTokens.size() * 3) < words.length) {
-				System.out.println(" ==> too large (" + words.length + " for " + refDataTokens.size() + " reference tokens)");
+				this.logInMasterConfiguration(" ==> too large (" + words.length + " for " + refDataTokens.size() + " reference tokens)");
 				continue; // this one is just too large, even accounting for punctuation and identifiers
 			}
 			if ((words.length * 2) < refDataTokens.size()) {
-				System.out.println(" ==> too small (" + words.length + " for " + refDataTokens.size() + " reference tokens)");
+				this.logInMasterConfiguration(" ==> too small (" + words.length + " for " + refDataTokens.size() + " reference tokens)");
 				continue; // this one is too small to accommodate the reference, even accounting for shortened author names, etc.
 			}
 			
@@ -1842,7 +2065,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 						nonFsWordWidth += words[w].bounds.getWidth();
 				}
 				if ((nonFsWordWidth * 10) > fsWordWidth) {
-					System.out.println(" ==> too many words outside font size range (" + nonFsWordWidth + " against " + fsWordWidth + " in range [" + minFontSize + "," + maxFontSize + "])");
+					this.logInMasterConfiguration(" ==> too many words outside font size range (" + nonFsWordWidth + " against " + fsWordWidth + " in range [" + minFontSize + "," + maxFontSize + "])");
 					continue;
 				}
 			}
@@ -1855,7 +2078,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 			CountingSet unmatchedRefDataTokens = new CountingSet(new TreeMap(String.CASE_INSENSITIVE_ORDER));
 			unmatchedRefDataTokens.addAll(refDataTokens);
 			ImDocumentRoot tokens = new ImDocumentRoot(paragraphs[p], (ImDocumentRoot.NORMALIZATION_LEVEL_WORDS | ImDocumentRoot.NORMALIZE_CHARACTERS));
-			System.out.println(" - checking " + tokens.size() + " tokens:");
+			this.logInMasterConfiguration(" - checking " + tokens.size() + " tokens:");
 			for (int t = 0; t < tokens.size(); t++) {
 				String token = StringUtils.normalizeString(tokens.valueAt(t)).trim();
 				if (Gamta.isPunctuation(token))
@@ -1864,45 +2087,45 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 				if (unmatchedRefDataTokens.contains(token)) {
 					unmatchedRefDataTokens.remove(token);
 					refTokenCount++;
-					System.out.println("   - got matching token '" + token + "'");
+					this.logInMasterConfiguration("   - got matching token '" + token + "'");
 				}
 				else if (refIdTokens.contains(token)) {
 					idTokenCount++;
-					System.out.println("   - got identifier token '" + token + "'");
+					this.logInMasterConfiguration("   - got identifier token '" + token + "'");
 				}
 				else {
 					spuriousTokens.add(token);
-					System.out.println("   - got spurious token '" + token + "'");
+					this.logInMasterConfiguration("   - got spurious token '" + token + "'");
 				}
 			}
-			System.out.println(" --> got " + tokenCount + " tokens");
-			System.out.println(" --> got " + refTokenCount + " matching tokens");
-			System.out.println(" --> got " + idTokenCount + " identifier tokens");
-			System.out.println(" --> got " + spuriousTokens.size() + " spurious tokens");
-			System.out.println(" --> got " + unmatchedRefDataTokens.size() + " unmatched reference tokens:");
+			this.logInMasterConfiguration(" --> got " + tokenCount + " tokens");
+			this.logInMasterConfiguration(" --> got " + refTokenCount + " matching tokens");
+			this.logInMasterConfiguration(" --> got " + idTokenCount + " identifier tokens");
+			this.logInMasterConfiguration(" --> got " + spuriousTokens.size() + " spurious tokens");
+			this.logInMasterConfiguration(" --> got " + unmatchedRefDataTokens.size() + " unmatched reference tokens:");
 			int abbrevMatchTokenCount = 0;
 			for (Iterator umtit = unmatchedRefDataTokens.iterator(); umtit.hasNext();) {
 				String unmatchedToken = ((String) umtit.next());
-				System.out.println("   - '" + unmatchedToken + "' (" + unmatchedRefDataTokens.getCount(unmatchedToken) + ")");
+				this.logInMasterConfiguration("   - '" + unmatchedToken + "' (" + unmatchedRefDataTokens.getCount(unmatchedToken) + ")");
 				for (Iterator stit = spuriousTokens.iterator(); stit.hasNext();) {
 					String spuriousToken = ((String) stit.next());
 					if (StringUtils.isAbbreviationOf(unmatchedToken, spuriousToken, true)) {
 						abbrevMatchTokenCount += Math.min(unmatchedRefDataTokens.getCount(unmatchedToken), spuriousTokens.getCount(spuriousToken));
-						System.out.println("     --> abbreviation matched to '" + spuriousToken + "' (" + spuriousTokens.getCount(spuriousToken) + ")");
+						this.logInMasterConfiguration("     --> abbreviation matched to '" + spuriousToken + "' (" + spuriousTokens.getCount(spuriousToken) + ")");
 						break;
 					}
 				}
 			}
-			System.out.println(" --> got " + abbrevMatchTokenCount + " abbeviation matching tokens");
+			this.logInMasterConfiguration(" --> got " + abbrevMatchTokenCount + " abbeviation matching tokens");
 			float precision = (((float) (refTokenCount + idTokenCount + ((abbrevMatchTokenCount + 1) / 2))) / tokenCount);
 			float recall = (((float) ((refDataTokens.size() - unmatchedRefDataTokens.size()) + ((abbrevMatchTokenCount + 1) / 2))) / refDataTokens.size());
 			float accuracy = (precision * recall);
-			System.out.println(" ==> match accuracy is " + accuracy + " (P" + precision + "/R" + recall + ")");
+			this.logInMasterConfiguration(" ==> match accuracy is " + accuracy + " (P" + precision + "/R" + recall + ")");
 			
 			//	store candidate if match good enough
 			if (accuracy >= 0.75) {
 				docRefCandidates.add(new DocReferenceCandidate(paragraphs[p], words, accuracy));
-				System.out.println(" ==> good candidate");
+				this.logInMasterConfiguration(" ==> good candidate");
 			}
 		}
 	}
@@ -1944,17 +2167,18 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return title;
 	}
 	
-	private static boolean extractAttribute(String name, boolean isIdentifier, ImPage[] pages, int maxFromStartPageId, int maxFromEndPageId, DocumentStyle docStyle, boolean isMultiValue, RefData ref, HashMap attributesToValues) {
+	private static boolean extractAttribute(String name, boolean isIdentifier, ImPage[] pages, int minFromStartPageId, int maxFromStartPageId, int maxFromEndPageId, ImDocumentStyle docStyle, boolean isMultiValue, RefData ref, HashMap attributesToValues) {
 		
 		//	get attribute specific parameters
-		DocumentStyle attributeStyle = docStyle.getSubset(name);
+		ImDocumentStyle attributeStyle = docStyle.getImSubset(name);
 		
 		//	collect match words
 		ArrayList attributeValues = new ArrayList(isMultiValue ? 5 : 1);
 		
 		//	try extraction from document start first
+		minFromStartPageId = attributeStyle.getIntProperty("minPageId", minFromStartPageId);
 		maxFromStartPageId = attributeStyle.getIntProperty("maxPageId", maxFromStartPageId);
-		for (int p = 0; (p <= maxFromStartPageId) && (p < pages.length); p++) {
+		for (int p = minFromStartPageId; (p <= maxFromStartPageId) && (p < pages.length); p++) {
 			int dpi = pages[p].getImageDPI();
 			if (extractAttribute(name, isIdentifier, pages[p], dpi, attributeStyle, isMultiValue, ref, attributeValues, System.out)) {
 				attributesToValues.put(name, attributeValues);
@@ -1980,7 +2204,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return false;
 	}
 	
-	private static boolean extractAttribute(String name, boolean isIdentifier, ImPage page, int dpi, DocumentStyle attributeStyle, boolean isMultiValue, RefData ref, ArrayList attributeValues, PrintStream log) {
+	private static boolean extractAttribute(String name, boolean isIdentifier, ImPage page, int dpi, ImDocumentStyle attributeStyle, boolean isMultiValue, RefData ref, ArrayList attributeValues, PrintStream log) {
 		
 		//	attribute already set, get annotations and we're done
 		if ((ref != null) && (ref.getAttribute(name) != null)) {
@@ -2006,7 +2230,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		log.println("Extracting " + name + ":");
 		
 		//	check for fixed value
-		String fixedValue = attributeStyle.getProperty("fixedValue");
+		String fixedValue = (fixableFieldNames.contains(name) ? attributeStyle.getStringProperty("fixedValue", null) : null);
 		if (fixedValue != null) {
 			log.println(" ==> fixed to " + fixedValue);
 			if (ref != null)
@@ -2031,7 +2255,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return extractAttributeValue(name, isIdentifier, words, attributeStyle, isMultiValue, ref, attributeValues, log);
 	}
 	
-	private static boolean extractAttributeValue(String name, boolean isIdentifier, ImWord[] words, DocumentStyle attributeStyle, boolean isMultiValue, RefData ref, ArrayList extractedValues, PrintStream log) {
+	private static boolean extractAttributeValue(String name, boolean isIdentifier, ImWord[] words, ImDocumentStyle attributeStyle, boolean isMultiValue, RefData ref, ArrayList extractedValues, PrintStream log) {
 		
 		/* TODO Maybe compile styles parameter sets into MetaDataAttributeExtractor objects:
 - akin to defined heading styles in document structure detection
@@ -2056,10 +2280,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		int minFontSize = attributeStyle.getIntProperty("minFontSize", ((fontSize == -1) ? 0 : fontSize));
 		int maxFontSize = attributeStyle.getIntProperty("maxFontSize", ((fontSize == -1) ? 72 : fontSize));
 		boolean singleLineValues = (isMultiValue && attributeStyle.getBooleanProperty("singleLineValues", false));
-		String[] filterPatternStrings = attributeStyle.getListProperty("filterPatterns", null, " ");
+		String[] filterPatternStrings = attributeStyle.getStringListProperty("filterPatterns", null, " ");
 		Pattern[] filterPatterns = ((filterPatternStrings == null) ? null : new Pattern[filterPatternStrings.length]);
-		String contextPattern = attributeStyle.getProperty("contextPattern", null);
-		String valuePattern = attributeStyle.getProperty("valuePattern", null);
+		String contextPattern = attributeStyle.getStringProperty("contextPattern", null);
+		String valuePattern = attributeStyle.getStringProperty("valuePattern", null);
 		
 		//	filter words based on font size and style
 		ArrayList wordList = new ArrayList();
@@ -2435,6 +2659,12 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		public String getLocalID() {
 			return (this.name + "@" + this.firstWord.getLocalID() + "-" + this.lastWord.getLocalID());
 		}
+		public String getLocalUID() {
+			return AnnotationUuidHelper.getLocalUID(this);
+		}
+		public String getUUID() {
+			return AnnotationUuidHelper.getUUID(this);
+		}
 		public ImDocument getDocument() {
 			return this.firstWord.getDocument();
 		}
@@ -2473,10 +2703,10 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 	}
 	
-	private static boolean extractAuthorDetail(ImAnnotation[] docAuthors, String name, boolean isIdentifier, ImPage[] pages, int maxFromStartPageId, int maxFromEndPageId, DocumentStyle allDetailsStyle, RefData ref, HashMap attributesToValues, PrintStream log) {
+	private static boolean extractAuthorDetail(ImAnnotation[] docAuthors, String name, boolean isIdentifier, ImDocumentStyle allDetailsStyle, RefData ref, HashMap attributesToValues, PrintStream log) {
 		
 		//	get attribute specific parameters
-		DocumentStyle detailStyle = allDetailsStyle.getSubset(name);
+		ImDocumentStyle detailStyle = allDetailsStyle.getImSubset(name);
 		
 		//	collect match words
 		ArrayList attributeValues = new ArrayList(docAuthors.length);
@@ -2516,7 +2746,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		return false;
 	}
 	
-	private static boolean extractAuthorDetail(ImAnnotation[] authorAnnots, String name, boolean isIdentifier, ImPage page, int dpi, DocumentStyle detailStyle, DocumentStyle allDetailsStyle, RefData ref, ArrayList extractedValues, PrintStream log) {
+	private static boolean extractAuthorDetail(ImAnnotation[] authorAnnots, String name, boolean isIdentifier, ImPage page, int dpi, ImDocumentStyle detailStyle, ImDocumentStyle allDetailsStyle, RefData ref, ArrayList extractedValues, PrintStream log) {
 		
 		//	get document authors
 		if (authorAnnots == null)
@@ -2527,7 +2757,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		}
 		
 		//	check for fixed value (this _can_ be the case for house journals)
-		String fixedValue = detailStyle.getProperty("fixedValue");
+		String fixedValue = (fixableFieldNames.contains(name) ? detailStyle.getStringProperty("fixedValue", null) : null);
 		if (fixedValue != null) {
 			log.println(" ==> fixed to " + fixedValue);
 			if (ref != null)
@@ -2576,7 +2806,7 @@ Specify maximum block or paragraph distance for proximity association
 - vertically, measure for all words (at least in topmost line)
 ==> visualize accordingly in parameter group descriptions for template editor (most likely akin to block and column margins)
 		 */
-		String associationData = detailStyle.getProperty("indexChars", "");
+		String associationData = detailStyle.getStringProperty("indexChars", "");
 		
 		//	work author by author for proximity association
 		if ("BELOW".equals(associationData) || "RIGHT".equals(associationData) || "ABOVE".equals(associationData) || "LEFT".equals(associationData)) {
@@ -2585,8 +2815,8 @@ Specify maximum block or paragraph distance for proximity association
 			//	get extraction area (default to page boundaries) and position
 			BoundingBox detailValueArea = detailStyle.getBoxProperty("area", page.bounds, dpi);
 			log.println(" - general extraction area is " + detailValueArea);
-			String detailValueAreaPositionHorizontal = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionHorizontal", null));
-			String detailValueAreaPositionVertical = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionVertical", null));
+			String detailValueAreaPositionHorizontal = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getStringProperty("areaPositionHorizontal", null));
+			String detailValueAreaPositionVertical = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getStringProperty("areaPositionVertical", null));
 			if ((detailValueAreaPositionHorizontal == null) && (detailValueAreaPositionVertical == null)) {
 				log.println(" - extraction area horizontal position is " + detailValueAreaPositionHorizontal);
 				detailValueAreaPositionHorizontal = "ABSOLUTE";
@@ -2729,19 +2959,10 @@ Specify maximum block or paragraph distance for proximity association
 			log.println(" - using index based association");
 			TreeSet indexChars = parseCharList(associationData, log);
 			log.println(" - index characters are " + indexChars);
-			TreeSet allIndexChars = parseCharList(allDetailsStyle.getProperty("indexChars", associationData), log);
+			TreeSet allIndexChars = parseCharList(allDetailsStyle.getStringProperty("indexChars", associationData), log);
 			log.println(" - accepted index characters are " + allIndexChars);
 			
-			/* Add parameter "indexPositionOnAuthorAnnots":
-- leading superscript
-- leading
-- tailing superscript
-- tailing
-==> somehow facilitate specifying this for all configured details in one place
-==> also specify list of index characters in central place
-  ==> and then, DON'T ... as they might differ between details (or association mechanism might differ altogether)
-			 */
-			String indexCharPositionOnAuthorAnnots = detailStyle.getProperty("indexCharPositionOnAuthorAnnots");
+			String indexCharPositionOnAuthorAnnots = detailStyle.getStringProperty("indexCharPositionOnAuthorAnnots", null);
 			log.println(" - position of index characters on authors is " + indexCharPositionOnAuthorAnnots);
 			if (indexCharPositionOnAuthorAnnots == null)
 				return false;
@@ -2773,15 +2994,6 @@ Specify maximum block or paragraph distance for proximity association
 				authorAnnotStartEndWords.add(authorAnnots[a].getLastWord());
 			}
 			
-			/* Extracting index characters for authors
-- compute average font size of authors (superscript must be smaller)
-- start on successor of author annotation last word (or predecessor of author annotation first word)
-- stop at next author annotation boundary word (the above lookup set)
-- stop at paragraph break
-- bridge over commas and semicolons
-- collect words in set of index characters
-- stop at any other words
-			 */
 			//	find (superscript) index characters for authors (need to preserve order here)
 			LinkedHashSet[] authorIndexChars = new LinkedHashSet[authorAnnots.length];
 			log.println(" - getting index characters for authors:");
@@ -2798,6 +3010,13 @@ Specify maximum block or paragraph distance for proximity association
 						String imwStr = imw.getString();
 						if (imwStr == null)
 							continue;
+						//	TODOne split word string at any embedded commas (decimal dot vs. decimal comma _might_ go wrong sometimes)
+						String[] ics = imwStr.split("[\\,\\;]");
+						if (ics.length > 1)
+							for (int i = 0; i < ics.length; i++) {
+								if (indexChars.contains(ics[i]))
+									authorIndexChars[a].add(ics[i]);
+							}
 						if (indexChars.contains(imwStr))
 							authorIndexChars[a].add(imwStr);
 						else if (!allIndexChars.contains(imwStr) && (",;".indexOf(imwStr) == -1))
@@ -2815,6 +3034,13 @@ Specify maximum block or paragraph distance for proximity association
 						String imwStr = imw.getString();
 						if (imwStr == null)
 							continue;
+						//	TODOne split word string at any embedded commas (decimal dot vs. decimal comma _might_ go wrong sometimes)
+						String[] ics = imwStr.split("[\\,\\;]");
+						if (ics.length > 1)
+							for (int i = 0; i < ics.length; i++) {
+								if (indexChars.contains(ics[i]))
+									authorIndexChars[a].add(ics[i]);
+							}
 						if (indexChars.contains(imwStr))
 							authorIndexChars[a].add(imwStr);
 						else if (!allIndexChars.contains(imwStr) && (",;".indexOf(imwStr) == -1))
@@ -2830,7 +3056,7 @@ Specify maximum block or paragraph distance for proximity association
 - tailing superscript
 - tailing
 			 */
-			String indexCharPositionOnDetailValues = detailStyle.getProperty("indexCharPositionOnDetailValues");
+			String indexCharPositionOnDetailValues = detailStyle.getStringProperty("indexCharPositionOnDetailValues", null);
 			log.println(" - position of index characters on values is " + indexCharPositionOnDetailValues);
 			if (indexCharPositionOnDetailValues == null)
 				return false;
@@ -2841,7 +3067,7 @@ Specify maximum block or paragraph distance for proximity association
 - "INDEX": detail value ends at (superscript) character in index character set (as well as paragraph break)
 - other characters specify separator(s) directly (separate with spaces)
 			 */
-			String detailValueSeparator = detailStyle.getProperty("detailValueSeparator");
+			String detailValueSeparator = detailStyle.getStringProperty("detailValueSeparator", null);
 			log.println(" - value separator is " + detailValueSeparator);
 			if (detailValueSeparator == null)
 				return false;
@@ -2925,6 +3151,13 @@ Specify maximum block or paragraph distance for proximity association
 						String imwStr = pWords[w].getString();
 						if (imwStr == null)
 							continue;
+						//	TODOne split word string at any embedded commas (decimal dot vs. decimal comma _might_ go wrong sometimes)
+						String[] ics = imwStr.split("[\\,\\;]");
+						if (ics.length > 1)
+							for (int i = 0; i < ics.length; i++) {
+								if (indexChars.contains(ics[i]))
+									isIndexChar[w] = true;
+							}
 						if (indexChars.contains(imwStr))
 							isIndexChar[w] = true;
 						else if ((",;".indexOf(imwStr) != -1) && (w != 0) && isIndexChar[w-1])
@@ -3158,14 +3391,14 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		return unescaped.toString();
 	}
 	
-	private static BoundingBox[] getAuthorDetailValueAreas(ImAnnotation[] authorAnnots, ImPage page, String associationData, DocumentStyle detailStyle, int dpi, PrintStream log) {
+	private static BoundingBox[] getAuthorDetailValueAreas(ImAnnotation[] authorAnnots, ImPage page, String associationData, ImDocumentStyle detailStyle, int dpi, PrintStream log) {
 		BoundingBox[] vaBounds = new BoundingBox[authorAnnots.length];
 		
 		//	get extraction area (default to page boundaries) and position
 		BoundingBox detailValueArea = detailStyle.getBoxProperty("area", page.bounds, dpi);
 		if (log != null) log.println(" - general extraction area is " + detailValueArea);
-		String detailValueAreaPositionHorizontal = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionHorizontal", null));
-		String detailValueAreaPositionVertical = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getProperty("areaPositionVertical", null));
+		String detailValueAreaPositionHorizontal = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getStringProperty("areaPositionHorizontal", null));
+		String detailValueAreaPositionVertical = ((detailValueArea == page.bounds) ? "ABSOLUTE" : detailStyle.getStringProperty("areaPositionVertical", null));
 		if ((detailValueAreaPositionHorizontal == null) && (detailValueAreaPositionVertical == null)) {
 			if (log != null) log.println(" - extraction area horizontal position is " + detailValueAreaPositionHorizontal);
 			detailValueAreaPositionHorizontal = "ABSOLUTE";
@@ -3413,7 +3646,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		return ((fontSizeWeightSum == 0) ? -1 : ((fontSizeSum + (fontSizeWeightSum / 2)) / fontSizeWeightSum));
 	}
 	
-	private static ExtractedAttributeValue extractAuthorDetailValue(String name, ImWord[] words, boolean[] isSuperscript, int from, int to, boolean isIdentifier, String indexCharPosition, TreeSet indexChars, DocumentStyle detailStyle, PrintStream log) {
+	private static ExtractedAttributeValue extractAuthorDetailValue(String name, ImWord[] words, boolean[] isSuperscript, int from, int to, boolean isIdentifier, String indexCharPosition, TreeSet indexChars, ImDocumentStyle detailStyle, PrintStream log) {
 		
 		//	find index chars (leading or tailing)
 		TreeSet valueIndexChars = new TreeSet();
@@ -3424,6 +3657,13 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				String imwStr = words[from].getString();
 				if (imwStr == null)
 					continue;
+				//	TODOne split word string at any embedded commas (decimal dot vs. decimal comma _might_ go wrong sometimes)
+				String[] ics = imwStr.split("[\\,\\;]");
+				if (ics.length > 1)
+					for (int i = 0; i < ics.length; i++) {
+						if (indexChars.contains(ics[i]))
+							valueIndexChars.add(ics[i]);
+					}
 				if (indexChars.contains(imwStr))
 					valueIndexChars.add(imwStr);
 				else if (",;".indexOf(imwStr) == -1)
@@ -3437,6 +3677,13 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				String imwStr = words[to - 1].getString();
 				if (imwStr == null)
 					continue;
+				//	TODOne split word string at any embedded commas (decimal dot vs. decimal comma _might_ go wrong sometimes)
+				String[] ics = imwStr.split("[\\,\\;]");
+				if (ics.length > 1)
+					for (int i = 0; i < ics.length; i++) {
+						if (indexChars.contains(ics[i]))
+							valueIndexChars.add(ics[i]);
+					}
 				if (indexChars.contains(imwStr))
 					valueIndexChars.add(imwStr);
 				else if (",;".indexOf(imwStr) == -1)
@@ -3454,7 +3701,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		return value;
 	}
 	
-	private static ExtractedAttributeValue extractAuthorDetailValue(String name, ImWord[] words, int from, int to, boolean isIdentifier, DocumentStyle detailStyle, PrintStream log) {
+	private static ExtractedAttributeValue extractAuthorDetailValue(String name, ImWord[] words, int from, int to, boolean isIdentifier, ImDocumentStyle detailStyle, PrintStream log) {
 		if (to <= from)
 			return null;
 		if ((from != 0) || (to < words.length)) {
@@ -3469,7 +3716,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		return (detailValues.isEmpty() ? null : ((ExtractedAttributeValue) detailValues.get(0)));
 	}
 	
-	private void setDocumentAttributes(ImDocument doc, RefData ref) {
+	void setDocumentAttributes(ImDocument doc, RefData ref) {
 		
 		//	store reference data proper
 		BibRefUtils.toModsAttributes(ref, doc);
@@ -3546,7 +3793,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		return true;
 	}
 	
-	private static void annotateAttributeValues(RefData ref, String[] refAttributeNames, String[] allAttributeNames, boolean isIdentifierType, ImDocument doc, HashMap attributesToValues, boolean auto) {
+	private void annotateAttributeValues(RefData ref, String[] refAttributeNames, String[] allAttributeNames, boolean isIdentifierType, ImDocument doc, HashMap attributesToValues, boolean auto) {
 		HashSet cleanupAttributeNames = new HashSet(Arrays.asList(allAttributeNames));
 		ImDocumentRoot wrappedDoc = null;
 		for (int an = 0; an < refAttributeNames.length; an++) {
@@ -3555,7 +3802,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			String refAttributeName = ((isIdentifierType ? "ID-" : "") + refAttributeNames[an]);
 			String[] refAttributeValues = ref.getAttributeValues(refAttributeName);
 			String valueAnnotType = ((isIdentifierType ? "docId" : "doc") + Character.toUpperCase(refAttributeNames[an].charAt(0)) + refAttributeNames[an].substring(1));
-			wrappedDoc = annotateAttributeValues(refAttributeName, refAttributeValues, isIdentifierType, valueAnnotType, attributesToValues, cleanupAttributeNames, doc, wrappedDoc);
+			wrappedDoc = this.annotateAttributeValues(refAttributeName, refAttributeValues, isIdentifierType, valueAnnotType, attributesToValues, cleanupAttributeNames, doc, wrappedDoc);
 		}
 		
 		//	nothing to clean up (we're strictly adding in automated mode)
@@ -3567,23 +3814,23 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			String cleanupAttributeName = ((String) canit.next());
 			if (isIdentifierType && "".equals(cleanupAttributeName))
 				continue; // have to skip over wildcard ID type
-			System.out.println("Cleaning up " + cleanupAttributeName + ":");
+			this.logInMasterConfiguration("Cleaning up " + cleanupAttributeName + ":");
 			
 			//	get existing annotations
 			String valueAnnotType = ((isIdentifierType ? "docId" : "doc") + Character.toUpperCase(cleanupAttributeName.charAt(0)) + cleanupAttributeName.substring(1));
 			ImAnnotation[] valueAnnots = doc.getAnnotations(valueAnnotType);
-			System.out.println(" - got " + valueAnnots.length + " existing " + valueAnnotType);
+			this.logInMasterConfiguration(" - got " + valueAnnots.length + " existing " + valueAnnotType);
 			
 			//	remove spurious annotations
 			for (int a = 0; a < valueAnnots.length; a++) {
 				doc.removeAnnotation(valueAnnots[a]);
 				wrappedDoc = null; // invalidate XML wrapper
 			}
-			System.out.println("   ==> done");
+			this.logInMasterConfiguration("   ==> done");
 		}
 	}
 	
-	private static void annotateAuthorDetailValues(RefData ref, String[] refAuthorNames, String[] refAttributeNames, String[] allAttributeNames, ImDocument doc, HashMap attributesToValues, boolean auto) {
+	private void annotateAuthorDetailValues(RefData ref, String[] refAuthorNames, String[] refAttributeNames, String[] allAttributeNames, ImDocument doc, HashMap attributesToValues, boolean auto) {
 		HashSet cleanupAttributeNames = new HashSet(Arrays.asList(allAttributeNames));
 		ImDocumentRoot wrappedDoc = null;
 		for (int an = 0; an < refAttributeNames.length; an++) {
@@ -3603,9 +3850,9 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				else refAttribValues.addAll(Arrays.asList(adv.split("\\s\\&\\s")));
 			}
 			String[] refAttributeValues = ((String[]) refAttribValues.toArray(new String[refAttribValues.size()]));
-			System.out.println(refAttributeName + ": " + Arrays.toString(refAttributeValues));
+			this.logInMasterConfiguration(refAttributeName + ": " + Arrays.toString(refAttributeValues));
 			String valueAnnotType = ("docAuthor" + Character.toUpperCase(refAttributeNames[an].charAt(0)) + refAttributeNames[an].substring(1));
-			wrappedDoc = annotateAttributeValues(refAttributeName, refAttributeValues, !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(refAttributeNames[an]), valueAnnotType, attributesToValues, cleanupAttributeNames, doc, wrappedDoc);
+			wrappedDoc = this.annotateAttributeValues(refAttributeName, refAttributeValues, !AuthorData.AUTHOR_AFFILIATION_ATTRIBUTE.equals(refAttributeNames[an]), valueAnnotType, attributesToValues, cleanupAttributeNames, doc, wrappedDoc);
 		}
 		
 		//	nothing to clean up (we're strictly adding in automated mode)
@@ -3617,42 +3864,42 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			String cleanupAttributeName = ((String) canit.next());
 			if (AuthorData.AUTHOR_NAME_ATTRIBUTE.equals(cleanupAttributeName))
 				continue;
-			System.out.println("Cleaning up " + cleanupAttributeName + ":");
+			this.logInMasterConfiguration("Cleaning up " + cleanupAttributeName + ":");
 			
 			//	get existing annotations
 			String valueAnnotType = ("docAuthor" + Character.toUpperCase(cleanupAttributeName.charAt(0)) + cleanupAttributeName.substring(1));
 			ImAnnotation[] valueAnnots = doc.getAnnotations(valueAnnotType);
-			System.out.println(" - got " + valueAnnots.length + " existing " + valueAnnotType);
+			this.logInMasterConfiguration(" - got " + valueAnnots.length + " existing " + valueAnnotType);
 			
 			//	remove spurious annotations
 			for (int a = 0; a < valueAnnots.length; a++) {
 				doc.removeAnnotation(valueAnnots[a]);
 				wrappedDoc = null; // invalidate XML wrapper
 			}
-			System.out.println("   ==> done");
+			this.logInMasterConfiguration("   ==> done");
 		}
 	}
 	
-	private static ImDocumentRoot annotateAttributeValues(String refAttributeName, String[] refAttributeValues, boolean isIdentifierType, String valueAnnotType, HashMap attributesToValues, HashSet cleanupAttributeNames, ImDocument doc, ImDocumentRoot wrappedDoc) {
+	private ImDocumentRoot annotateAttributeValues(String refAttributeName, String[] refAttributeValues, boolean isIdentifierType, String valueAnnotType, HashMap attributesToValues, HashSet cleanupAttributeNames, ImDocument doc, ImDocumentRoot wrappedDoc) {
 		cleanupAttributeNames.remove(refAttributeName); // no cleanup required here
-		System.out.println("Annotating " + refAttributeName + ":");
+		this.logInMasterConfiguration("Annotating " + refAttributeName + ":");
 		
 		//	get existing annotations
 		ArrayList valueAnnots = new ArrayList(Arrays.asList(doc.getAnnotations(valueAnnotType)));
-		System.out.println(" - got " + valueAnnots.size() + " existing " + valueAnnotType);
+		this.logInMasterConfiguration(" - got " + valueAnnots.size() + " existing " + valueAnnotType);
 		
 		//	get extracted values (creating working copy)
 		ArrayList extractedValues = new ArrayList();
 		if (attributesToValues.containsKey(refAttributeName))
 			extractedValues.addAll((ArrayList) attributesToValues.get(refAttributeName));
-		System.out.println(" - got " + extractedValues.size() + " extracted values");
+		this.logInMasterConfiguration(" - got " + extractedValues.size() + " extracted values");
 		
 		//	process reference values
 		ArrayList refValues = new ArrayList(Arrays.asList(refAttributeValues));
-		System.out.println(" - got " + refValues.size() + " values from reference");
+		this.logInMasterConfiguration(" - got " + refValues.size() + " values from reference");
 		for (int v = 0; v < refValues.size(); v++) {
 			String refValue = ((String) refValues.get(v));
-			System.out.println("   - handling " + refValue + ":");
+			this.logInMasterConfiguration("   - handling " + refValue + ":");
 			ImAnnotation refValueAnnot = null;
 			
 			//	if we have an existing annotation, we're all set
@@ -3664,14 +3911,14 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				if (annotValue.equalsIgnoreCase(refValue)) {
 					refValueAnnot = valueAnnot;
 					valueAnnots.remove(a--); // no need to remove this one later on
-					System.out.println("     ==> found raw value matching annotation");
+					this.logInMasterConfiguration("     ==> found raw value matching annotation");
 					break; // we're done here
 				}
 				String nAnnotValue = StringUtils.normalizeString(annotValue);
 				if (nAnnotValue.equalsIgnoreCase(refValue)) {
 					refValueAnnot = valueAnnot;
 					valueAnnots.remove(a--); // no need to remove this one later on
-					System.out.println("     ==> found normalized value matching annotation");
+					this.logInMasterConfiguration("     ==> found normalized value matching annotation");
 					break; // we're done here
 				}
 				String sAnnotValue = sanitizeAttributeValue(refAttributeName, annotValue, false);
@@ -3680,7 +3927,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				if (sAnnotValue.equalsIgnoreCase(refValue)) {
 					refValueAnnot = valueAnnot;
 					valueAnnots.remove(a--); // no need to remove this one later on
-					System.out.println("     ==> found sanitized value matching annotation");
+					this.logInMasterConfiguration("     ==> found sanitized value matching annotation");
 					break; // we're done here
 				}
 			}
@@ -3697,7 +3944,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				}
 				continue; // we're done with this one
 			}
-			System.out.println("     --> matching annotation not found");
+			this.logInMasterConfiguration("     --> matching annotation not found");
 			
 			//	if we have an extracted value, we can annotate from there
 			for (int e = 0; e < extractedValues.size(); e++) {
@@ -3707,7 +3954,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				else if ((extractedValue.sValue != null) && extractedValue.sValue.equalsIgnoreCase(refValue)) {}
 				else continue;
 				refValueAnnot = doc.addAnnotation(extractedValue.firstWord, extractedValue.lastWord, valueAnnotType); // annotate
-				System.out.println("     ==> annotated matching extracted value as " + valueAnnotType);
+				this.logInMasterConfiguration("     ==> annotated matching extracted value as " + valueAnnotType);
 				extractedValues.remove(e--); // no need to hold on to this one if we already have the annotation
 				break; // we're done here
 			}
@@ -3716,7 +3963,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				wrappedDoc = null; // invalidate XML wrapper
 				continue; // we're done with this one
 			}
-			System.out.println("     --> matching extracted value not found");
+			this.logInMasterConfiguration("     --> matching extracted value not found");
 		}
 		
 		//	remove spurious annotations
@@ -3724,23 +3971,23 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			doc.removeAnnotation((ImAnnotation) valueAnnots.get(n));
 			wrappedDoc = null; // invalidate XML wrapper
 		}
-		System.out.println(" - cleaned up " + valueAnnots.size() + " spurious " + valueAnnotType);
+		this.logInMasterConfiguration(" - cleaned up " + valueAnnots.size() + " spurious " + valueAnnotType);
 		
 		//	anything left to annotate?
 		if (refValues.isEmpty())
 			return wrappedDoc; // we're done with this attribute
-		System.out.println(" - annotating " + refValues.size() + " remaining values from reference");
+		this.logInMasterConfiguration(" - annotating " + refValues.size() + " remaining values from reference");
 		
 		//	(re)create wrapper only on demand
 		if (wrappedDoc == null)
 			wrappedDoc = new ImDocumentRoot(doc.getPage(doc.getFirstPageId()), (ImDocumentRoot.NORMALIZATION_LEVEL_WORDS | ImDocumentRoot.NORMALIZE_CHARACTERS));
 		
 		//	annotate any remaining values
-		annotateAttributeValues(refAttributeName, refValues, valueAnnotType, wrappedDoc);
+		this.annotateAttributeValues(refAttributeName, refValues, valueAnnotType, wrappedDoc);
 		return wrappedDoc;
 	}
 	
-	private static void annotateAttributeValues(String attributeName, ArrayList values, String valueAnnotType, ImDocumentRoot wrappedDoc) {
+	private void annotateAttributeValues(String attributeName, ArrayList values, String valueAnnotType, ImDocumentRoot wrappedDoc) {
 		
 		//	create attribute value dictionary
 		StringVector valueDict = new StringVector(false);
@@ -3757,13 +4004,13 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 				}
 			}
 		}
-		System.out.println("Annotating " + values.size() + " " + attributeName + " as " + valueAnnotType);
+		this.logInMasterConfiguration("Annotating " + values.size() + " " + attributeName + " as " + valueAnnotType);
 		for (int v = 0; v < valueDict.size(); v++) {
 			String value = valueDict.get(v);
 			TokenSequence valueTokens = Gamta.newTokenSequence(value, wrappedDoc.getTokenizer());
 			valueDict.addElementIgnoreDuplicates(TokenSequenceUtils.concatTokens(valueTokens, true, true));
 		}
-		System.out.println(" - normalized to " + valueDict.size() + " values");
+		this.logInMasterConfiguration(" - normalized to " + valueDict.size() + " values");
 		
 		//	annotate attribute values (each one only once, though)
 		Annotation[] valueAnnots = Gamta.extractAllContained(wrappedDoc, valueDict, true, false, true);
@@ -3772,13 +4019,13 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			if (annotatedValues.add(valueAnnots[a].getValue())) {
 				valueAnnots[a].changeTypeTo(valueAnnotType);
 				wrappedDoc.addAnnotation(valueAnnots[a]);
-				System.out.println(" - annotated " + valueAnnots[a].getValue() + " as " + valueAnnotType);
+				this.logInMasterConfiguration(" - annotated " + valueAnnots[a].getValue() + " as " + valueAnnotType);
 			}
 	}
 	
-	private RefData editRefData(final ImDocument doc, RefData ref, final HashMap attributesToValues) {
+	private RefData editRefData(final ImDocument doc, RefData ref, final DocumentStyle metaDataStyle, final HashMap attributesToValues) {
 		final String docName = ((String) doc.getAttribute(DOCUMENT_NAME_ATTRIBUTE));
-		final JDialog refEditDialog = DialogFactory.produceDialog(("Get Meta Data for Document" + ((docName == null) ? "" : (" " + docName))), true);
+		final JDialog refEditorDialog = DialogFactory.produceDialog(("Get Metadata for Document" + ((docName == null) ? "" : (" " + docName))), true);
 		String refType = refTypeSystem.classify(ref);
 		if (refType == null)
 			refType = refTypeDefault;
@@ -3788,7 +4035,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		final boolean[] cancelled = {false};
 		
 		JButton extract = new JButton("Extract");
-		extract.setToolTipText("Extract meta data from document");
+		extract.setToolTipText("Extract metadata from document");
 		extract.addActionListener(new ActionListener() {
 			ImDocumentRoot wrappedDoc = null;
 			public void actionPerformed(ActionEvent ae) {
@@ -3802,7 +4049,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 						break;
 					}
 				RefData ref = refEditorPanel.getRefData();
-				if (fillFromDocument(refEditDialog, docName, this.wrappedDoc, ref, attributesToValues)) {
+				if (fillFromDocument(refEditorDialog, docName, this.wrappedDoc, ref, attributesToValues)) {
 					if (doc.hasAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) && (doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) instanceof String) && !ref.hasAttribute(PUBLICATION_URL_ANNOTATION_TYPE))
 						ref.setAttribute(PUBLICATION_URL_ANNOTATION_TYPE, ((String) doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE)));
 					refEditorPanel.setRefData(ref);
@@ -3810,31 +4057,40 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			}
 		});
 		
-		JButton search = new JButton("Search");
-		search.setToolTipText("Search RefBank for meta data, using current input as query");
+		JButton search = null;
 		checkRefDataSources();
-//		if (this.refBankClient == null)
-		if (this.refDataSources == null)
-			search = null;
-		else search.addActionListener(new ActionListener() {
-			public void actionPerformed(ActionEvent ae) {
-				RefData ref = refEditorPanel.getRefData();
-				ref = searchRefData(refEditDialog, ref, docName);
-				if (ref != null) {
-					if (doc.hasAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) && (doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) instanceof String) && !ref.hasAttribute(PUBLICATION_URL_ANNOTATION_TYPE))
-						ref.setAttribute(PUBLICATION_URL_ANNOTATION_TYPE, ((String) doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE)));
-					refEditorPanel.setRefData(ref);
+		if (this.refDataSources != null) {
+			search = new JButton("Search");
+			search.setToolTipText("Search RefBank for metadata, using current input as query");
+			search.addActionListener(new ActionListener() {
+				public void actionPerformed(ActionEvent ae) {
+					RefData queryRef = refEditorPanel.getRefData();
+					RefData resultRef = searchRefData(refEditorDialog, queryRef, docName);
+					if (resultRef == null)
+						return;
+					if (doc.hasAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) && (doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE) instanceof String) && !resultRef.hasAttribute(PUBLICATION_URL_ANNOTATION_TYPE))
+						resultRef.setAttribute(PUBLICATION_URL_ANNOTATION_TYPE, ((String) doc.getAttribute(DOCUMENT_SOURCE_LINK_ATTRIBUTE)));
+					boolean preferQueryValues;
+					if (resultRef.removeAttribute("selectedDetails"))
+						preferQueryValues = false; // attributes hand picked by user
+					else if (refEditorPanel.getErrors() == null)
+						preferQueryValues = true; // this one looks too complete to overwrite
+					else if ((metaDataStyle == null) || (metaDataStyle.getPropertyNames().length == 0))
+						preferQueryValues = false; // no document style to extract sensible values
+					else preferQueryValues = true; // hold on to values extracted by template
+					transferSearchResultAttributes(resultRef, queryRef, (preferQueryValues ? preferTransferTarget : preferTransferSource));
+					refEditorPanel.setRefData(queryRef);
 				}
-			}
-		});
+			});
+		}
 		
 		JButton validate = new JButton("Validate");
-		validate.setToolTipText("Check if the meta data is complete");
+		validate.setToolTipText("Check if the metadata is complete");
 		validate.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent ae) {
 				String[] errors = refEditorPanel.getErrors();
 				if (errors == null)
-					DialogFactory.alert("The document meta data is valid.", "Validation Report", JOptionPane.INFORMATION_MESSAGE);
+					DialogFactory.alert("The document metadata is valid.", "Validation Report", JOptionPane.INFORMATION_MESSAGE);
 				else displayErrors(errors, refEditorPanel);
 			}
 		});
@@ -3844,7 +4100,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			public void actionPerformed(ActionEvent ae) {
 				String[] errors = refEditorPanel.getErrors();
 				if (errors == null)
-					refEditDialog.dispose();
+					refEditorDialog.dispose();
 				else displayErrors(errors, refEditorPanel);
 			}
 		});
@@ -3853,7 +4109,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		cancel.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent ae) {
 				cancelled[0] = true;
-				refEditDialog.dispose();
+				refEditorDialog.dispose();
 			}
 		});
 		
@@ -3865,12 +4121,12 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		buttonPanel.add(ok);
 		buttonPanel.add(cancel);
 		
-		refEditDialog.getContentPane().setLayout(new BorderLayout());
-		refEditDialog.getContentPane().add(refEditorPanel, BorderLayout.CENTER);
-		refEditDialog.getContentPane().add(buttonPanel, BorderLayout.SOUTH);
-		refEditDialog.setSize(600, 600);
-		refEditDialog.setLocationRelativeTo(DialogFactory.getTopWindow());
-		refEditDialog.setVisible(true);
+		refEditorDialog.getContentPane().setLayout(new BorderLayout());
+		refEditorDialog.getContentPane().add(refEditorPanel, BorderLayout.CENTER);
+		refEditorDialog.getContentPane().add(buttonPanel, BorderLayout.SOUTH);
+		refEditorDialog.setSize(600, 600);
+		refEditorDialog.setLocationRelativeTo(DialogFactory.getTopWindow());
+		refEditorDialog.setVisible(true);
 		
 		return (cancelled[0] ? null : refEditorPanel.getRefData());
 	}
@@ -4152,23 +4408,23 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 	private final void displayErrors(String[] errors, JPanel parent) {
 		StringVector errorMessageBuilder = new StringVector();
 		errorMessageBuilder.addContent(errors);
-		DialogFactory.alert(("The document meta data is not valid. In particular, there are the following errors:\n" + errorMessageBuilder.concatStrings("\n")), "Validation Report", JOptionPane.ERROR_MESSAGE);
+		DialogFactory.alert(("The document metadata is not valid. In particular, there are the following errors:\n" + errorMessageBuilder.concatStrings("\n")), "Validation Report", JOptionPane.ERROR_MESSAGE);
 	}
 	
-	private final RefData searchRefData(JDialog dialog, RefData query, String docName) {
+	private RefData searchRefData(JDialog dialog, RefData query, String docName) {
 		
 		//	perform search
 		Vector refs = this.searchRefData(query);
 		if (refs == null) {
 			if (dialog != null)
-				DialogFactory.alert("Please enter some data to search for.\nYou can also use 'View Doc' to copy some data from the document text.", "Cannot Search Document Meta Data", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert("Please enter some data to search for.\nYou can also use 'View Doc' to copy some data from the document text.", "Cannot Search Document Metadata", JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
 		
 		//	did we find anything?
 		if (refs.isEmpty()) {
 			if (dialog != null)
-				DialogFactory.alert("Your search did not return any results.\nYou can still enter the document meta data manually.", "Document Meta Data Not Fount", JOptionPane.ERROR_MESSAGE);
+				DialogFactory.alert("Your search did not return any results.\nYou can still enter the document metadata manually.", "Document Metadata Not Fount", JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
 		
@@ -4177,16 +4433,14 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			return ((refs.size() == 1) ? ((RefDataListElement) refs.get(0)).ref : null);
 		
 		//	display whatever is found in list dialog
-		RefDataList refDataList = new RefDataList(dialog, ("Select Meta Data for Document" + ((docName == null) ? "" : (" " + docName))), refs);
+		RefDataList refDataList = new RefDataList(dialog, ("Select Metadata for Document" + ((docName == null) ? "" : (" " + docName))), refs, query);
 		refDataList.setVisible(true);
 		return refDataList.ref;
 	}
 	
-	private Vector searchRefData(RefData query) {
+	Vector searchRefData(RefData query) {
 		
 		//	can we search?
-//		if (this.refBankClient == null)
-//			return null;
 		this.checkRefDataSources();
 		if (this.refDataSources == null)
 			return null;
@@ -4206,19 +4460,23 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		}
 		
 		//	get identifiers (preferring DOI if present)
-//		String[] extIdTypes = query.getIdentifierTypes();
-//		String extIdType = (((extIdTypes == null) || (extIdTypes.length == 0)) ? null : extIdTypes[0]);
-//		String extId = ((extIdType == null) ? null : query.getIdentifier(extIdType));
-		String extIdType;
-		String extId;
+		String extIdType = null;
+		String extId = null;
 		if (query.getIdentifier("DOI") != null) {
 			extIdType = "DOI";
 			extId = query.getIdentifier("DOI");
 		}
 		else {
 			String[] extIdTypes = query.getIdentifierTypes();
-			extIdType = (((extIdTypes == null) || (extIdTypes.length == 0)) ? null : extIdTypes[0]);
-			extId = ((extIdType == null) ? null : query.getIdentifier(extIdType));
+			for (int t = 0; t < extIdTypes.length; t++) {
+				if (!this.searchRefIdTypes.contains(extIdTypes[t]))
+					continue;
+				extId = query.getIdentifier(extIdTypes[t]);
+				if (extId == null)
+					continue;
+				extIdType = extIdTypes[t];
+				break;
+			}
 		}
 		
 		//	got something to search for?
@@ -4227,24 +4485,15 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		
 		//	perform search
 		Vector refs = new Vector();
-//		try {
-//			BibRefIterator brit = this.refBankClient.findRefs(null, author, title, ((year == null) ? -1 : Integer.parseInt(year)), origin, extId, extIdType, 0, false);
-//			while (brit.hasNextRef()) {
-//				BibRef ps = brit.getNextRef();
-//				String rs = ps.getRefParsed();
-//				if (rs == null)
-//					continue;
-//				try {
-//					refs.add(new RefDataListElement(BibRefUtils.modsXmlToRefData(SgmlDocumentReader.readDocument(new StringReader(rs)))));
-//				} catch (IOException ioe) { /* never gonna happen, but Java don't know ... */ }
-//			}
-//		} catch (IOException ioe) { /* let's not bother with exceptions for now, just return null ... */ }
 		Properties searchData = new Properties();
 		if ((extId != null) && (extIdType != null))
 			searchData.setProperty(("ID-" + extIdType), extId);
 		else {
-			if (author != null)
+			if (author != null) {
+				if (author.indexOf(',') != -1)
+					author = author.substring(0, author.indexOf(','));
 				searchData.setProperty(AUTHOR_ANNOTATION_TYPE, author);
+			}
 			if (year != null)
 				searchData.setProperty(YEAR_ANNOTATION_TYPE, year);
 			if (title != null)
@@ -4252,20 +4501,25 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			if (origin != null)
 				searchData.setProperty(JOURNAL_NAME_OR_PUBLISHER_ANNOTATION_TYPE, origin);
 		}
+		this.logInMasterConfiguration("Searching " + searchData);
 		for (int s = 0; s < this.refDataSources.length; s++) try {
 			RefData[] sRefs = this.refDataSources[s].findRefData(searchData);
-			for (int r = 0; r < sRefs.length; r++)
-				refs.add(new RefDataListElement(sRefs[r]));
+			if (sRefs == null)
+				continue;
+			for (int r = 0; r < sRefs.length; r++) {
+				if (sRefs[r] != null)
+					refs.add(new RefDataListElement(sRefs[r]));
+			}
 		} catch (IOException ioe) { /* let's not bother with exceptions for now, just ignore them ... */ }
 		
 		//	finally ...
 		return refs;
 	}
 	
-	private class RefDataList extends JDialog {
+	private static class RefDataList extends JDialog {
 		private JList refList;
 		RefData ref = new RefData();
-		RefDataList(JDialog owner, String title, final Vector refData) {
+		RefDataList(JDialog owner, String title, final Vector refData, final RefData queryData) {
 			super(owner, title, true);
 			
 			this.refList = new JList(refData);
@@ -4283,6 +4537,19 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 					dispose();
 				}
 			});
+			JButton details = new JButton("Details");
+			details.addActionListener(new ActionListener() {
+				public void actionPerformed(ActionEvent ae) {
+					int sri = refList.getSelectedIndex();
+					if (sri == -1)
+						return;
+					RefData dRef = selectRefDetails(((RefDataListElement) refData.get(sri)).ref, queryData);
+					if (dRef == null)
+						return;
+					ref = dRef;
+					dispose();
+				}
+			});
 			JButton cancel = new JButton("Cancel");
 			cancel.addActionListener(new ActionListener() {
 				public void actionPerformed(ActionEvent ae) {
@@ -4292,6 +4559,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 			
 			JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER), true);
 			buttonPanel.add(ok);
+			buttonPanel.add(details);
 			buttonPanel.add(cancel);
 			
 			this.getContentPane().setLayout(new BorderLayout());
@@ -4302,7 +4570,78 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		}
 	}
 	
-	private class RefDataListElement {
+	static RefData selectRefDetails(RefData ref, RefData query) {
+		JPanel sdp = new JPanel(new GridLayout(0, 1), true);
+		ArrayList useAttributeList = new ArrayList();
+		for (int n = 0; n < lookupTransferAttributeNames.length; n++)
+			if (ref.hasAttribute(lookupTransferAttributeNames[n])) {
+				UseRefDetailCheckbox useAttribute = new UseRefDetailCheckbox(lookupTransferAttributeNames[n], false, ref.getAttributeValueString(lookupTransferAttributeNames[n], " & "), query.getAttributeValueString(lookupTransferAttributeNames[n], " & "));
+				useAttributeList.add(useAttribute);
+				sdp.add(useAttribute);
+			}
+		UseRefDetailCheckbox[] useAttribute = ((UseRefDetailCheckbox[]) useAttributeList.toArray(new UseRefDetailCheckbox[useAttributeList.size()]));
+		String[] identifierTypes = ref.getIdentifierTypes();
+		UseRefDetailCheckbox[] useIdentifier = new UseRefDetailCheckbox[identifierTypes.length];
+		for (int t = 0; t < identifierTypes.length; t++) {
+			useIdentifier[t] = new UseRefDetailCheckbox(identifierTypes[t], true, ref.getIdentifier(identifierTypes[t]), query.getIdentifier(identifierTypes[t]));
+			sdp.add(useIdentifier[t]);
+		}
+		int choice = DialogFactory.confirm(sdp, "Select Reference Details To Use", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+		if (choice != JOptionPane.OK_OPTION)
+			return null;
+		
+		RefData dRef = new RefData();
+		dRef.setAttribute("selectedDetails", "true");
+		for (int a = 0; a < useAttribute.length; a++)
+			if (useAttribute[a].isSelected()) {
+				dRef.setAttribute(useAttribute[a].name, ref.getAttribute(useAttribute[a].name));
+				if (AUTHOR_ANNOTATION_TYPE.equals(useAttribute[a].name) || EDITOR_ANNOTATION_TYPE.equals(useAttribute[a].name)) {
+					String[] values = ref.getAttributeValues(useAttribute[a].name);
+					for (int v = 1; v < values.length; v++)
+						dRef.addAttribute(useAttribute[a].name, values[v]);
+				}
+			}
+		for (int i = 0; i < useIdentifier.length; i++) {
+			if (useIdentifier[i].isSelected())
+				dRef.setIdentifier(useIdentifier[i].name, ref.getIdentifier(useIdentifier[i].name));
+		}
+		return dRef;
+	}
+	
+	private static class UseRefDetailCheckbox extends JCheckBox {
+		final String name;
+		UseRefDetailCheckbox(String name, boolean isIdentifier, String resValue, String queryValue) {
+			super("", (queryValue == null));
+			this.name = name;
+			StringBuffer text = new StringBuffer("<HTML><B>");
+			if (isIdentifier) {
+				text.append(this.name);
+				text.append(" Identifier");
+			}
+			else for (int c = 0; c < this.name.length(); c++) {
+				char ch = this.name.charAt(c);
+				if (c == 0)
+					ch = Character.toUpperCase(ch);
+				else if (Character.isUpperCase(ch))
+					text.append(' ');
+				text.append(ch);
+			}
+			text.append(":</B> ");
+			text.append(AnnotationUtils.escapeForXml(resValue));
+			if (queryValue == null) {}
+			else if (resValue.equals(queryValue))
+				text.append(" <B>(identical to existing)</B>");
+			else {
+				text.append(" <B>(replacing</B> ");
+				text.append(AnnotationUtils.escapeForXml(queryValue));
+				text.append("<B>)</B>");
+			}
+			text.append("</HTML>");
+			this.setText(text.toString());
+		}
+	}
+	
+	private static class RefDataListElement {
 		final RefData ref;
 		final String displayString;
 		final String sourceString;
@@ -4424,6 +4763,7 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		
 		/* TODO make this less speculative:
 		 * - if we have a lastname prefix like 'de', 'van', 'von', split before the first one
+		 *   ==> consider Spanish names, though, which might have a prefix only before the second lastname !!!
 		 * - if we have partial all-caps, use it to identify lastnames (be careful about initials blocks, though)
 		 * 
 		 * - THINK OF FURTHER CRITERIA
@@ -4463,12 +4803,18 @@ ALSO, most likely create new version of Default.imagine configuration before fin
 		dmdep.setDataProvider(new PluginDataProviderFileBased(new File("E:/GoldenGATEv3/Plugins/DocumentMetaDataEditorData/")));
 		dmdep.init();
 		
+		BufferedReader dsBr = new BufferedReader(new InputStreamReader(new FileInputStream(new File("E:/GoldenGATEv3/Plugins/DocumentStyleManagerData/zootaxa.0000.journal_article.docStyle")), "UTF-8"));
+		DocumentStyle.Data dsData = DocumentStyle.readDocumentStyleData(dsBr);
+		dsBr.close();
+		final DocumentStyle docStyle = new ImDocumentStyle(dsData);
 		DocumentStyle.addProvider(new DocumentStyle.Provider() {
-			public Properties getStyleFor(Attributed doc) {
+			public DocumentStyle getStyleFor(Attributed doc) {
 //				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleManagerData/zootaxa.2007.journal_article.docStyle"));
-				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleManagerData/zootaxa.0000.journal_article.docStyle"));
-				return ds.toProperties();
+//				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleManagerData/zootaxa.0000.journal_article.docStyle"));
+//				return new SettingsDocumentStyle(ds);
+				return docStyle;
 			}
+			public void documentStyleAssigned(DocumentStyle docStyle, Attributed doc) {}
 		});
 		
 		dmdep.metaDataAdder.process(doc, null, null, ProgressMonitor.dummy);

@@ -35,12 +35,10 @@ import java.awt.event.ActionListener;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -80,9 +78,9 @@ import de.uka.ipd.idaho.stringUtils.StringUtils;
  * @author sautter
  */
 public class TextStreamActionProvider extends AbstractSelectionActionProvider implements ImageMarkupToolProvider {
-	private static final String WORD_JOINER_IMT_NAME = "WordJoiner";
-	private static final String WORD_SPLITTER_IMT_NAME = "WordSplitter";
-	private static final String TEXT_FLOW_BREAK_CHECKER_IMT_NAME = "TextFlowBreakChecker";
+	private static final String WORD_JOINER_IMT_NAME = "JoinWords";
+	private static final String WORD_SPLITTER_IMT_NAME = "SplitWords";
+	private static final String TEXT_FLOW_BREAK_CHECKER_IMT_NAME = "CheckTextFlowBreaks";
 	
 	private ImageMarkupTool wordJoiner = new WordJoiner();
 	private ImageMarkupTool wordSplitter = new WordSplitter();
@@ -132,9 +130,8 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 							final JMenuItem smi = new JRadioButtonMenuItem("Separate Word", (start.getNextRelation() == ImWord.NEXT_RELATION_SEPARATE));
 							smi.addActionListener(new ActionListener() {
 								public void actionPerformed(ActionEvent ae) {
-									if (smi.isSelected()) {
+									if (smi.isSelected())
 										setNextRelation(ImWord.NEXT_RELATION_SEPARATE, invoker);
-									}
 								}
 							});
 							pm.add(smi);
@@ -472,7 +469,6 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 				});
 			actions.add(new TwoClickSelectionAction("streamMergeBackward", "Click Predeccessor", "Mark words, and set its predeccessor by clicking another word") {
 				public boolean performAction(ImWord secondWord) {
-//					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && ((secondWord.pageId > start.pageId) || ((secondWord.pageId == start.pageId) && (secondWord.getTextStreamPos() >= start.getTextStreamPos())))) {
 					if (start.getTextStreamId().equals(secondWord.getTextStreamId()) && (secondWord.getTextStreamPos() >= start.getTextStreamPos())) {
 						DialogFactory.alert(("'" + secondWord.getString() + "' cannot be the predecessor of '" + start.getString() + "'\nThey belong to the same logical text stream,\nand '" + start.getString() + "' is a treansitive predecessor of '" + secondWord.getString() + "'"), "Cannot Set Predecessor", JOptionPane.ERROR_MESSAGE);
 						return false;
@@ -484,7 +480,10 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 						return true;
 					}
 				}
-				public ImWord getFirstWord() {
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return false;
+				}
+				public ImRegion getFirstRegion() {
 					return start;
 				}
 				public String getActiveLabel() {
@@ -505,9 +504,15 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 						return true;
 					}
 				}
-				public ImWord getFirstWord() {
+				public boolean performAction(ImPage secondPage, Point secondPoint) {
+					return false;
+				}
+				public ImRegion getFirstRegion() {
 					return start;
 				}
+//				public ImWord getFirstWord() {
+//					return start;
+//				}
 				public String getActiveLabel() {
 					return ("Click successor of '" + start.getString() + "'");
 				}
@@ -695,6 +700,78 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 					return pm;
 				}
 			});
+			if ((start.pageId == end.pageId) && ((end.getTextStreamPos() - start.getTextStreamPos()) < 16))
+				actions.add(new SelectionAction("textDirectionWords", "Set Text Direction", "Adjust the text direction of the selected word" + ((start == end) ? "" : "s") + ".") {
+					public boolean performAction(ImDocumentMarkupPanel invoker) {
+						return false;
+					}
+					public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+						CountingSet wordDirections = new CountingSet();
+						for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+							wordDirections.add((String) imw.getAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, ImRegion.TEXT_DIRECTION_LEFT_RIGHT));
+							if (imw == end)
+								break;
+						}
+						String wordDirection = ((String) wordDirections.max());
+						JMenu pm = new JMenu("Set Text Direction");
+						ButtonGroup bg = new ButtonGroup();
+						final JMenuItem lrmi = new JRadioButtonMenuItem("Left-Right", ImRegion.TEXT_DIRECTION_LEFT_RIGHT.equals(wordDirection));
+						lrmi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (lrmi.isSelected())
+									setTextDirection(ImRegion.TEXT_DIRECTION_LEFT_RIGHT, invoker);
+							}
+						});
+						pm.add(lrmi);
+						bg.add(lrmi);
+						final JMenuItem bumi = new JRadioButtonMenuItem("Bottom-Up", ImRegion.TEXT_DIRECTION_BOTTOM_UP.equals(wordDirection));
+						bumi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (bumi.isSelected())
+									setTextDirection(ImRegion.TEXT_DIRECTION_BOTTOM_UP, invoker);
+							}
+						});
+						pm.add(bumi);
+						bg.add(bumi);
+						final JMenuItem tdmi = new JRadioButtonMenuItem("Top-Down", ImRegion.TEXT_DIRECTION_TOP_DOWN.equals(wordDirection));
+						tdmi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (tdmi.isSelected())
+									setTextDirection(ImRegion.TEXT_DIRECTION_TOP_DOWN, invoker);
+							}
+						});
+						pm.add(tdmi);
+						bg.add(tdmi);
+						final JMenuItem udmi = new JRadioButtonMenuItem("Right-Left & Upside-Down", ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN.equals(wordDirection));
+						udmi.addActionListener(new ActionListener() {
+							public void actionPerformed(ActionEvent ae) {
+								if (udmi.isSelected())
+									setTextDirection(ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN, invoker);
+							}
+						});
+						pm.add(udmi);
+						bg.add(udmi);
+						pm.setToolTipText(this.tooltip);
+						return pm;
+					}
+					private void setTextDirection(String textDirection, ImDocumentMarkupPanel invoker) {
+						invoker.beginAtomicAction(this.label);
+						ImWord[] words = new ImWord[end.getTextStreamPos() + 1 - start.getTextStreamPos()];
+						for (ImWord imw = start; imw != null; imw = imw.getNextWord()) {
+							if (ImWord.TEXT_DIRECTION_LEFT_RIGHT.equals(textDirection))
+								imw.removeAttribute(ImWord.TEXT_DIRECTION_ATTRIBUTE);
+							else imw.setAttribute(ImWord.TEXT_DIRECTION_ATTRIBUTE, textDirection);
+							words[imw.getTextStreamPos() - start.getTextStreamPos()] = imw;
+							if (imw == end)
+								break;
+						}
+						if (start != end)
+							ImUtils.orderStream(words, textDirection);
+						invoker.endAtomicAction();
+						invoker.validate();
+						invoker.repaint();
+					}
+				});
 			actions.add(new SelectionAction("copyWordsTXT", "Copy Text", "Copy the selected words to the system clipboard.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					ImUtils.copy(new StringSelection(ImUtils.getString(start, end, false)));
@@ -913,58 +990,60 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		if (textDirections.size() > 1)
 			return false; // TODO figure out how to handle mixed orientations
 		String textDirection = (textDirections.isEmpty() ? ImWord.TEXT_DIRECTION_LEFT_RIGHT : ((String) textDirections.iterator().next()));
-		
-		//	the default case
-		if (ImWord.TEXT_DIRECTION_LEFT_RIGHT.equals(textDirection)) {
-			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-			return true;
-		}
-		
-		//	use proxy words flipped to left-right for other writing directions
-		ImWord[] lrWords = new ImWord[words.length];
-		HashMap lrWordsToWords = new HashMap();
-		for (int w = 0; w < words.length; w++) {
-			lrWords[w] = getLeftRightWord(words[w], textDirection, page);
-			lrWordsToWords.put(lrWords[w], words[w]);
-		}
-		
-		//	order proxy word stream
-		ImUtils.sortLeftRightTopDown(lrWords);
-		
-		//	collect argument words in sorted proxy order
-		for (int w = 0; w < lrWords.length; w++)
-			words[w] = ((ImWord) lrWordsToWords.get(lrWords[w]));
-		
-		//	order stream with inert comparator (we have our desired order already)
-		ImUtils.orderStream(words, inertOrder);
+		ImUtils.orderStream(words, textDirection);
 		return true;
+//		
+//		//	the default case
+//		if (ImWord.TEXT_DIRECTION_LEFT_RIGHT.equals(textDirection)) {
+//			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+//			return true;
+//		}
+//		
+//		//	use proxy words flipped to left-right for other writing directions
+//		ImWord[] lrWords = new ImWord[words.length];
+//		HashMap lrWordsToWords = new HashMap();
+//		for (int w = 0; w < words.length; w++) {
+//			lrWords[w] = getLeftRightWord(words[w], textDirection, page);
+//			lrWordsToWords.put(lrWords[w], words[w]);
+//		}
+//		
+//		//	order proxy word stream
+//		ImUtils.sortLeftRightTopDown(lrWords);
+//		
+//		//	collect argument words in sorted proxy order
+//		for (int w = 0; w < lrWords.length; w++)
+//			words[w] = ((ImWord) lrWordsToWords.get(lrWords[w]));
+//		
+//		//	order stream with inert comparator (we have our desired order already)
+//		ImUtils.orderStream(words, inertOrder);
+//		return true;
 	}
-	
-	private static ImWord getLeftRightWord(ImWord word, String textDirection, ImPage page) {
-		if (ImWord.TEXT_DIRECTION_BOTTOM_UP.equals(textDirection)) {
-			return new ImWord(page.getDocument(), page.pageId, new BoundingBox(
-				(page.bounds.bottom - word.bounds.bottom),
-				(page.bounds.bottom - word.bounds.top),
-				word.bounds.left,
-				word.bounds.right
-			), word.getString());
-		}
-		else if (ImWord.TEXT_DIRECTION_TOP_DOWN.equals(textDirection)) {
-			return new ImWord(page.getDocument(), page.pageId, new BoundingBox(
-				word.bounds.top,
-				word.bounds.bottom,
-				(page.bounds.right - word.bounds.right),
-				(page.bounds.right - word.bounds.left)
-			), word.getString());
-		}
-		else return word; // never gonna happen, but Java don't know
-	}
-	
-	private static final Comparator inertOrder = new Comparator() {
-		public int compare(Object obj1, Object obj2) {
-			return 0;
-		}
-	};
+//	
+//	private static ImWord getLeftRightWord(ImWord word, String textDirection, ImPage page) {
+//		if (ImWord.TEXT_DIRECTION_BOTTOM_UP.equals(textDirection)) {
+//			return new ImWord(page.getDocument(), page.pageId, new BoundingBox(
+//				(page.bounds.bottom - word.bounds.bottom),
+//				(page.bounds.bottom - word.bounds.top),
+//				word.bounds.left,
+//				word.bounds.right
+//			), word.getString());
+//		}
+//		else if (ImWord.TEXT_DIRECTION_TOP_DOWN.equals(textDirection)) {
+//			return new ImWord(page.getDocument(), page.pageId, new BoundingBox(
+//				word.bounds.top,
+//				word.bounds.bottom,
+//				(page.bounds.right - word.bounds.right),
+//				(page.bounds.right - word.bounds.left)
+//			), word.getString());
+//		}
+//		else return word; // never gonna happen, but Java don't know
+//	}
+//	
+//	private static final Comparator inertOrder = new Comparator() {
+//		public int compare(Object obj1, Object obj2) {
+//			return 0;
+//		}
+//	};
 	
 	/* (non-Javadoc)
 	 * @see de.uka.ipd.idaho.im.imagine.plugins.ImageMarkupToolProvider#getEditMenuItemNames()
@@ -1657,7 +1736,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
-	private static ImWord[] performWordJoins(ImWord[] words, int minWordGap, Tokenizer tokenizer, Set dictionary) {
+	private static ImWord[] performWordJoins(ImWord[] words, int minWordGap, Tokenizer tokenizer, TreeSet dictionary) {
 		StringBuffer wStr = new StringBuffer(words[0].getString());
 		ArrayList wStrCharWords = new ArrayList();
 		for (int c = 0; c < words[0].getString().length(); c++)
@@ -2370,7 +2449,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		}
 	}
 	
-	private static void checkTextFlowBreaks(ImWord[] textStreamHeads, Tokenizer tokenizer, ProgressMonitor pm) {
+	static void checkTextFlowBreaks(ImWord[] textStreamHeads, Tokenizer tokenizer, ProgressMonitor pm) {
 		
 		//	collect all document words to form lookup list, and count them out along the way
 		TreeSet docWords = new TreeSet(String.CASE_INSENSITIVE_ORDER);
@@ -2397,12 +2476,17 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 			//	process text stream
 			for (ImWord imw = textStreamHeads[h]; imw != null; imw = imw.getNextWord()) {
 				docWordCount++;
+				if (imw.getPreviousRelation() == ImWord.NEXT_RELATION_CONTINUE)
+					continue; // no use indexing suffix of multi-part word
+				if (imw.getPreviousRelation() == ImWord.NEXT_RELATION_HYPHENATED)
+					continue; // no use indexing suffix of multi-part word
 				
 				//	check and index word
 				String imwStr = imw.getString();
 				if ((imwStr == null) || (imwStr.trim().length() == 0))
 					continue; // nothing to collect here
-				imwStr = StringUtils.normalizeString(imwStr).trim();
+//				imwStr = StringUtils.normalizeString(imwStr).trim();
+				imwStr = StringUtils.normalizeString(ImUtils.getStringFrom(imw)).trim();
 				if (imwStr.endsWith("-")) {
 					imw = imw.getNextWord(); // jump over successor as well, not a full word, either
 					if (imw == null)
@@ -2455,7 +2539,8 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 				
 				//	check for potentially missed hyphenation
 				if (imwStr.endsWith("-"))
-					checkForHyphenation(imw, imwStr, tokenizer, docWords, pm);
+//					checkForHyphenation(imw, imwStr, tokenizer, docWords, pm);
+					checkForHyphenationAndWrap(imw, imwStr, tokenizer, docWords, pm);
 				
 				//	also catch plain sentence continuations (two adjacent lower case words)
 				else if (imw.getNextRelation() == ImWord.NEXT_RELATION_PARAGRAPH_END)
@@ -2487,7 +2572,7 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		return sb.toString();
 	}
 	
-	private static void checkForHyphenation(ImWord imw, String imwStr, Tokenizer tokenizer, TreeSet docWords, ProgressMonitor pm) {
+	private static void checkForHyphenationAndWrap(ImWord imw, String imwStr, Tokenizer tokenizer, TreeSet docWords, ProgressMonitor pm) {
 		
 		//	check next word for potential continuation
 		ImWord nextImw = imw.getNextWord();
@@ -2497,8 +2582,8 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		if ((nextImwStr == null) || (nextImwStr.trim().length() == 0))
 			return;
 		nextImwStr = StringUtils.normalizeString(nextImwStr);
-		if (nextImwStr.charAt(0) == Character.toUpperCase(nextImwStr.charAt(0)))
-			return; // starting with capital letter, not a word continued
+//		if (nextImwStr.charAt(0) == Character.toUpperCase(nextImwStr.charAt(0)))
+//			return; // starting with capital letter, not a word continued
 		
 		//	attach any joined following words
 		ImWord endImw = findConnectedWordEnd(nextImw);
@@ -2519,21 +2604,59 @@ public class TextStreamActionProvider extends AbstractSelectionActionProvider im
 		//	do we have a word?
 		if (!Gamta.isWord(imwStr))
 			return;
+//		
+//		//	check result of both de-hyphenation and plain connection
+//		String fullStr = (imwStr.substring(0, (imwStr.length() - "-".length())) + nextImwStr);
+//		TokenSequence fullTokens = Gamta.newTokenSequence(fullStr, tokenizer);
+//		if (fullTokens.size() != 1)
+//			return;
+//		
+//		//	do we have a word occurring as a whole?
+//		if (!docWords.contains(fullStr))
+//			return;
+//		
+//		//	smooth out text stream
+//		for (ImWord smoothImw = startImw; smoothImw != endImw; smoothImw = smoothImw.getNextWord())
+//			smoothImw.setNextRelation((smoothImw == imw) ? ImWord.NEXT_RELATION_HYPHENATED : ImWord.NEXT_RELATION_CONTINUE);
+//		pm.setInfo("De-hyphenated " + imwStr + " and " + nextImwStr + " to " + fullStr + " at " + startImw.getLocalID() + " through " + endImw.getLocalID());
 		
-		//	check de-hyphenation result
-		String fullStr = (imwStr.substring(0, (imwStr.length() - "-".length())) + nextImwStr);
-		TokenSequence fullTokens = Gamta.newTokenSequence(fullStr, tokenizer);
-		if (fullTokens.size() != 1)
+		//	check for de-hyphenation first unless second parts with capital letter
+		if (nextImwStr.charAt(0) != Character.toUpperCase(nextImwStr.charAt(0))) {
+			if (checkAndDehyphenate(startImw, imwStr, startImw, nextImwStr, endImw, tokenizer, docWords, pm))
+				return;
+		}
+		
+		//	check for line broken word as well (double names, etc.)
+		checkAndConnect(startImw, imwStr, startImw, nextImwStr, endImw, tokenizer, docWords, pm);
+	}
+	
+	private static boolean checkAndDehyphenate(ImWord startImw, String imwStr, ImWord imw, String nextImwStr, ImWord endImw, Tokenizer tokenizer, TreeSet docWords, ProgressMonitor pm) {
+		String dhStr = (imwStr.substring(0, (imwStr.length() - "-".length())) + nextImwStr);
+		TokenSequence dhTokens = Gamta.newTokenSequence(dhStr, tokenizer);
+		if (dhTokens.size() != 1)
+			return false;
+		if (!docWords.contains(dhStr))
+			return false;
+		
+		//	smooth out text stream
+		for (ImWord smoothImw = startImw; smoothImw != endImw; smoothImw = smoothImw.getNextWord())
+			smoothImw.setNextRelation((smoothImw == imw) ? ImWord.NEXT_RELATION_HYPHENATED : ImWord.NEXT_RELATION_CONTINUE);
+		pm.setInfo("De-hyphenated " + imwStr + " and " + nextImwStr + " to " + dhStr + " at " + startImw.getLocalID() + " through " + endImw.getLocalID());
+		return true;
+	}
+	
+	private static void checkAndConnect(ImWord startImw, String imwStr, ImWord imw, String nextImwStr, ImWord endImw, Tokenizer tokenizer, TreeSet docWords, ProgressMonitor pm) {
+		String cStr = (imwStr + nextImwStr);
+		TokenSequence dhTokens = Gamta.newTokenSequence(cStr, tokenizer);
+		if (dhTokens.size() != 1)
 			return;
-		
-		//	do we have a word occurring as a whole?
-		if (!docWords.contains(fullStr))
+		if (!docWords.contains(cStr))
 			return;
 		
 		//	smooth out text stream
 		for (ImWord smoothImw = startImw; smoothImw != endImw; smoothImw = smoothImw.getNextWord())
 			smoothImw.setNextRelation((smoothImw == imw) ? ImWord.NEXT_RELATION_HYPHENATED : ImWord.NEXT_RELATION_CONTINUE);
-		pm.setInfo("De-hyphenated " + imwStr + " and " + nextImwStr + " to " + fullStr + " at " + startImw.getLocalID() + " through " + endImw.getLocalID());
+		pm.setInfo("Connected " + imwStr + " and " + nextImwStr + " to " + cStr + " at " + startImw.getLocalID() + " through " + endImw.getLocalID());
 	}
 	
 	private static void checkForSentenceContinuation(ImWord imw, String imwStr, Tokenizer tokenizer, ProgressMonitor pm) {

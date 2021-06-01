@@ -31,6 +31,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -51,6 +52,8 @@ import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.font.FontRenderContext;
 import java.awt.font.TextLayout;
 import java.awt.geom.AffineTransform;
@@ -66,13 +69,19 @@ import java.util.LinkedHashSet;
 import java.util.LinkedList;
 
 import javax.swing.BorderFactory;
+import javax.swing.ButtonGroup;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
+import javax.swing.JMenu;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JTextField;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.border.Border;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.AbstractDocument;
@@ -84,6 +93,7 @@ import de.uka.ipd.idaho.gamta.AnnotationUtils;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.TokenSequence;
 import de.uka.ipd.idaho.gamta.Tokenizer;
+import de.uka.ipd.idaho.gamta.util.CountingSet;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
 import de.uka.ipd.idaho.gamta.util.imaging.PageImage;
@@ -173,68 +183,6 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			else actions.add(new SelectionAction("wordsMark", "Mark Word", "Mark selected area as a word.") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					return markWord(page, selectedWords, selectedBox, idmp);
-//					
-//					//	get merged word, and offer editing
-//					ImWord mWord = getMergedWord(selectedWords, page, idmp.document);
-//					if (!idmp.editWord(mWord, true))
-//						return false;
-//					
-//					//	get tokenizer to check and split words with multiple tokens
-//					Tokenizer tokenizer = ((Tokenizer) idmp.document.getAttribute(ImDocument.TOKENIZER_ATTRIBUTE, Gamta.INNER_PUNCTUATION_TOKENIZER));
-//					ImWord[] mWords = tokenizeWord(mWord, tokenizer);
-//					
-//					//	remove words
-//					ImUtils.orderStream(selectedWords, ImUtils.leftRightTopDownOrder);
-//					Arrays.sort(selectedWords, ImUtils.textStreamOrder);
-//					
-//					//	remember start predecessor and end successor
-//					ImWord startPrev = selectedWords[0].getPreviousWord();
-//					ImWord endNext = selectedWords[selectedWords.length-1].getNextWord();
-//					
-//					//	remember any annotations starting or ending at any of the to-remove words
-//					ArrayList startingAnnots = new ArrayList(3);
-//					ArrayList endingAnnots = new ArrayList(3);
-//					for (int w = 0; w < selectedWords.length; w++) {
-//						ImAnnotation[] imwAnnots = idmp.document.getAnnotations(selectedWords[w]);
-//						for (int a = 0; a < imwAnnots.length; a++) {
-//							if (imwAnnots[a].getFirstWord() == selectedWords[w])
-//								startingAnnots.add(imwAnnots[a]);
-//							if (imwAnnots[a].getLastWord() == selectedWords[w])
-//								endingAnnots.add(imwAnnots[a]);
-//						}
-//					}
-//					
-//					//	connect previous and next words to preserve annotations
-//					if (startPrev != null)
-//						startPrev.setNextWord(endNext);
-//					else if (endNext != null)
-//						endNext.setPreviousWord(startPrev);
-//					
-//					//	cut merged words out of streams
-//					selectedWords[selectedWords.length-1].setNextWord(null);
-//					selectedWords[0].setPreviousWord(null);
-//					for (int w = 0; w < selectedWords.length; w++)
-//						selectedWords[0].setNextWord(null);
-//					
-//					//	integrate merged word in document
-//					for (int w = 0; w < mWords.length; w++) {
-//						page.addWord(mWords[w]);
-//						if (w == 0)
-//							mWords[w].setPreviousWord(startPrev);
-//						else mWords[w].setPreviousWord(mWords[w-1]);
-//					}
-//					mWords[mWords.length-1].setNextWord(endNext);
-//					for (int a = 0; a < startingAnnots.size(); a++)
-//						((ImAnnotation) startingAnnots.get(a)).setFirstWord(mWords[0]);
-//					for (int a = 0; a < endingAnnots.size(); a++)
-//						((ImAnnotation) endingAnnots.get(a)).setLastWord(mWords[mWords.length-1]);
-//					
-//					//	clean up merged words
-//					for (int w = 0; w < selectedWords.length; w++)
-//						page.removeWord(selectedWords[w], true);
-//					
-//					//	we _did_ change something, quite something
-//					return true;
 				}
 			});
 		}
@@ -335,6 +283,9 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 						for (int c = 0; c < startCharCodes.length(); c++)
 							 System.out.print(((c == 0) ? "" : " ") + Integer.toString(((int) startCharCodes.charAt(c)), 16));
 						System.out.println(")");
+						//	TODO keep char codes in HEX
+						//	TODO use (double) space to indicate UC transcript with more than one char
+						//	==> char codes can well transcribe to more than one char ... ligatures ('ffi', 'ffl', etc.) !!!
 					}
 					
 					//	compute split proportions and character code
@@ -1539,7 +1490,8 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 				minCtt = Math.min(minCtt, wey);
 				maxCtb = Math.max(maxCtb, (wey + weh));
 			}
-			return new Dimension((pi.left + (maxCtr - minCtl) + pi.right), (pi.top + (maxCtb - minCtt) + pi.bottom));
+			Dimension lfs = this.parent.lineField.getPreferredSize();
+			return new Dimension((pi.left + (maxCtr - minCtl) + pi.right), (pi.top + (maxCtb - minCtt) + lfs.height + pi.bottom));
 		}
 		public Dimension minimumLayoutSize(Container parent) {
 			return this.parent.getMinimumSize();
@@ -1554,7 +1506,6 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 				int wih = 0;
 				if (this.parent.wordImageTray != null) {
 					wih = ((this.parent.wordImage.getHeight() * renderingDpi) / this.parent.page.getImageDPI());
-					System.out.println("Aligning word image " + wih + " pixels high");
 					this.parent.wordImageTray.setBounds(pi.left, pi.top, ((this.parent.wordImage.getWidth() * renderingDpi) / this.parent.page.getImageDPI()), wih);
 				}
 				
@@ -1609,19 +1560,29 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 				else if ((tbx + tbw) > maxCtr)
 					tbx = (maxCtr + this.parent.toolBarSpacingRight - tbw);
 				this.parent.toolBar.setBounds(tbx, maxCtb, tbw, tbs.height);
+				
+				Dimension lfs = this.parent.lineField.getPreferredSize();
+				this.parent.lineField.setBounds(minCtl, (maxCtb + tbs.height), (maxCtr - minCtl), lfs.height);
 			}
 		}
 	}
+	
+	/*
+TODO Investigate misplacement of OCR line editor in scanned sub window:
+- seems to occur only if boundaries tight ...
+- ... and only in outmost lines at top and bottom
+==> might be X shift that should go Y direction ...  
+	 */
 	
 	private static class OcrLineEditor extends DisplayOverlay {
 		final ImDocumentMarkupPanel target;
 		ImWord[] result = null;
 		
-		ImPage page = null;;
+		ImPage page = null;
 		Tokenizer tokenizer;
 		
-		ImWord first = null;;
-		ImWord last = null;;
+		ImWord first = null;
+		ImWord last = null;
 		String textStreamType;
 		int baseline;
 		Color textStreamColor;
@@ -1629,10 +1590,11 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 		WordEditTools toolBar;
 		SymbolTable symbolTable;
 		
-		OcrWordEditor selWord = null;
-		ArrayList words = new ArrayList();
 		BufferedImage wordImage = null;
 		JPanel wordImageTray = null;
+		
+		OcrWordEditor selWord = null;
+		ArrayList words = new ArrayList();
 		Font wordFont = Font.getFont("Serif");
 		int wordLeft;
 		int wordRight;
@@ -1643,6 +1605,9 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 		int toolBarSpacingRight = 0;
 		Color wordBackground;
 		int layoutRenderingDpi = -1;
+		
+		JTextField lineField = new JTextField();
+		Font lineFont = Font.getFont("Monospaced");
 		
 		//	normal editing mode (with navigation and everything)
 		OcrLineEditor(ImDocumentMarkupPanel target, ImPage page, ImWord first, ImWord last, ImWord sel) {
@@ -1656,6 +1621,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			this.target = target;
 			this.textStreamColor = textStreamColor;
 			this.setLayout(new OcrLineEditorLayout(this));
+			this.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
 			Color bgc = this.getBackground();
 			this.wordBackground = new Color(
 					(255 - ((255 - bgc.getRed()) / 2)),
@@ -1664,6 +1630,15 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 				);
 			this.toolBar = new WordEditTools(this);
 			this.tokenizer = tokenizer;
+			this.lineField.setEditable(false);
+			this.lineField.setBackground(this.wordBackground);
+			this.lineField.setHorizontalAlignment(SwingConstants.CENTER);
+			this.lineField.addMouseListener(new MouseAdapter() {
+				public void mouseClicked(MouseEvent me) {
+					int pos = lineField.viewToModel(me.getPoint());
+					selectWordAt(pos);
+				}
+			});
 			if (this.target != null)
 				this.wordImageTray = new JPanel(true) {
 					public void paint(Graphics gr) {
@@ -1759,12 +1734,18 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			this.wordTop = top;
 			this.wordBottom = bottom;
 			this.baseline = ((baselineCount == 0) ? -1 : ((baselineSum + (baselineCount / 2)) / baselineCount));
-			this.add(this.toolBar);
+			
 			if (this.wordImageTray != null) {
 				BoundingBox wordsBox = adjustImageBounds(this.page, new BoundingBox(this.wordLeft, this.wordRight, this.wordTop, this.wordBottom), true);
 				this.wordImage = this.page.getPageImage().image.getSubimage(wordsBox.left, wordsBox.top, wordsBox.getWidth(), wordsBox.getHeight());
 				this.add(this.wordImageTray);
 			}
+			
+			this.updateLineText();
+			this.add(this.lineField);
+			
+			this.add(this.toolBar);
+			
 			this.selectWord(selWe, selFromPrev, selFromNext, selCaretPos); // select first word (also adds all the other word editors, validates, and repaints)
 			
 			//	make sure we have the appropriate size and position
@@ -1776,8 +1757,95 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			}
 		}
 		
+		void updateLineText() {
+			StringBuffer lineText = new StringBuffer();
+			boolean addSpaceBefore = false;
+			for (int w = 0; w < this.words.size(); w++) {
+				OcrWordEditor we = ((OcrWordEditor) this.words.get(w));
+				if (addSpaceBefore)
+					lineText.append(" ");
+				lineText.append(we.getText());
+				addSpaceBefore = we.spaceAfter;
+			}
+			this.lineField.setText(lineText.toString());
+			if (this.layoutRenderingDpi != -1)
+				this.updateLineTextFont(this.layoutRenderingDpi);
+		}
+		
+		private void updateLineTextFont(int renderingDpi) {
+			int lfTextWidth = (((this.wordRight - this.wordLeft) * renderingDpi) / this.page.getImageDPI());
+			Border lfBorder = this.lineField.getBorder();
+			Insets lfBorderInsets = ((lfBorder == null) ? null : lfBorder.getBorderInsets(this.lineField));
+			if (lfBorderInsets == null) {
+				Insets lfInsets = this.lineField.getInsets();
+				if (lfInsets != null) {
+//					System.out.println("Insets is " + lfInsets);
+					lfTextWidth -= lfInsets.left;
+					lfTextWidth -= lfInsets.right;
+				}
+				Insets lfMargin = this.lineField.getMargin();
+				if (lfMargin != null) {
+//					System.out.println("Margin is " + lfMargin);
+					lfTextWidth -= lfMargin.left;
+					lfTextWidth -= lfMargin.right;
+				}
+			}
+			else /* border insets apparently aggregate component insets and margin */ {
+//				System.out.println("Border insets is " + lfBorderInsets);
+				lfTextWidth -= lfBorderInsets.left;
+				lfTextWidth -= lfBorderInsets.right;
+			}
+			Graphics2D g = getHelperGraphics();
+			Font lf = ((this.lineFont == null) ? new Font("Monospaced", Font.PLAIN, 12) : this.lineFont);
+			int lfs = lf.getSize(); // TODO_NOT use float and adjust to 0.01 or so ==> no use, Font rounds to integer internally
+			Font tlf = lf;
+			TextLayout ltl = new TextLayout(this.lineField.getText(), tlf, g.getFontRenderContext());
+			while (ltl.getBounds().getWidth() < lfTextWidth) {
+				lfs++;
+				tlf = lf.deriveFont((float) lfs);
+				ltl = new TextLayout(this.lineField.getText(), tlf, g.getFontRenderContext());
+			}
+			while (ltl.getBounds().getWidth() > lfTextWidth) {
+				lfs--;
+				tlf = lf.deriveFont((float) lfs);
+				ltl = new TextLayout(this.lineField.getText(), tlf, g.getFontRenderContext());
+			}
+			this.lineField.setFont(tlf);
+			this.lineField.validate();
+			this.lineField.repaint();
+		}
+		
+		void selectWordAt(int linePos) {
+			int weStartPos = 0;
+			OcrWordEditor prevWe = null;
+			for (int w = 0; w < this.words.size(); w++) {
+				OcrWordEditor we = ((OcrWordEditor) this.words.get(w));
+				if ((prevWe != null) && prevWe.spaceAfter)
+					weStartPos++;
+				int weLength = we.getText().length();
+				if ((linePos < weStartPos) && (prevWe != null)) /* click in space after word */ {
+					int prefCaretPos = prevWe.getText().length();
+					boolean requestFocus = (this.selWord == prevWe); // need request focus if selected word unchanged
+					this.selectWord(prevWe, false, false, prefCaretPos);
+					if (requestFocus && (this.selWord != null))
+						this.selWord.requestFocusInWindow();
+					return;
+				}
+				if ((linePos < (weStartPos + weLength)) || (we.spaceAfter && (linePos == (weStartPos + weLength)))) /* click inside word */ {
+					int prefCaretPos = Math.max(0, (linePos - weStartPos));
+					boolean requestFocus = (this.selWord == we); // need request focus if selected word unchanged
+					this.selectWord(we, false, false, prefCaretPos);
+					if (requestFocus && (this.selWord != null))
+						this.selWord.requestFocusInWindow();
+					return;
+				}
+				weStartPos += weLength;
+				prevWe = we;
+			}
+		}
+		
 		private boolean selectingWord = false;
-		void selectWord(final OcrWordEditor selWe, boolean selFromPrev, boolean selFromNext, int prefCaretPos) {
+		void selectWord(OcrWordEditor selWe, boolean selFromPrev, boolean selFromNext, int prefCaretPos) {
 			if (this.selectingWord)
 				return; // most likely called as result of inherent (and undesired) focus traversal resulting from removing and re-adding all word editors when selecting one (to get latter on top)
 			boolean unlockImmediately = true;
@@ -1790,17 +1858,21 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 					this.selectingWord = false;
 			}
 		}
-		private boolean doSelectWord(final OcrWordEditor selWe, boolean selFromPrev, boolean selFromNext, int prefCaretPos) {
+		private boolean doSelectWord(OcrWordEditor selWe, boolean selFromPrev, boolean selFromNext, int prefCaretPos) {
 //			System.out.println("SELECTING WORD " + ((selWe == null) ? "null" : selWe.getText()));
 //			(new Exception()).printStackTrace(System.out);
-			if (selWe == this.selWord)
+			if (selWe == this.selWord) {
+				if ((this.selWord != null) && (prefCaretPos != -1))
+					this.selWord.setCaretPosition(prefCaretPos);
 				return true;
+			}
 			
 			this.toolBar.setTarget(null, -1);
 			this.removeAll(); // need to do it this way to prevent auto-focusing some remaining text field when removing selected one to get it to end (and thus on top in painting)
-			this.add(this.toolBar);
 			if (this.wordImageTray != null)
 				this.add(this.wordImageTray);
+			this.add(this.lineField);
+			this.add(this.toolBar); // make sure to keep toolbar on top
 			
 			this.nonZoomContentInsets.left = 0;
 			this.nonZoomContentInsets.right = 0;
@@ -1862,31 +1934,32 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			if ((renderingDpi == -1) || (this.layoutRenderingDpi == renderingDpi))
 				return;
 			
-			//	compute layout height
-			int rLineHeight = (((this.wordBottom - this.wordTop) * renderingDpi) / this.page.getImageDPI());
+			//	compute layout dimensions
+			int renderLineWidth = (((this.wordRight - this.wordLeft) * renderingDpi) / this.page.getImageDPI());
+			int renderLineHeight = (((this.wordBottom - this.wordTop) * renderingDpi) / this.page.getImageDPI());
 //			System.out.println(" - rendering line height is " + rLineHeight);
 			
 			//	compute and adjust font size if required
 			Graphics2D g = getHelperGraphics();
 			Font wf = ((this.wordFont == null) ? new Font("Serif", Font.PLAIN, 12) : this.wordFont);
-			int tfs = wf.getSize();
-			Font tf = wf;
-			TextLayout tl = new TextLayout("HgTq", tf, g.getFontRenderContext());
-			while (tl.getBounds().getHeight() < rLineHeight) {
-				tfs++;
-				tf = wf.deriveFont((float) tfs);
-				tl = new TextLayout("HgTq", tf, g.getFontRenderContext());
+			int wfs = wf.getSize();
+			Font twf = wf;
+			TextLayout wtl = new TextLayout("HgTq", twf, g.getFontRenderContext());
+			while (wtl.getBounds().getHeight() < renderLineHeight) {
+				wfs++;
+				twf = wf.deriveFont((float) wfs);
+				wtl = new TextLayout("HgTq", twf, g.getFontRenderContext());
 			}
-			while (tl.getBounds().getHeight() > rLineHeight) {
-				tfs--;
-				tf = wf.deriveFont((float) tfs);
-				tl = new TextLayout("HgTq", tf, g.getFontRenderContext());
+			while (wtl.getBounds().getHeight() > renderLineHeight) {
+				wfs--;
+				twf = wf.deriveFont((float) wfs);
+				wtl = new TextLayout("HgTq", twf, g.getFontRenderContext());
 			}
 //			System.out.println("Font size adjusted to " + tfs);
-			this.wordFont = tf;
+			this.wordFont = twf;
 			int renderFontHeight = g.getFontMetrics(this.wordFont).getHeight();
 //			System.out.println(" - rendering font height is " + renderFontHeight);
-			TextLayout mtl = new TextLayout("n", tf, g.getFontRenderContext()); // lower case n appears to be good approximation ...
+			TextLayout mtl = new TextLayout("n", twf, g.getFontRenderContext()); // lower case n appears to be good approximation ...
 			int renderMinWidth = ((int) Math.ceil(mtl.getBounds().getWidth()));
 //			System.out.println(" - rendering n width is " + renderMinWidth);
 			g.dispose();
@@ -1895,6 +1968,27 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			int inPageMinWidth = ((renderMinWidth * this.page.getImageDPI()) / renderingDpi);
 //			System.out.println(" - page n width is " + inPageMinWidth);
 			this.layoutRenderingDpi = renderingDpi;
+			
+			//	compute fixed boundary height of line text field
+			Border lfBorder = this.lineField.getBorder();
+			Insets lfBorderInsets = ((lfBorder == null) ? null : lfBorder.getBorderInsets(this.lineField));
+			int lineFieldBourderHeight = 0;
+			if (lfBorderInsets == null) {
+				Insets lfInsets = this.lineField.getInsets();
+				if (lfInsets != null) {
+					lineFieldBourderHeight += lfInsets.top;
+					lineFieldBourderHeight += lfInsets.bottom;
+				}
+				Insets lfMargin = this.lineField.getMargin();
+				if (lfMargin != null) {
+					lineFieldBourderHeight += lfMargin.top;
+					lineFieldBourderHeight += lfMargin.bottom;
+				}
+			}
+			else /* border insets apparently aggregate component insets and margin */ {
+				lineFieldBourderHeight += lfBorderInsets.top;
+				lineFieldBourderHeight += lfBorderInsets.bottom;
+			}
 			
 			//	update individual word editors
 			this.toolBarSpacingLeft = 0; // we need the pure word layout to correctly ...
@@ -1910,16 +2004,17 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			}
 			for (int w = 0; w < this.words.size(); w++)
 				((OcrWordEditor) this.words.get(w)).update(this.wordFont, inPageFontHeight, inPageMinWidth);
-			//	TODO fix to _top_ of current line instead in order to to paint over normal display with undisturbed page image
-			//	TODO add height of zoomed line image to overall height
-//			this.adjustSizeAndPosition(this.wordLeft, this.wordBottom, (this.wordRight - this.wordLeft), inPageFontHeight);
-			this.adjustSizeAndPosition(this.wordLeft, this.wordTop, (this.wordRight - this.wordLeft), (((this.wordImage == null) ? 0 : (this.wordImage.getHeight() + 2)) + inPageFontHeight));
+			this.adjustSizeAndPosition(this.wordLeft, this.wordTop, (this.wordRight - this.wordLeft), (((this.wordImage == null) ? 0 : (this.wordImage.getHeight() + 2)) + inPageFontHeight + 2 + (inPageFontHeight + lineFieldBourderHeight)));
 //			if (this.selWord != null) // CANNOT DO THIS ... only helps with focus, but not other settings (display control, etc., so NO GOOD)
 //				SwingUtilities.invokeLater(new Runnable() {
 //					public void run() {
 //						selWord.requestFocusInWindow();
 //					}
 //				});
+			
+			//	update line text display
+			this.lineField.setPreferredSize(new Dimension(renderLineWidth, (renderFontHeight + lineFieldBourderHeight)));
+			this.updateLineTextFont(renderingDpi);
 		}
 		
 		public Insets getInsets() {
@@ -2589,7 +2684,6 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			}
 			
 			//	replace argument word editors with merged word editor
-//			for (int w = (first.textStreamPos - this.first.getTextStreamPos()); w < this.words.size(); w++) {
 			for (int w = 0; w < this.words.size(); w++) {
 				OcrWordEditor we = ((OcrWordEditor) this.words.get(w));
 				if (we == first)
@@ -2604,6 +2698,9 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			if (forCommit)
 				return true;
 			
+			//	update line text
+			this.updateLineText();
+			
 			//	re-compute layout and update font to get merged word integrated
 			if (this.layoutRenderingDpi != -1) {
 				int layoutRenderingDpi = this.layoutRenderingDpi;
@@ -2616,50 +2713,10 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			return true;
 		}
 		
-		void splitWord(OcrWordEditor word, boolean spaceSplit) {
+		boolean splitWord(OcrWordEditor word, boolean spaceSplit) {
 			TokenSequence wordTokens = this.tokenizer.tokenize(word.getText());
 			if (wordTokens.size() < 2)
-				return;
-//			
-//			//	get width for each token at word font size
-//			//	TODOne centralize this
-//			Graphics2D g = getHelperGraphics();
-//			String[] splitTokens = new String[wordTokens.size()];
-//			boolean[] spaceAfterSplitToken = new boolean[wordTokens.size()];
-//			float[] splitTokenWidths = new float[wordTokens.size()];
-//			float splitTokenWidthSum = 0;
-//			int spaceCount = 0;
-//			for (int s = 0; s < splitTokens.length; s++) {
-//				splitTokens[s] = wordTokens.valueAt(s);
-//				spaceAfterSplitToken[s] = (((s+1) == splitTokens.length) ? word.spaceAfter : (wordTokens.getWhitespaceAfter(s).length() != 0));
-//				TextLayout tl = new TextLayout(splitTokens[s], this.wordFont, g.getFontRenderContext());
-//				splitTokenWidths[s] = ((float) tl.getBounds().getWidth());
-//				splitTokenWidthSum += splitTokenWidths[s];
-//				if (spaceAfterSplitToken[s])
-//					spaceCount++;
-//			}
-//			TextLayout tl = new TextLayout(word.getText(), this.wordFont, g.getFontRenderContext());
-//			float wordTokenSequenceWidth = ((float) tl.getBounds().getWidth());
-//			float spaceWidth = ((spaceCount == 0) ? 0 : ((wordTokenSequenceWidth - splitTokenWidthSum) / spaceCount));
-//			
-//			//	compute bounding boxes for split result
-//			//	TODOne centralize this
-//			BoundingBox[] splitBoxes = new BoundingBox[splitTokens.length];
-//			int splitTokenStart = word.bounds.left;
-//			for (int s = 0; s < splitTokens.length; s++) {
-//				int splitTokenWidth = Math.round((word.bounds.getWidth() * splitTokenWidths[s]) / wordTokenSequenceWidth);
-//				boolean cutLeft = ((s != 0) && (splitTokenWidths[s-1] < splitTokenWidths[s]));
-//				boolean cutRight = (((s + 1) != splitTokens.length) && (splitTokenWidths[s+1] < splitTokenWidths[s]));
-//				splitBoxes[s] = new BoundingBox(
-//						(splitTokenStart + (cutLeft ? 1 : 0)),
-//						(((s + 1) == splitTokens.length) ? word.bounds.right : Math.min((splitTokenStart + splitTokenWidth - (cutRight ? 1 : 0)), word.bounds.right)),
-//						word.bounds.top,
-//						word.bounds.bottom
-//					);
-//				splitTokenStart += splitTokenWidth;
-//				if (((s+1) < splitTokens.length) && (wordTokens.getWhitespaceAfter(s).length() != 0))
-//					splitTokenStart += Math.round((word.bounds.getWidth() * spaceWidth) / wordTokenSequenceWidth);
-//			}
+				return false;
 			
 			//	compute proportional split result
 			TokenWord[] splitWords = tokenizeWord(word.getText(), word.bounds, wordTokens, this.wordFont);
@@ -2669,7 +2726,6 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			OcrWordEditor last = null;
 			
 			//	if split result about corresponds to parents of argument word, we might want to revert a merger (re-distributes ancestor words)
-//			if ((word.parents != null) && (word.parents.length == splitBoxes.length) && (spaceSplit ? (word.parents[0].spaceAfter == spaceAfterSplitToken[0]) : true)) {
 			if ((word.parents != null) && (word.parents.length == splitWords.length) && (spaceSplit ? (word.parents[0].spaceAfter == splitWords[0].spaceAfter) : true)) {
 				boolean onlyChild = true;
 				int leftDistSum = 0;
@@ -2679,9 +2735,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 						onlyChild = false;
 						break;
 					}
-//					leftDistSum += Math.abs(word.parents[p].bounds.left - splitBoxes[p].left);
 					leftDistSum += Math.abs(word.parents[p].bounds.left - splitWords[p].bounds.left);
-//					widthDistSum += Math.abs(word.parents[p].bounds.getWidth() - splitBoxes[p].getWidth());
 					widthDistSum += Math.abs(word.parents[p].bounds.getWidth() - splitWords[p].bounds.getWidth());
 				}
 				//	TODO adjust thresholds
@@ -2704,16 +2758,12 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			//	create actual split result
 			if ((first == null) && (last == null)) {
 				OcrWordEditor[] parents = {word};
-//				for (int s = 0; s < splitTokens.length; s++) {
 				for (int s = 0; s < splitWords.length; s++) {
-//					OcrWordEditor split = new OcrWordEditor(this, splitTokens[s], splitBoxes[s], this.wordFont, parents);
 					OcrWordEditor split = new OcrWordEditor(this, splitWords[s].string, splitWords[s].bounds, this.wordFont, parents);
 					split.bold = word.bold;
 					split.italics = word.italics;
 					split.fontSize = word.fontSize;
-//					split.nextRelation = (((s+1) == splitTokens.length) ? word.nextRelation : ImWord.NEXT_RELATION_SEPARATE);
 					split.nextRelation = (((s+1) == splitWords.length) ? word.nextRelation : ImWord.NEXT_RELATION_SEPARATE);
-//					split.spaceAfter = (((s+1) == splitTokens.length) ? word.spaceAfter : spaceAfterSplitToken[s]);
 					split.spaceAfter = (((s+1) == splitWords.length) ? word.spaceAfter : splitWords[s].spaceAfter);
 					
 					if (first == null) {
@@ -2742,7 +2792,6 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			}
 			
 			//	replace argument word editor with split word editors
-//			for (int w = (first.textStreamPos - this.first.getTextStreamPos()); w < this.words.size(); w++) {
 			for (int w = 0; w < this.words.size(); w++) {
 				OcrWordEditor we = ((OcrWordEditor) this.words.get(w));
 				if (we == word) {
@@ -2756,6 +2805,9 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 				}
 			}
 			
+			//	update line text
+			this.updateLineText();
+			
 			//	re-compute layout and update font to get merged word integrated
 			if (this.layoutRenderingDpi != -1) {
 				int layoutRenderingDpi = this.layoutRenderingDpi;
@@ -2765,6 +2817,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			
 			//	select start of last split result word (where caret would be in word processor after hitting space or inserting something else incurring a split)
 			this.selectWord(last, false, false, 0);
+			return true;
 		}
 	}
 	
@@ -2838,7 +2891,7 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 				else {
 					int wordDist = (next.bounds.left - word.bounds.right);
 					int wordHeight = Math.max(word.bounds.getHeight(), next.bounds.getHeight());
-					this.spaceAfter= ((wordHeight * 4) <= (wordDist * 20)); // 20% should be OK as an estimate lower bound, and with some safety margin (0.25 is smallest defaulting space width in born-digital text, and scanned text tends to be spaced more lavishly)
+					this.spaceAfter = ((wordHeight * 4) <= (wordDist * 20)); // 20% should be OK as an estimate lower bound, and with some safety margin (0.25 is smallest defaulting space width in born-digital text, and scanned text tends to be spaced more lavishly)
 				}
 			}
 			
@@ -2960,9 +3013,12 @@ public class WordActionProvider extends AbstractSelectionActionProvider implemen
 			catch (BadLocationException ble) {
 				space = false;
 			}
-			this.parent.splitWord(this, space);
+			if (this.parent.splitWord(this, space))
+				return;
+			this.parent.updateLineText();
 		}
 		public void removeUpdate(DocumentEvent de) {
+			this.parent.updateLineText();
 			//	TODO_NOT remove word altogether if text empty ==> since we cannot properly _insert_ we cannot afford losing bounding box, so we do this only on commit (if string is empty then)
 		}
 		public void changedUpdate(DocumentEvent de) {}

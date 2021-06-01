@@ -64,21 +64,20 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.WindowConstants;
 
-import de.uka.ipd.idaho.easyIO.settings.Settings;
-import de.uka.ipd.idaho.gamta.Attributed;
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.TokenSequence;
 import de.uka.ipd.idaho.gamta.Tokenizer;
 import de.uka.ipd.idaho.gamta.util.CountingSet;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.ParameterDescription;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.ParameterGroupDescription;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.PropertiesData;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.TestableElement;
 import de.uka.ipd.idaho.gamta.util.ParallelJobRunner;
 import de.uka.ipd.idaho.gamta.util.ParallelJobRunner.ParallelFor;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor.SynchronizedProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterDescription;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.ParameterGroupDescription;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle.TestableElement;
 import de.uka.ipd.idaho.gamta.util.imaging.ImagingConstants;
 import de.uka.ipd.idaho.goldenGate.plugins.PluginDataProviderFileBased;
 import de.uka.ipd.idaho.goldenGate.util.DialogPanel;
@@ -115,6 +114,7 @@ import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtension;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.DisplayExtensionGraphics;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
+import de.uka.ipd.idaho.im.util.ImDocumentStyle;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.stringUtils.StringUtils;
 import de.uka.ipd.idaho.stringUtils.StringVector;
@@ -373,6 +373,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		pgd.setParamDescription("startPatterns", "One or more patterns matching the start of any kind of captions, right up to the figure number; to be used alternatively to the four patterns dedicated to figures, tables, and plates and their parts.");
 		pgd.setParamLabel("tableStartPatterns", "Table Caption Start Patterns");
 		pgd.setParamDescription("tableStartPatterns", "One or more patterns matching the start of table captions, right up to the figure number.");
+		pgd.setParamLabel("continuationPatterns", "Continuation Patterns");
+		pgd.setParamDescription("continuationPatterns", "One or more patterns matching captions that belong to continuations of tables or figures.");
 		DocumentStyle.addParameterGroupDescription(pgd);
 		
 		//	footnotes
@@ -589,6 +591,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			pgd.setParamDescription("startPatterns", ("One or more regular expression patterns matching the starts of headings of group " + g + "; best suited to matching on numbered headings."));
 			pgd.setParamLabel("filterPatterns", "Filter Patterns");
 			pgd.setParamDescription("filterPatterns", ("One or more regular expression patterns matching the starts of lines to exclude from heading group " + g + "; best suited to filtering out certain lines from a group of headings that use too similar font properties."));
+			pgd.setParamLabel("splitOffBlock", "Split Off Block?");
+			pgd.setParamDescription("splitOffBlock", ("Split headings of group " + g + " off the top of a larger text block if they are included in one?"));
 			DocumentStyle.addParameterGroupDescription(pgd);
 		}
 		
@@ -681,9 +685,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			return true;
 		}
 		public DisplayExtensionGraphics[] getExtensionGraphics(ImPage page, ImDocumentMarkupPanel idmp) {
-			DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
-			DocumentStyle style = docStyle.getSubset(this.parameterNamePrefix);
-			if (style.isEmpty())
+			ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(idmp.document);
+			if (docStyle == null)
+				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
+			ImDocumentStyle style = docStyle.getImSubset(this.parameterNamePrefix);
+			if (style.getPropertyNames().length == 0)
 				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
 			
 			//	collect any highlights, and set color
@@ -722,7 +728,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}};
 			return degs;
 		}
-		private void addHeadingShapes(ImPage page, DocumentStyle docStyle, ArrayList shapes, ImDocumentMarkupPanel idmp) {
+		private void addHeadingShapes(ImPage page, ImDocumentStyle docStyle, ArrayList shapes, ImDocumentMarkupPanel idmp) {
 			int group = Integer.parseInt(this.parameterNamePrefix.substring("style.heading.".length()));
 			HeadingStyleDefined hsd = HeadingStyleDefined.getHeadingStyle(group, docStyle.getSubset("style.heading"));
 			if (hsd == null)
@@ -868,11 +874,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			int fontSize = style.getIntProperty("fontSize", -1);
 			int minFontSize = style.getIntProperty("minFontSize", ((fontSize == -1) ? 0 : fontSize));
 			int maxFontSize = style.getIntProperty("maxFontSize", ((fontSize == -1) ? 72 : fontSize));
-			String[] startPatternStrs = style.getListProperty("startPatterns", null, " ");
-			String[] figureStartPatternStrs = style.getListProperty("figureStartPatterns", null, " ");
-			String[] tableStartPatternStrs = style.getListProperty("tableStartPatterns", null, " ");
-			String[] plateStartPatternStrs = style.getListProperty("plateStartPatterns", null, " ");
-			String[] platePartStartPatternStrs = style.getListProperty("platePartStartPatterns", null, " ");
+			String[] startPatternStrs = style.getStringListProperty("startPatterns", null, " ");
+			String[] figureStartPatternStrs = style.getStringListProperty("figureStartPatterns", null, " ");
+			String[] tableStartPatternStrs = style.getStringListProperty("tableStartPatterns", null, " ");
+			String[] plateStartPatternStrs = style.getStringListProperty("plateStartPatterns", null, " ");
+			String[] platePartStartPatternStrs = style.getStringListProperty("platePartStartPatterns", null, " ");
 			CaptionStartPattern[] startPatterns;
 			if ((figureStartPatternStrs != null) || (tableStartPatternStrs != null) || (plateStartPatternStrs != null)) {
 				ArrayList captionStartPatternList = new ArrayList();
@@ -898,11 +904,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				}
 			}
 		}
-		private void addFootnoteShapes(ImPage page, DocumentStyle style, ArrayList shapes) {
+		private void addFootnoteShapes(ImPage page, ImDocumentStyle style, ArrayList shapes) {
 			int fontSize = style.getIntProperty("fontSize", -1);
 			int minFontSize = style.getIntProperty("minFontSize", ((fontSize == -1) ? 0 : fontSize));
 			int maxFontSize = style.getIntProperty("maxFontSize", ((fontSize == -1) ? 72 : fontSize));
-			String[] startPatternStrs = style.getListProperty("startPatterns", "[^\\s]+".split("\\;"), " ");
+			String[] startPatternStrs = style.getStringListProperty("startPatterns", "[^\\s]+".split("\\;"), " ");
 			Pattern[] startPatterns = new Pattern[startPatternStrs.length];
 			for (int p = 0; p < startPatternStrs.length; p++)
 				startPatterns[p] = Pattern.compile(startPatternStrs[p]);
@@ -926,7 +932,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		private static final Color matchLineColor = Color.BLUE;
 		private static final BasicStroke matchLineStroke = new BasicStroke(3);
 		private static final Color matchFillColor = new Color(matchLineColor.getRed(), matchLineColor.getGreen(), matchLineColor.getBlue(), 64);
-		public void test(Properties paramGroup) {
+		public void test(DocumentStyle paramGroup) {
 			if (!this.parameterNamePrefix.startsWith("style.heading."))
 				return; // TODO find other elements with match logging
 			if (attributeExtractionLogDisplay == null)
@@ -1009,8 +1015,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			return true;
 		}
 		public DisplayExtensionGraphics[] getExtensionGraphics(ImPage page, ImDocumentMarkupPanel idmp) {
-			DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
-			DocumentStyle layoutStyle = docStyle.getSubset("layout");
+			ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(idmp.document);
+			if (docStyle == null)
+				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
+			ImDocumentStyle layoutStyle = docStyle.getImSubset("layout");
 			int minMargin = layoutStyle.getIntProperty(this.localName, -1, page.getImageDPI());
 			if (minMargin < 0)
 				return DisplayExtensionProvider.NO_DISPLAY_EXTENSION_GRAPHICS;
@@ -1191,8 +1199,10 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setInfo(" - resolution is " + pageImageDpi);
 		
 		//	get document style
-		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
-		final DocumentStyle docLayout = docStyle.getSubset("layout");
+		ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(doc);
+		if (docStyle == null)
+			docStyle = new ImDocumentStyle(new PropertiesData(new Properties()));
+		final ImDocumentStyle docLayout = docStyle.getImSubset("layout");
 		
 		//	collect blocks adjacent to page edge (top or bottom) from each page
 		spm.setStep(" - gathering data");
@@ -1255,7 +1265,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			BoundingBox pageNumberArea = docLayout.getBoxProperty(("page." + layoutPrefix + ".number.area"), docLayout.getBoxProperty(("page.number.area"), null, pageImageDpi), pageImageDpi);
 			int pageNumberFontSize = docLayout.getIntProperty(("page." + layoutPrefix + ".number.fontSize"), docLayout.getIntProperty(("page.number.fontSize"), -1));
 			boolean pageNumberIsBold = docLayout.getBooleanProperty(("page." + layoutPrefix + ".number.isBold"), docLayout.getBooleanProperty(("page.number.isBold"), false));
-			pageNumberPartPattern = docLayout.getProperty(("page." + layoutPrefix + ".number.pattern"), docLayout.getProperty(("page.number.pattern"), pageNumberPartPattern));
+			pageNumberPartPattern = docLayout.getStringProperty(("page." + layoutPrefix + ".number.pattern"), docLayout.getStringProperty(("page.number.pattern"), pageNumberPartPattern));
 			
 			//	words from page top candidates
 			TreeSet topWords = new TreeSet(String.CASE_INSENSITIVE_ORDER);
@@ -1313,7 +1323,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			//	build candidate page numbers from collected parts
 			ImUtils.sortLeftRightTopDown(pageNumberParts);
 			if (documentBornDigital) {
-				spm.setInfo(" - got " + pageNumberParts.size() + " possible page numbers for page " + p + ":");
+				spm.setInfo(" - got " + pageNumberParts.size() + " possible page numbers for page " + p + " (id " + pageData[p].page.pageId + "):");
 				for (int w = 0; w < pageNumberParts.size(); w++)  try {
 					pageData[p].pageNumberCandidates.add(new PageNumber((ImWord) pageNumberParts.get(w)));
 					spm.setInfo("   - " + ((ImWord) pageNumberParts.get(w)).getString());
@@ -1412,7 +1422,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
 		
 		//	get table layout hints, defaulting to somewhat universal ballpark figures
-		DocumentStyle tableLayout = docLayout.getSubset(ImRegion.TABLE_TYPE);
+		ImDocumentStyle tableLayout = docLayout.getImSubset(ImRegion.TABLE_TYPE);
 //		final int minTableColMargin = tableLayout.getIntProperty("minColumnMargin", (pageImageDpi / 30), pageImageDpi);
 //		final int minTableRowMargin = tableLayout.getIntProperty("minRowMargin", (pageImageDpi / 50), pageImageDpi);
 		
@@ -1855,6 +1865,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		ImWord[] textStreamHeads = doc.getTextStreamHeads();
 		int docFontSizeSum = 0;
 		int docFontSizeWordCount = 0;
+		CountingSet docFontSizes = new CountingSet(new TreeMap());
 		for (int h = 0; h < textStreamHeads.length; h++) {
 			if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(textStreamHeads[h].getTextStreamType()))
 				continue;
@@ -1862,10 +1873,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				if (imw.hasAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) {
 					docFontSizeSum += imw.getFontSize();
 					docFontSizeWordCount++;
+					docFontSizes.add(new Integer(imw.getFontSize()));
 				}
 		}
-		final int docFontSize = ((docFontSizeWordCount == 0) ? -1 : ((docFontSizeSum + (docFontSizeWordCount / 2)) / docFontSizeWordCount));
-		spm.setInfo("Average font size is " + docFontSize + " (based on " + docFontSizeWordCount + " main text words)");
+		final int docAvgFontSize = ((docFontSizeWordCount == 0) ? -1 : ((docFontSizeSum + (docFontSizeWordCount / 2)) / docFontSizeWordCount));
+		final int docMainFontSize = (docFontSizes.isEmpty() ? -1 : ((Integer) docFontSizes.max()).intValue());
+		spm.setInfo("Average font size is " + docAvgFontSize + " (based on " + docFontSizeWordCount + " main text words)");
+		spm.setInfo("Font size distribution is " + docFontSizes);
 		
 		//	detect caption paragraphs
 		//	TODO allow whole-block multi-paragraph captions via template parameter (default: false)
@@ -1876,14 +1890,15 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		Arrays.fill(pageCaptionsByBounds, null);
 		final boolean captionStartIsBold = docLayout.getBooleanProperty("caption.startIsBold", false);
 		final boolean captionStartIsSeparateLine = docLayout.getBooleanProperty("caption.startIsSeparateLine", false);
+		final boolean captionsInsideFigures = docLayout.getBooleanProperty("caption.insideFigure", true);
 		final int captionFontSize = docLayout.getIntProperty("caption.fontSize", -1);
 		final int captionMinFontSize = docLayout.getIntProperty("caption.minFontSize", ((captionFontSize == -1) ? 0 : captionFontSize));
 		final int captionMaxFontSize = docLayout.getIntProperty("caption.maxFontSize", ((captionFontSize == -1) ? 72 : captionFontSize));
-		String[] captionStartPatternStrs = docLayout.getListProperty("caption.startPatterns", null, " ");
-		String[] figureCaptionStartPatternStrs = docLayout.getListProperty("caption.figureStartPatterns", null, " ");
-		String[] tableCaptionStartPatternStrs = docLayout.getListProperty("caption.tableStartPatterns", null, " ");
-		String[] plateCaptionStartPatternStrs = docLayout.getListProperty("caption.plateStartPatterns", null, " ");
-		String[] platePartCaptionStartPatternStrs = docLayout.getListProperty("caption.platePartStartPatterns", null, " ");
+		String[] captionStartPatternStrs = docLayout.getStringListProperty("caption.startPatterns", null, " ");
+		String[] figureCaptionStartPatternStrs = docLayout.getStringListProperty("caption.figureStartPatterns", null, " ");
+		String[] tableCaptionStartPatternStrs = docLayout.getStringListProperty("caption.tableStartPatterns", null, " ");
+		String[] plateCaptionStartPatternStrs = docLayout.getStringListProperty("caption.plateStartPatterns", null, " ");
+		String[] platePartCaptionStartPatternStrs = docLayout.getStringListProperty("caption.platePartStartPatterns", null, " ");
 		final CaptionStartPattern[] captionStartPatterns;
 		if ((figureCaptionStartPatternStrs != null) || (tableCaptionStartPatternStrs != null) || (plateCaptionStartPatternStrs != null)) {
 			ArrayList captionStartPatternList = new ArrayList();
@@ -1896,18 +1911,26 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		else if (captionStartPatternStrs != null)
 			captionStartPatterns = CaptionStartPattern.createPatterns(captionStartPatternStrs, CaptionStartPattern.GENERIC_TYPE, true);
 		else captionStartPatterns = this.captionStartPatterns;
-//		if (captionStartPatternStrs == null)
-//			captionStartPatterns = this.captionStartPatterns;
-//		else {
-//			captionStartPatterns = new Pattern[captionStartPatternStrs.length];
-//			for (int p = 0; p < captionStartPatternStrs.length; p++)
-//				captionStartPatterns[p] = Pattern.compile(captionStartPatternStrs[p]);
-//		}
 		ParallelJobRunner.runParallelFor(new ParallelFor() {
 			public void doFor(int pg) throws Exception {
 				spm.setProgress((pg * 100) / pages.length);
 				ImRegion[] pageBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+				if (pageBlocks.length == 0)
+					return;
 				ImRegion[] pageParagraphs = pages[pg].getRegions(ImRegion.PARAGRAPH_TYPE);
+				
+				//	if we have captions _inside_ figures, mark coherent text blocks inside figures and set type to main text
+				ArrayList insideImageMainTextWords = null;
+				if (captionsInsideFigures) {
+					insideImageMainTextWords = new ArrayList();
+					this.prepareInsideImageWordBlocks(pages[pg], insideImageMainTextWords);
+					if (insideImageMainTextWords.size() != 0) {
+						pageBlocks = pages[pg].getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+						pageParagraphs = pages[pg].getRegions(ImRegion.PARAGRAPH_TYPE);
+					}
+				}
+				
+				//	mark captions
 				for (int b = 0; b < pageBlocks.length; b++) {
 					HashMap blockCaptionsByBounds = markBlockCaptions(doc, pageBlocks[b], pageParagraphs, captionStartPatterns, DocumentStructureDetectorProvider.this.captionStartPatterns, captionMinFontSize, captionMaxFontSize, captionStartIsBold, captionStartIsSeparateLine, spm);
 					if (blockCaptionsByBounds != null) {
@@ -1922,6 +1945,92 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					//	TODO TEST: table in page 14 of EJT/ejt-431_boonyanusith_sanoamuang_brancelj.pdf.imd (EJT-testbed issue 274)
 					//	TODO observe such notes when computing distance between table and caption on match-up
 				}
+				
+				//	if we have captions _inside_ figures, set type of main text words in figures back to label (captions are type caption now)
+				if (insideImageMainTextWords != null)
+					for (int w = 0; w < insideImageMainTextWords.size(); w++) {
+						ImWord imw = ((ImWord) insideImageMainTextWords.get(w));
+						if (ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(imw.getTextStreamType()))
+							imw.setTextStreamType(ImWord.TEXT_STREAM_TYPE_LABEL);
+					}
+			}
+			
+			//	TODOne TEST RecAustMus.67.6.185-199.pdf.imf (https://github.com/plazi/ggi/issues/90)
+			private void prepareInsideImageWordBlocks(ImPage page, ArrayList insideImageWords) {
+				ImRegion[] images = page.getRegions(ImRegion.IMAGE_TYPE);
+				if (images.length == 0)
+					return;
+				for (int i = 0; i < images.length; i++) {
+					ArrayList imageWords = new ArrayList(Arrays.asList(images[i].getWords()));
+					if (imageWords.size() < 7)
+						continue; // no caption below 7 words ...
+					while (imageWords.size() != 0) {
+						WordCluster wordCluster = new WordCluster((ImWord) imageWords.remove(0));
+						for (boolean wordAdded = true; wordAdded;) {
+							wordAdded = false;
+							for (int w = 0; w < imageWords.size(); w++) {
+								ImWord imw = ((ImWord) imageWords.get(w));
+								if (wordCluster.overlaps(imw)) {
+									wordCluster.addWord(imw);
+									imageWords.remove(w--);
+									wordAdded = true;
+								}
+							}
+						}
+						if (wordCluster.size() < 7)
+							continue; // still no caption below 7 words ...
+						ImWord[] clusterWords = wordCluster.getWords();
+						ImUtils.sortLeftRightTopDown(clusterWords);
+						ImUtils.makeStream(clusterWords, ImWord.TEXT_STREAM_TYPE_MAIN_TEXT, null);
+						regionActionProvider.markBlock(page, ImLayoutObject.getAggregateBox(clusterWords));
+						insideImageWords.addAll(Arrays.asList(clusterWords));
+					}
+				}
+			}
+			
+			class WordCluster {
+				ArrayList words = new ArrayList();
+				int left;
+				int right;
+				int top;
+				int bottom;
+				int wordHeightSum = 0;
+				int margin = 0;
+				WordCluster(ImWord imw) {
+					this.words.add(imw);
+					this.left = imw.bounds.left;
+					this.right = imw.bounds.right;
+					this.top = imw.bounds.top;
+					this.bottom = imw.bounds.bottom;
+					this.wordHeightSum += imw.bounds.getHeight();
+					this.margin = ((this.wordHeightSum + (this.words.size() / 2)) / this.words.size());
+				}
+				void addWord(ImWord imw) {
+					this.words.add(imw);
+					this.left = Math.min(this.left, imw.bounds.left);
+					this.right = Math.max(this.right, imw.bounds.right);
+					this.top = Math.min(this.top, imw.bounds.top);
+					this.bottom = Math.max(this.bottom, imw.bounds.bottom);
+					this.wordHeightSum += imw.bounds.getHeight();
+					this.margin = ((this.wordHeightSum + (this.words.size() / 2)) / this.words.size());
+				}
+				boolean overlaps(ImWord imw) {
+					if ((imw.bounds.right + this.margin) <= this.left)
+						return false;
+					if ((this.right + this.margin) <= imw.bounds.left)
+						return false;
+					if ((imw.bounds.bottom + this.margin) <= this.top)
+						return false;
+					if ((this.bottom + this.margin) <= imw.bounds.top)
+						return false;
+					return true;
+				}
+				int size() {
+					return this.words.size();
+				}
+				ImWord[] getWords() {
+					return ((ImWord[]) this.words.toArray(new ImWord[this.words.size()]));
+				}
 			}
 		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
 		
@@ -1934,7 +2043,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		final int footnoteFontSize = docLayout.getIntProperty("footnote.fontSize", -1);
 		final int footnoteMinFontSize = docLayout.getIntProperty("footnote.minFontSize", ((footnoteFontSize == -1) ? 0 : footnoteFontSize));
 		final int footnoteMaxFontSize = docLayout.getIntProperty("footnote.maxFontSize", ((footnoteFontSize == -1) ? 72 : footnoteFontSize));
-		String[] footnoteStartPatternStrs = docLayout.getListProperty("footnote.startPatterns", null, " ");
+		String[] footnoteStartPatternStrs = docLayout.getStringListProperty("footnote.startPatterns", null, " ");
 		final Pattern[] footnoteStartPatterns;
 		if (footnoteStartPatternStrs == null)
 			footnoteStartPatterns = this.footnoteStartPatterns;
@@ -1977,7 +2086,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 								spm.setInfo(" ==> found non-footnote below");
 								break;
 							}
-						if (onlyFootnotesBelow && isFootnote(blockParagraphs[p], paragraphWords, docFontSize, footnoteStartPatterns, footnoteMinFontSize, footnoteMaxFontSize)) {
+						if (onlyFootnotesBelow && isFootnote(blockParagraphs[p], paragraphWords, docAvgFontSize, footnoteStartPatterns, footnoteMinFontSize, footnoteMaxFontSize)) {
 							spm.setInfo(" ==> footnote detected");
 							synchronized (doc) {
 								ImUtils.makeStream(paragraphWords, ImWord.TEXT_STREAM_TYPE_FOOTNOTE, FOOTNOTE_TYPE);
@@ -2029,7 +2138,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						spm.setInfo(" ==> could not determine font size");
 						continue;
 					}
-					if (blockFontSize >= docFontSize) {
+					if (blockFontSize >= docAvgFontSize) {
 						spm.setInfo(" ==> font too large (" + blockFontSize + ")");
 						continue;
 					}
@@ -2492,7 +2601,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setStep(" - merging interrupted paragraphs");
 		spm.setBaseProgress(72);
 		spm.setMaxProgress(75);
-		final DocumentStyle blockStyle = docLayout.getSubset("block");
+		final ImDocumentStyle blockStyle = docLayout.getImSubset("block");
 		for (int h = 0; h < textStreamHeads.length; h++) {
 			spm.setProgress((h * 100) / textStreamHeads.length);
 			if (!ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(textStreamHeads[h].getTextStreamType()))
@@ -2643,6 +2752,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				HashMap aboveCaptionTargets = new HashMap();
 				HashMap belowCaptionTargets = new HashMap();
 				HashMap besideCaptionTargets = new HashMap();
+				HashMap aroundCaptionTargets = new HashMap();
 				for (Iterator cit = pageCaptionsByBounds[p].keySet().iterator(); cit.hasNext();) {
 					BoundingBox captionBounds = ((BoundingBox) cit.next());
 					ImAnnotation captionAnnot = ((ImAnnotation) pageCaptionsByBounds[p].get(captionBounds));
@@ -2661,6 +2771,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						ImRegion besideCaptionTarget = getBesideCaptionTarget(pages[p], captionBounds, pageImageDpi, isTableCaption);
 						if (besideCaptionTarget != null)
 							besideCaptionTargets.put(captionBounds, besideCaptionTarget);
+					}
+					if (isTableCaption ? false : captionsInsideFigures) {
+						ImRegion aroundCaptionTarget = getAroundCaptionTarget(pages[p], captionBounds, pageImageDpi, isTableCaption);
+						if (aroundCaptionTarget != null)
+							aroundCaptionTargets.put(captionBounds, aroundCaptionTarget);
 					}
 				}
 				
@@ -2706,9 +2821,25 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 									 break;
 								}
 						}
+						ImRegion rct = ((ImRegion) aroundCaptionTargets.get(captionBounds[c]));
+						if (rct != null) {
+							for (int a = 0; a < assignedCaptionTargets.size(); a++)
+								if (((ImRegion) assignedCaptionTargets.get(a)).bounds.overlaps(rct.bounds)) {
+									 aroundCaptionTargets.remove(captionBounds[c]);
+									 rct = null;
+									 break;
+								}
+						}
+						
+						//	if a caption lies inside a target, association is rather clear
+						if (rct != null) {
+							act = null;
+							bct = null;
+							sct = null;
+						}
 						
 						//	count targets
-						int ctCount = (((act == null) ? 0 : 1) + ((bct == null) ? 0 : 1) + ((sct == null) ? 0 : 1));
+						int ctCount = (((act == null) ? 0 : 1) + ((bct == null) ? 0 : 1) + ((sct == null) ? 0 : 1) + ((rct == null) ? 0 : 1));
 						
 						//	no target found or left for this one
 						if (ctCount == 0) {
@@ -2720,15 +2851,15 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						if (skipAmbiguousCaptions && (ctCount != 1))
 							continue;
 						
-						//	get target area (prefer above over below, and below over beside)
-						ImRegion ct = ((act == null) ? ((bct == null) ? sct : bct) : act);
+						//	get target area (prefer around over above, above over below, and below over beside)
+						ImRegion ct = ((rct == null) ? ((act == null) ? ((bct == null) ? sct : bct) : act) : rct);
 						
 						//	get annotation and check target type
 						ImAnnotation captionAnnot = ((ImAnnotation) pageCaptionsByBounds[p].get(captionBounds[c]));
 						
 						//	mark table caption
 						if (ImRegion.TABLE_TYPE.equals(ct.getType())) {
-							captionAnnot.setAttribute("targetIsTable");
+							captionAnnot.setAttribute(ImAnnotation.CAPTION_TARGET_IS_TABLE_ATTRIBUTE);
 							synchronized (tablesToCaptionAnnots) {
 								tablesToCaptionAnnots.put(ct, captionAnnot);
 							}
@@ -2750,7 +2881,6 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						//	set target attributes
 						captionAnnot.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + ct.pageId));
 						captionAnnot.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, ct.bounds.toString());
-						captionAnnot.setAttribute("startId", captionAnnot.getFirstWord().getLocalID());
 						
 						//	remember we have assigned this one
 						assignedCaptionTargets.add(ct);
@@ -2947,28 +3077,28 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			spm.setInfo(" - caption start is " + ((tableCaptionStart == null) ? "null" : ("'" + tableCaptionStart + "'")));
 			ImRegion[] tableGridRow = ImUtils.getRowConnectedTables(docTables[t]);
 			spm.setInfo(" - got " + tableGridRow.length + " row-connected tables");
-			for (int c = (t+1); c < docTables.length; c++) {
-				spm.setInfo(" - comparing to table " + docTables[c].bounds + " on page " + docTables[c].pageId);
-				if (docTables[c].pageId == docTables[t].pageId) {
+			for (int ct = (t+1); ct < docTables.length; ct++) {
+				spm.setInfo(" - comparing to table " + docTables[ct].bounds + " on page " + docTables[ct].pageId);
+				if (docTables[ct].pageId == docTables[t].pageId) {
 					spm.setInfo(" --> same page");
 					break;
 				}
-				if (!ImUtils.areTableColumnsCompatible(docTables[t], docTables[c])) {
+				if (!ImUtils.areTableColumnsCompatible(docTables[t], docTables[ct])) {
 					spm.setInfo(" --> columns not compatible");
 					continue;
 				}
-				ImAnnotation cTableCaption = ((ImAnnotation) tablesToCaptionAnnots.get(docTables[c]));
+				ImAnnotation cTableCaption = ((ImAnnotation) tablesToCaptionAnnots.get(docTables[ct]));
 				String cTableCaptionStart = ((cTableCaption == null) ? null : getCaptionStartForCheck(cTableCaption));
 				if ((tableCaptionStart != null) && (cTableCaptionStart != null) && !tableCaptionStart.equalsIgnoreCase(cTableCaptionStart)) {
 					spm.setInfo(" --> caption start '" + cTableCaptionStart + "' not compatible");
 					continue;
 				}
-				ImRegion[] cTableGridRow = ImUtils.getRowConnectedTables(docTables[c]);
+				ImRegion[] cTableGridRow = ImUtils.getRowConnectedTables(docTables[ct]);
 				if (tableGridRow.length != cTableGridRow.length) {
 					spm.setInfo(" --> row-connected tables not compatible");
 					continue;
 				}
-				ImUtils.connectTableColumns(docTables[t], docTables[c]);
+				ImUtils.connectTableColumns(docTables[t], docTables[ct]);
 				spm.setInfo(" --> table columns merged");
 				break;
 			}
@@ -2978,6 +3108,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		spm.setStep(" - marking caption citations");
 		spm.setBaseProgress(85);
 		spm.setMaxProgress(90);
+		this.captionCitationHandler.markContinuationCaptions(doc);
 		this.captionCitationHandler.markCaptionCitations(doc, textStreamHeads);
 		
 		//	mark headings, as well as bold/italics emphases, and super- and subscripts
@@ -3336,8 +3467,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				else soss.setAttribute("attach", "none");
 				System.out.println("   --> attach is " + soss.getAttribute("attach"));
 			}
-//		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
-		}, pages.length, 1); // TODO switch back to parallel after more tests
+		}, pages.length, (this.debug ? 1 : (pages.length / 8)));
 		
 		//	clean table markup after marking emphases
 		for (int t = 0; t < docTables.length; t++)
@@ -3374,12 +3504,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			ArrayList headings = new ArrayList();
 			for (int pg = 0; pg < pages.length; pg++) {
 				spm.setProgress((pg * 100) / pages.length);
-				this.markHeadings(pages[pg], docFontSize, pageImageDpi, emphasisWords, spm, headings);
+				this.markHeadings(pages[pg], docAvgFontSize, docMainFontSize, pageImageDpi, emphasisWords, spm, headings);
 			}
 			
 			//	assess hierarchy of headings
 			spm.setStep(" - assessing hierarchy of headings");
-			this.assessHeadingHierarchy(headings, docFontSize, pages[0].pageId, spm);
+			this.assessHeadingHierarchy(headings, docAvgFontSize, pages[0].pageId, spm);
 		}
 		
 		//	extract headings using style templates
@@ -3639,11 +3769,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		boolean isRightAligned;
 		boolean canHaveIndent;
 		boolean isCenterStrict;
+		boolean splitOffBlock;
 		
 		private HeadingStyleDefined(int group, DocumentStyle style) {
 			this.group = group;
 			this.level = style.getIntProperty((this.group + ".level"), this.group);
-			this.lineBreakMergeMode = style.getProperty((this.group + ".lineBreakMergeMode"), "never");
+			this.lineBreakMergeMode = style.getStringProperty((this.group + ".lineBreakMergeMode"), "never");
 			int fontSize = style.getIntProperty((this.group + ".fontSize"), -1);
 			this.minFontSize = style.getIntProperty((this.group + ".minFontSize"), ((fontSize == -1) ? 0 : fontSize));
 			this.maxFontSize = style.getIntProperty((this.group + ".maxFontSize"), ((fontSize == -1) ? 72 : fontSize));
@@ -3663,14 +3794,15 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			this.startIsSmallCaps = style.getBooleanProperty((this.group + ".startIsSmallCaps"), false);
 			this.containsSmallCaps = style.getBooleanProperty((this.group + ".containsSmallCaps"), false);
 			this.ignoreParentheses = style.getBooleanProperty((this.group + ".ignoreParentheses"), false);
-			this.startPatterns = getPatterns(style.getListProperty((this.group + ".startPatterns"), null, " "));
-			this.filterPatterns = getPatterns(style.getListProperty((this.group + ".filterPatterns"), null, " "));
-			String alignment = style.getProperty((this.group + ".alignment"), "");
+			this.startPatterns = getPatterns(style.getStringListProperty((this.group + ".startPatterns"), null, " "));
+			this.filterPatterns = getPatterns(style.getStringListProperty((this.group + ".filterPatterns"), null, " "));
+			String alignment = style.getStringProperty((this.group + ".alignment"), "");
 			this.isLeftAligned = (ImAnnotation.TEXT_ORIENTATION_LEFT.equals(alignment) || ImAnnotation.TEXT_ORIENTATION_JUSTIFIED.equals(alignment));
 			this.isCenterAligned = (ImAnnotation.TEXT_ORIENTATION_CENTERED.equals(alignment) || TEXT_ORIENTATION_CENTERED_STRICT.equals(alignment));
 			this.isRightAligned = (ImAnnotation.TEXT_ORIENTATION_RIGHT.equals(alignment) || ImAnnotation.TEXT_ORIENTATION_JUSTIFIED.equals(alignment));
 			this.canHaveIndent = style.getBooleanProperty((this.group + ".canHaveIndent"), false);
 			this.isCenterStrict = TEXT_ORIENTATION_CENTERED_STRICT.equals(alignment);
+			this.splitOffBlock = style.getBooleanProperty((this.group + ".splitOffBlock"), false);
 		}
 		
 		boolean matches(ImPage page, ImRegion line, ImWord[] lineWords, int blockLinePos, int blockLineCount, int leftColDist, int rightColDist, int leftBlockDist, int rightBlockDist, PrintStream log) {
@@ -3764,6 +3896,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			LinkedList openBrackets = new LinkedList();
 			for (int w = 0; w < lineWords.length; w++) {
 				String wordStr = lineWords[w].getString();
+				if (wordStr == null)
+					continue;
+				wordStr = StringUtils.normalizeString(wordStr); // normalize string, like all other pattern editing does
 				if (this.ignoreParentheses && Gamta.isOpeningBracket(wordStr))
 					openBrackets.addLast(wordStr);
 				if (openBrackets.isEmpty()) {
@@ -3891,7 +4026,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 		
 		private static HeadingStyleDefined getHeadingStyle(int group, DocumentStyle style) {
-			if (style.getSubset("" + group).isEmpty())
+			if (style.getSubset("" + group).getPropertyNames().length == 0)
 				return null;
 			return new HeadingStyleDefined(group, style);
 		}
@@ -3914,7 +4049,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return ((Pattern[]) patterns.toArray(new Pattern[patterns.size()]));
 	}
 	
-	private static void markHeadings(ImPage page, HeadingStyleDefined[] headingStyles, ProgressMonitor pm) {
+	private void markHeadings(ImPage page, HeadingStyleDefined[] headingStyles, ProgressMonitor pm) {
 		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 		
 		//	get block words
@@ -3963,7 +4098,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					continue;
 				if (pcRight <= pageBlocks[cb].bounds.left)
 					continue;
-				if ((blockWords[b].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(blockWords[b][0].getTextStreamType()))
+				if ((blockWords[b].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(blockWords[cb][0].getTextStreamType()))
 					continue;
 				pcLeft = Math.min(pcLeft, pageBlocks[cb].bounds.left);
 				pcRight = Math.max(pcRight, pageBlocks[cb].bounds.right);
@@ -4086,6 +4221,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			boolean headingEndLineShort = lineIsShort[0];
 			ArrayList headingAnnots = new ArrayList();
 			ArrayList headingAnnotStyles = new ArrayList();
+			boolean splitHeadingOffBlock = false;
 			for (int l = 1; l < Math.min(blockLines.length, 4); l++) {
 				if (lineWords[l].length == 0)
 					continue;
@@ -4108,6 +4244,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					if (headingAnnot != null) {
 						headingAnnots.add(headingAnnot);
 						headingAnnotStyles.add(headingStyle);
+						splitHeadingOffBlock = (splitHeadingOffBlock || headingStyle.splitOffBlock);
 					}
 					headingStart = lineWords[l][0];
 					headingEnd = lineWords[l][lineWords[l].length-1];
@@ -4123,11 +4260,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				if (headingAnnot != null) {
 					headingAnnots.add(headingAnnot);
 					headingAnnotStyles.add(headingStyle);
+					splitHeadingOffBlock = (splitHeadingOffBlock || headingStyle.splitOffBlock);
 				}
 			}
 			
-			//	anything to merge?
-			if (headingAnnots.size() < 2)
+			//	anything to merge? anything to split?
+			if ((headingAnnots.size() < 2) && !splitHeadingOffBlock)
 				continue;
 			
 			//	perform mergers where applicable
@@ -4185,6 +4323,26 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				headingAnnots.set(h, heading);
 				headingAnnotStyles.set(h, topStyle); // preserve top style for merge behavior, as there might be one more heading coming
 				pm.setInfo("   ==> merged: " + ImUtils.getString(heading.getFirstWord(), heading.getLastWord(), true));
+			}
+			
+			//	split headings off (or out of) block if required
+			for (int h = 0; h < headingAnnots.size(); h++) {
+				HeadingStyleDefined style = ((HeadingStyleDefined) headingAnnotStyles.get(h));
+				if (!style.splitOffBlock)
+					continue;
+				ImAnnotation heading = ((ImAnnotation) headingAnnots.get(h));
+				int headingTop = pageBlocks[b].bounds.bottom;
+				int headingBottom = pageBlocks[b].bounds.top;
+				for (ImWord imw = heading.getFirstWord(); imw != null; imw = imw.getNextWord()) {
+					headingTop = Math.min(headingTop, imw.bounds.top);
+					headingBottom = Math.max(headingBottom, imw.bounds.bottom);
+					if (imw == heading.getLastWord())
+						break;
+				}
+				if ((pageBlocks[b].bounds.getHeight() - (headingBottom - headingTop)) < (page.getImageDPI() / 12))
+					continue; // too little left of block to accommodate anything to split
+				BoundingBox headingBox = new BoundingBox(pageBlocks[b].bounds.left, pageBlocks[b].bounds.right, headingTop, headingBottom);
+				this.regionActionProvider.splitBlock(page, pageBlocks[b], headingBox);
 			}
 		}
 	}
@@ -4252,8 +4410,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			this.startIsSmallCaps = style.getBooleanProperty((this.group + ".startIsSmallCaps"), false);
 			this.containsSmallCaps = style.getBooleanProperty((this.group + ".containsSmallCaps"), false);
 			this.ignoreParentheses = style.getBooleanProperty((this.group + ".ignoreParentheses"), false);
-			this.startPatterns = getPatterns(style.getListProperty((this.group + ".startPatterns"), null, " "));
-			this.filterPatterns = getPatterns(style.getListProperty((this.group + ".filterPatterns"), null, " "));
+			this.startPatterns = getPatterns(style.getStringListProperty((this.group + ".startPatterns"), null, " "));
+			this.filterPatterns = getPatterns(style.getStringListProperty((this.group + ".filterPatterns"), null, " "));
 		}
 		
 		ImWord getMatchEnd(ImPage page, ImRegion line, ImWord[] lineWords, int blockLineCount, PrintStream log) {
@@ -4481,7 +4639,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 		
 		private static InLineHeadingStyle getInLineHeadingStyle(int group, DocumentStyle style) {
-			if (style.getSubset("" + group).isEmpty())
+			if (style.getSubset("" + group).getPropertyNames().length == 0)
 				return null;
 			return new InLineHeadingStyle(group, style);
 		}
@@ -4577,7 +4735,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 	};
 	
-	private void markHeadings(ImPage page, int docFontSize, int pageImageDpi, HashSet emphasisWords, ProgressMonitor pm, ArrayList headings) {
+	private void markHeadings(ImPage page, int docAvgFontSize, int docMainFontSize, int pageImageDpi, HashSet emphasisWords, ProgressMonitor pm, ArrayList headings) {
 		ImRegion[] pageBlocks = page.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
 		
 		//	get block words
@@ -4624,7 +4782,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					continue;
 				if (pcRight <= pageBlocks[cb].bounds.left)
 					continue;
-				if ((blockWords[b].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(blockWords[b][0].getTextStreamType()))
+				if ((blockWords[b].length == 0) || !ImWord.TEXT_STREAM_TYPE_MAIN_TEXT.equals(blockWords[cb][0].getTextStreamType()))
 					continue;
 				pcLeft = Math.min(pcLeft, pageBlocks[cb].bounds.left);
 				pcRight = Math.max(pcRight, pageBlocks[cb].bounds.right);
@@ -4668,7 +4826,9 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			ImWord[][] lineWords = new ImWord[blockLines.length][];
 			boolean[] lineIsShort = new boolean[blockLines.length];
 			boolean[] lineIsCentered = new boolean[blockLines.length];
+			boolean[] lineIsStrictlyCentered = new boolean[blockLines.length];
 			boolean[] lineIsAllCaps = new boolean[blockLines.length];
+			boolean[] lineIsSmallCaps = new boolean[blockLines.length];
 			boolean[] lineHasEmphasis = new boolean[blockLines.length];
 			boolean[] lineIsEmphasized = new boolean[blockLines.length];
 			boolean[] lineHasBoldEmphasis = new boolean[blockLines.length];
@@ -4697,10 +4857,19 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					);
 				if (lineIsCentered[l])
 					pm.setInfo(" --> centered");
+				lineIsStrictlyCentered[l] = (
+						(((leftDist * 9) < (rightDist * 10)) && ((rightDist * 9) < (leftDist * 10)))
+						&&
+						(((leftDist * 25) > pageImageDpi) && ((rightDist * 25) > pageImageDpi))
+					);
+				if (lineIsStrictlyCentered[l])
+					pm.setInfo(" --> strictly centered");
 				
 				//	assess line words
 				int lineWordCount = 0;
-				int lineAllCapWordCount = 0;
+				int lineAllCapsWordCount = 0;
+				int lineAllCapsMinFontSize = 72;
+				int lineAllCapsMaxFontSize = 0;
 				int lineEmphasisWordCount = 0;
 				int lineBoldWordCount = 0;
 				int lineNonBoldBoldWordCount = 0;
@@ -4712,8 +4881,13 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						continue;
 					if (Gamta.isWord(lineWordString)) {
 						lineWordCount++;
-						if (lineWordString.equals(lineWordString.toUpperCase()))
-							lineAllCapWordCount++;
+						if (lineWordString.equals(lineWordString.toUpperCase())) {
+							lineAllCapsWordCount++;
+							if (lineWords[l][w].hasAttribute(ImWord.FONT_SIZE_ATTRIBUTE)) try {
+								lineAllCapsMinFontSize = Math.min(lineAllCapsMinFontSize, lineWords[l][w].getFontSize());
+								lineAllCapsMaxFontSize = Math.max(lineAllCapsMaxFontSize, lineWords[l][w].getFontSize());
+							} catch (NumberFormatException nfe) {}
+						}
 						if (emphasisWords.contains(lineWords[l][w]))
 							lineEmphasisWordCount++;
 						if (lineWords[l][w].hasAttribute(ImWord.BOLD_ATTRIBUTE))
@@ -4726,9 +4900,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 						lineFontSizeWordCount++;
 					} catch (NumberFormatException nfe) {}
 				}
-				lineIsAllCaps[l] = ((lineWordCount != 0) && (lineAllCapWordCount == lineWordCount));
+				lineIsAllCaps[l] = ((lineWordCount != 0) && (lineAllCapsWordCount == lineWordCount));
 				if (lineIsAllCaps[l])
 					pm.setInfo(" --> all caps");
+				lineIsSmallCaps[l] = ((lineWordCount != 0) && (lineAllCapsWordCount == lineWordCount) && (lineAllCapsMinFontSize < lineAllCapsMaxFontSize));
+				if (lineIsSmallCaps[l])
+					pm.setInfo(" --> small caps");
 				lineHasEmphasis[l] = (lineEmphasisWordCount != 0);
 				if (lineHasEmphasis[l])
 					pm.setInfo(" --> has emphasis");
@@ -4738,11 +4915,11 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				lineHasBoldEmphasis[l] = (lineBoldWordCount != 0);
 				if (lineHasBoldEmphasis[l])
 					pm.setInfo(" --> has bold emphasis");
-				lineIsBold[l] = ((lineWordCount != 0) && ((lineBoldWordCount + lineNonBoldBoldWordCount) == lineWordCount));
+				lineIsBold[l] = ((lineWordCount != 0) && (lineBoldWordCount > lineNonBoldBoldWordCount) && ((lineBoldWordCount + lineNonBoldBoldWordCount) == lineWordCount));
 				if (lineIsBold[l])
 					pm.setInfo(" --> bold");
 				lineFontSize[l] = ((lineFontSizeWordCount == 0) ? -1 : ((lineFontSizeSum + (lineFontSizeWordCount / 2)) / lineFontSizeWordCount));
-				lineIsLargeFont[l] = ((docFontSize > 6) && (lineFontSize[l] > docFontSize));
+				lineIsLargeFont[l] = ((docAvgFontSize > 6) && (lineFontSize[l] > docAvgFontSize) && (docMainFontSize > 6) && (lineFontSize[l] > docMainFontSize));
 				if (lineIsLargeFont[l])
 					pm.setInfo(" --> large font " + lineFontSize[l]);
 				
@@ -4784,11 +4961,12 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				//	TODO refine this
 				
 				//	below average font size + not all caps + not bold ==> not a heading
-				if ((lineFontSize[l] < docFontSize) && !lineIsBold[l] && !lineIsAllCaps[l])
+				if ((lineFontSize[l] < docAvgFontSize) && !lineIsBold[l] && !lineIsAllCaps[l])
 					break;
 				
-				//	short + large-font ==> heading
+				//	bold + large-font ==> heading
 				if (lineIsBold[l] && lineIsLargeFont[l]) {
+					//	TODO check 
 					pm.setInfo(" ==> heading (0): " + ImUtils.getString(lineWords[l][0], lineWords[l][lineWords[l].length-1], true));
 					lineIsHeadingBecause[l] = 0;
 					continue;
@@ -4816,21 +4994,22 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				}
 				
 				//	short + centered ==> heading
-				if (lineIsShort[l] && lineIsCentered[l]) {
+//				if (lineIsShort[l] && lineIsCentered[l]) {
+				if (lineIsShort[l] && lineIsStrictlyCentered[l]) {
 					pm.setInfo(" ==> heading (4): " + ImUtils.getString(lineWords[l][0], lineWords[l][lineWords[l].length-1], true));
 					lineIsHeadingBecause[l] = 4;
 					continue;
 				}
 				
 				//	centered + all-caps ==> heading
-				if (lineIsCentered[l] && lineIsAllCaps[l]) {
+//				if (lineIsCentered[l] && lineIsAllCaps[l]) {
+				if (lineIsStrictlyCentered[l] && lineIsAllCaps[l]) {
 					pm.setInfo(" ==> heading (5): " + ImUtils.getString(lineWords[l][0], lineWords[l][lineWords[l].length-1], true));
 					lineIsHeadingBecause[l] = 5;
 					continue;
 				}
 				
 				//	short + bold + block-top-line ==> heading
-//				if (lineIsShort[l] && lineIsBold[l] && (l == 0)) {
 				if (lineIsShort[l] && lineIsBold[l]) {
 					pm.setInfo(" ==> heading (6): " + ImUtils.getString(lineWords[l][0], lineWords[l][lineWords[l].length-1], true));
 					lineIsHeadingBecause[l] = 6;
@@ -4838,7 +5017,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 				}
 				
 				//	centered + emphasis + block-top-line + short-centered-line-below ==> heading
-				if (lineIsCentered[l] && lineHasEmphasis[l] && (l == 0) && (blockLines.length > 1) && lineIsShort[l+1] && lineIsCentered[l+1]) {
+//				if (lineIsCentered[l] && lineHasEmphasis[l] && (l == 0) && (blockLines.length > 1) && lineIsShort[l+1] && lineIsCentered[l+1]) {
+				if (lineIsCentered[l] && lineHasEmphasis[l] && (l == 0) && (blockLines.length > 1) && lineIsShort[l+1] && lineIsStrictlyCentered[l+1]) {
 					pm.setInfo(" ==> heading (7): " + ImUtils.getString(lineWords[l][0], lineWords[l][lineWords[l].length-1], true));
 					lineIsHeadingBecause[l] = 4; // conflate with 4, as this is the two-line case of 4
 					continue;
@@ -4885,7 +5065,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					if (headingReason != -1) {
 						ImAnnotation heading = page.getDocument().addAnnotation(headingStart, headingEnd, ImAnnotation.HEADING_TYPE);
 						heading.setAttribute("reason", ("" + headingReason));
-						if (lineIsCentered[headingStartLineIndex])
+//						if (lineIsCentered[headingStartLineIndex])
+						if (lineIsStrictlyCentered[headingStartLineIndex])
 							heading.setAttribute(ImAnnotation.TEXT_ORIENTATION_CENTERED);
 						if (lineIsAllCaps[headingStartLineIndex])
 							heading.setAttribute(ImAnnotation.ALL_CAPS_ATTRIBUTE);
@@ -4913,7 +5094,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			if (headingReason != -1) {
 				ImAnnotation heading = page.getDocument().addAnnotation(headingStart, headingEnd, ImAnnotation.HEADING_TYPE);
 				heading.setAttribute("reason", ("" + headingReason));
-				if (lineIsCentered[headingStartLineIndex])
+//				if (lineIsCentered[headingStartLineIndex])
+				if (lineIsStrictlyCentered[headingStartLineIndex])
 					heading.setAttribute(ImAnnotation.TEXT_ORIENTATION_CENTERED);
 				if (lineIsAllCaps[headingStartLineIndex])
 					heading.setAttribute(ImAnnotation.ALL_CAPS_ATTRIBUTE);
@@ -5337,6 +5519,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 					if (caption == null)
 						continue;
 					ImUtils.orderStream(captionWords, ImUtils.leftRightTopDownOrder);
+					caption.setAttribute("startId", caption.getFirstWord().getLocalID());
 				}
 				
 				//	index annotation
@@ -6009,6 +6192,72 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		return targetRegion;
 	}
 	
+	private ImRegion getAroundCaptionTarget(ImPage page, BoundingBox captionBounds, int dpi, boolean isTableCaption) {
+		
+		//	get regions
+		ImRegion[] pageRegions = page.getRegions(isTableCaption ? ImRegion.TABLE_TYPE : null);
+		
+		//	seek suitable target regions
+		ImRegion targetRegion = null;
+		for (int r = 0; r < pageRegions.length; r++) {
+			
+			//	ignore lines and paragraphs, as well as blocks, columns, and generic regions
+			if (ImRegion.LINE_ANNOTATION_TYPE.equals(pageRegions[r].getType()) || ImRegion.PARAGRAPH_TYPE.equals(pageRegions[r].getType()) || ImRegion.BLOCK_ANNOTATION_TYPE.equals(pageRegions[r].getType()) || ImRegion.COLUMN_ANNOTATION_TYPE.equals(pageRegions[r].getType()) || ImRegion.REGION_ANNOTATION_TYPE.equals(pageRegions[r].getType()))
+				continue;
+			
+			//	ignore tables we're not out for
+			if (isTableCaption != ImRegion.TABLE_TYPE.equals(pageRegions[r].getType()))
+				continue;
+			
+			//	ignore anything not surrounding caption
+			if (!pageRegions[r].bounds.includes(captionBounds, true))
+				continue;
+			
+			//	this one looks good
+			if (isTableCaption) // return target table right away
+				return pageRegions[r];
+			else { // store target figure (might be part of actual figure, to be restored below)
+				targetRegion = pageRegions[r];
+				break;
+			}
+		}
+		
+		//	do we have a target region to start with?
+		if (targetRegion == null)
+			return null;
+		
+		//	try and restore images cut apart horizontally by page structure detection (vertical splits result in the parent region being retained, so we'll find the latter first)
+		for (int r = 0; r < pageRegions.length; r++) {
+//			
+//			//	ignore lines and paragraphs, as well as blocks and columns
+//			if (ImRegion.LINE_ANNOTATION_TYPE.equals(pageRegions[r].getType()) || ImRegion.PARAGRAPH_TYPE.equals(pageRegions[r].getType()))
+//				continue;
+//			
+//			//	ignore tables we're not out for
+//			if (ImRegion.TABLE_TYPE.equals(pageRegions[r].getType()))
+//				continue;
+			
+			//	ignore anything but images and graphics
+			if (!ImRegion.IMAGE_TYPE.equals(pageRegions[r].getType()) && !ImRegion.GRAPHICS_TYPE.equals(pageRegions[r].getType()))
+				continue;
+			
+			//	this one lies inside what we already have
+			if (targetRegion.bounds.includes(pageRegions[r].bounds, false))
+				continue;
+			
+			//	check if candidate aggregate target contains words that cannot belong to a caption target area, and find lower edge
+			BoundingBox aggregateBounds = new BoundingBox(Math.min(targetRegion.bounds.left, pageRegions[r].bounds.left), Math.max(targetRegion.bounds.right, pageRegions[r].bounds.right), Math.min(targetRegion.bounds.top, pageRegions[r].bounds.top), Math.max(targetRegion.bounds.bottom, pageRegions[r].bounds.bottom));
+			if (this.containsNonCaptionableWords(aggregateBounds, page))
+				continue;
+			
+			//	include this one in the aggregate
+			targetRegion = new ImRegion(targetRegion.getDocument(), targetRegion.pageId, aggregateBounds, ImRegion.REGION_ANNOTATION_TYPE);
+		}
+		
+		//	return what we got
+		return targetRegion;
+	}
+	
 	private boolean containsNonCaptionableWords(BoundingBox bounds, ImPage page) {
 		ImWord[] words = page.getWordsInside(bounds);
 		for (int w = 0; w < words.length; w++) {
@@ -6388,7 +6637,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 			if (pageData[p].pageNumber == null)
 				pm.setInfo(" --> could not determine page number of page " + p + ".");
-			else pm.setInfo(" --> page number of " + p + " identified as " + pageData[p].pageNumber.value + " (score " + pageData[p].pageNumber.score + ")");
+			else pm.setInfo(" --> page number of " + p + " (id " + pageData[p].page.pageId + ") identified as " + pageData[p].pageNumber.value + " (score " + pageData[p].pageNumber.score + ")");
 		}
 	}
 	
@@ -6409,7 +6658,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			
 			//	correct that one oddjob in the middle
 			if ((bpn != null) && (fpn != null) && bpn.isConsistentWith(fpn)) {
-				pm.setInfo("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " for sequence inconsistency.");
+				pm.setInfo("   - eliminated page number " + pageData[p].pageNumber.value + " in page " + p + " (id " + pageData[p].page.pageId + ") for sequence inconsistency.");
 				pageData[p].pageNumber = null;
 				for (int n = 0; n < pageData[p].pageNumberCandidates.size(); n++) {
 					PageNumber pn = ((PageNumber) pageData[p].pageNumberCandidates.get(n));
@@ -6454,14 +6703,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 			if (bPageNumber == null)
 				continue;
-			PageNumber ePageNumber = new PageNumber(p, (bPageNumber.value - bPageNumber.pageId + p));
+			PageNumber ePageNumber = new PageNumber(pageData[p].page.pageId, (bPageNumber.value - bPageNumber.pageId + pageData[p].page.pageId));
 			if (existingPageNumbers.add("" + ePageNumber.value)) {
 				pageData[p].pageNumber = ePageNumber;
 				pageData[p].page.setAttribute(PAGE_NUMBER_ATTRIBUTE, ("" + ePageNumber.value));
 				bPageNumber = ePageNumber;
-				pm.setInfo(" --> backward-extrapolated page number of page " + p + " to " + pageData[p].pageNumber.value);
+				pm.setInfo(" --> backward-extrapolated page number of page " + p + " (id " + pageData[p].page.pageId + ") to " + pageData[p].pageNumber.value);
 			}
-			else pm.setInfo(" --> could not backward-extrapolated page number of page " + p + ", page number " + ePageNumber.value + " already assigned");
+			else pm.setInfo(" --> could not backward-extrapolated page number of page " + p + " (id " + pageData[p].page.pageId + "), page number " + ePageNumber.value + " already assigned");
 		}
 		
 		//	do forward sequence extrapolation
@@ -6473,14 +6722,14 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 			}
 			if (fPageNumber == null)
 				continue;
-			PageNumber ePageNumber = new PageNumber(p, (bPageNumber.value - bPageNumber.pageId + p));
+			PageNumber ePageNumber = new PageNumber(pageData[p].page.pageId, (bPageNumber.value - bPageNumber.pageId + pageData[p].page.pageId));
 			if (existingPageNumbers.add("" + ePageNumber.value)) {
 				pageData[p].pageNumber = ePageNumber;
 				pageData[p].page.setAttribute(PAGE_NUMBER_ATTRIBUTE, ("" + ePageNumber.value));
 				fPageNumber = ePageNumber;
-				pm.setInfo(" --> forward-extrapolated page number of page " + p + " to " + pageData[p].pageNumber.value);
+				pm.setInfo(" --> forward-extrapolated page number of page " + p + " (id " + pageData[p].page.pageId + ") to " + pageData[p].pageNumber.value);
 			}
-			else pm.setInfo(" --> could not forward-extrapolated page number of page " + p + ", page number " + ePageNumber.value + " already assigned");
+			else pm.setInfo(" --> could not forward-extrapolated page number of page " + p + " (id " + pageData[p].page.pageId + "), page number " + ePageNumber.value + " already assigned");
 		}
 	}
 	
@@ -6516,7 +6765,7 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		}
 	}
 	
-	private class PageNumber {
+	private static class PageNumber {
 		final int pageId;
 		final String valueStr;
 		final int value; // the integer value
@@ -6530,7 +6779,8 @@ public class DocumentStructureDetectorProvider extends AbstractImageMarkupToolPr
 		PageNumber(ImWord word) {
 			this.pageId = word.pageId;
 			this.valueStr = word.getString();
-			this.value = Integer.parseInt(word.getString());
+//			this.value = Integer.parseInt(word.getString()); // TODOne handle Roman numbers !!!
+			this.value = (this.valueStr.matches("[0-9]+") ? Integer.parseInt(this.valueStr) : StringUtils.parseRomanNumber(this.valueStr));
 			this.fuzzyness = 0;
 			this.ambiguity = 1;
 			this.firstWord = word;
@@ -6630,7 +6880,7 @@ Create HeadingStructureEditor
 //		testFileName = "29882.pdf"; // TODO figures come in horizontal stripes, bundle images
 		
 //		testFileName = "zt03881p227.pdf.imf"; // fails to detect full-page table on page 5
-//		testFileName = "zt03881p227.pdf.imdir"; // TODO fails to detect full-page table on page 5
+//		testFileName = "zt03881p227.pdf.imdir"; // TODOne fails to detect full-page table on page 5
 //		testFileName = "zt03881p227.pdf.imf"; // cuts off column headers on page 8 due to too narrow column gap
 		/* TODO revisit table extraction, try this:
 		 * - cut blocks into individual lines altogether
@@ -6643,17 +6893,18 @@ Create HeadingStructureEditor
 		 * ==> more versatile than mere column gap approach
 		 * ==> can handle column gap constrictions due to wide values
 		 */
-		testFileName = "Zootaxa/zt02241p032.pdf.raw.imf"; // TODO finally found bogus table document: zt02241p032.pdf (page 5) ==> test this sucker right to the solution
+//		testFileName = "Zootaxa/zt02241p032.pdf.raw.imf"; // TODOne finally found bogus table document: zt02241p032.pdf (page 5) ==> works after re-decoding to add graphics
+		testFileName = "PROC.ENTOMOL.SOC.WASH.122.1.12–24.pdf.raw.imf"; // TODO fix heading false positives
 		
 		ImDocument doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract/" + testFileName));
-		
-		DocumentStyle.addProvider(new DocumentStyle.Provider() {
-			public Properties getStyleFor(Attributed doc) {
-				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/zootaxa.2007.journal_article.docStyle"));
-//				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/ijsem.0000.journal_article.docStyle"));
-				return ds.toProperties();
-			}
-		});
+//		
+//		DocumentStyle.addProvider(new DocumentStyle.Provider() {
+//			public Properties getStyleFor(Attributed doc) {
+//				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/zootaxa.2007.journal_article.docStyle"));
+////				Settings ds = Settings.loadSettings(new File("E:/GoldenGATEv3/Plugins/DocumentStyleProviderData/ijsem.0000.journal_article.docStyle"));
+//				return ds.toProperties();
+//			}
+//		});
 		
 //		dsdp.detectTablesSimple = false;
 		dsdp.detectDocumentStructure(doc, true, ProgressMonitor.dummy);

@@ -32,60 +32,38 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
-import java.awt.Image;
 import java.awt.Point;
-import java.awt.datatransfer.DataFlavor;
-import java.awt.datatransfer.StringSelection;
-import java.awt.datatransfer.Transferable;
-import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
-import java.awt.image.BufferedImage;
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Reader;
-import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Properties;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
-import javax.imageio.ImageIO;
-import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
-import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JTextField;
-import javax.swing.filechooser.FileFilter;
-import javax.swing.plaf.basic.BasicFileChooserUI;
 
-import de.uka.ipd.idaho.easyIO.streams.CharSequenceReader;
 import de.uka.ipd.idaho.gamta.AttributeUtils;
+import de.uka.ipd.idaho.gamta.util.CountingSet;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.PropertiesData;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.constants.LiteratureConstants;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
-import de.uka.ipd.idaho.gamta.util.imaging.PageImage;
 import de.uka.ipd.idaho.gamta.util.swing.DialogFactory;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
@@ -93,14 +71,9 @@ import de.uka.ipd.idaho.im.ImLayoutObject;
 import de.uka.ipd.idaho.im.ImObject;
 import de.uka.ipd.idaho.im.ImPage;
 import de.uka.ipd.idaho.im.ImRegion;
-import de.uka.ipd.idaho.im.ImSupplement;
-import de.uka.ipd.idaho.im.ImSupplement.Figure;
-import de.uka.ipd.idaho.im.ImSupplement.Graphics;
-import de.uka.ipd.idaho.im.ImSupplement.Scan;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.analysis.Imaging;
 import de.uka.ipd.idaho.im.analysis.Imaging.AnalysisImage;
-import de.uka.ipd.idaho.im.analysis.Imaging.ImagePartRectangle;
 import de.uka.ipd.idaho.im.analysis.PageAnalysis;
 import de.uka.ipd.idaho.im.analysis.PageAnalysis.BlockLayout;
 import de.uka.ipd.idaho.im.analysis.PageAnalysis.BlockMetrics;
@@ -110,7 +83,7 @@ import de.uka.ipd.idaho.im.imagine.plugins.ReactionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.ImageMarkupTool;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
-import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.TwoClickSelectionAction;
+import de.uka.ipd.idaho.im.util.ImDocumentStyle;
 import de.uka.ipd.idaho.im.util.ImUtils;
 import de.uka.ipd.idaho.im.util.ImUtils.StringPair;
 
@@ -119,8 +92,7 @@ import de.uka.ipd.idaho.im.util.ImUtils.StringPair;
  * 
  * @author sautter
  */
-public class RegionActionProvider extends AbstractSelectionActionProvider implements ImageMarkupToolProvider, LiteratureConstants, ReactionProvider {
-	
+public class RegionActionProvider extends AbstractSelectionActionProvider implements LiteratureConstants, ImageMarkupToolProvider, ReactionProvider {
 	private static final String REGION_CONVERTER_IMT_NAME = "ConvertRegions";
 	private static final String REGION_RETYPER_IMT_NAME = "RetypeRegions";
 	private static final String REGION_REMOVER_IMT_NAME = "RemoveRegions";
@@ -433,9 +405,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	 */
 	public void annotationRemoved(ImAnnotation annotation, ImDocumentMarkupPanel idmp, boolean allowPrompt) {}
 	
-	private static DocumentStyle getBlockStyle(ImDocument doc) {
-		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
-		return docStyle.getSubset("layout").getSubset("block");
+	static ImDocumentStyle getBlockStyle(ImDocument doc) {
+		ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(doc);
+		if (docStyle == null)
+			docStyle = new ImDocumentStyle(new PropertiesData(new Properties()));
+		return docStyle.getImSubset("layout").getImSubset("block");
 	}
 	
 	/* (non-Javadoc)
@@ -532,7 +506,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		
 		//	mark region
 		if (paintedRegionTypes.isEmpty())
-			actions.add(new SelectionAction("markRegion", "Mark Region", ("Mark a region from the selection")) {
+			actions.add(new SelectionAction("markRegion", "Mark Region", "Mark a region from the selection") {
 				public boolean performAction(ImDocumentMarkupPanel invoker) {
 					String regionType = ImUtils.promptForObjectType("Enter Region Type", "Enter or select type of region to create", regionTypes, null, true);
 					if (regionType == null)
@@ -540,11 +514,13 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					ImRegion region = new ImRegion(page, selectedBounds, regionType);
 					if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(regionType))
 						ensureBlockStructure(region);
+					else if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(regionType))
+						ensureColumnStructure(region);
 					idmp.setRegionsPainted(regionType, true);
 					return true;
 				}
 			});
-		else actions.add(new SelectionAction("markRegion", "Mark Region", ("Mark a region from the selection")) {
+		else actions.add(new SelectionAction("markRegion", "Mark Region", "Mark a region from the selection") {
 			public boolean performAction(ImDocumentMarkupPanel invoker) {
 				return false;
 			}
@@ -559,6 +535,8 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							ImRegion region = new ImRegion(page, selectedBounds, regionType);
 							if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(regionType))
 								ensureBlockStructure(region);
+							else if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(regionType))
+								ensureColumnStructure(region);
 							invoker.endAtomicAction();
 							invoker.setRegionsPainted(regionType, true);
 							invoker.validate();
@@ -576,6 +554,8 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 							ImRegion region = new ImRegion(page, selectedBounds, regionType);
 							if (ImRegion.BLOCK_ANNOTATION_TYPE.equals(regionType))
 								ensureBlockStructure(region);
+							else if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(regionType))
+								ensureColumnStructure(region);
 							invoker.endAtomicAction();
 							invoker.setRegionsPainted(regionType, true);
 							invoker.validate();
@@ -619,63 +599,6 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					}
 				});
 			}
-			
-			//	check supplements to tell image from graphics if document born-digital
-			boolean isImage;
-			if (idmp.documentBornDigital) {
-				ImSupplement[] pageSupplements = page.getSupplements();
-				Figure[] figures = ImSupplement.getFiguresIn(pageSupplements, selectedBox);
-				int figureArea = 0;
-				for (int f = 0; f < figures.length; f++)
-					figureArea += figures[f].getBounds().getArea();
-				Graphics[] graphics = ImSupplement.getGraphicsIn(pageSupplements, selectedBox);
-				int graphicsArea = 0;
-				for (int g = 0; g < graphics.length; g++)
-					graphicsArea += graphics[g].getBounds().getArea();
-				
-				//	area mostly (>= 80%) covered by figures, any graphics are likely decoration
-				if ((figureArea * 5) >= (selectedBox.getArea() * 4))
-					isImage = true;
-				//	area contains more figures that graphics
-				else if (figureArea > graphicsArea)
-					isImage = true;
-				//	less figures than graphics
-				else isImage = false;
-			}
-			else isImage = true;
-			
-			//	mark selected non-white area as image (case with words comes from text block actions)
-			if (isImage)
-				actions.add(new SelectionAction("markRegionImage", "Mark Image", "Mark selected region as an image.") {
-					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						return markImageOrGraphics(page, selectedBounds, selectedRegions, ImRegion.IMAGE_TYPE, idmp);
-					}
-					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-						JMenuItem mi = super.getMenuItem(invoker);
-						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-						if (regionTypeColor != null) {
-							mi.setOpaque(true);
-							mi.setBackground(regionTypeColor);
-						}
-						return mi;
-					}
-				});
-			
-			//	mark selected non-white area as graphics (case with words comes from text block actions)
-			else actions.add(new SelectionAction("markRegionGraphics", "Mark Graphics", "Mark selected region as a vector based graphics.") {
-				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					return markImageOrGraphics(page, selectedBounds, selectedRegions, ImRegion.GRAPHICS_TYPE, idmp);
-				}
-				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-					JMenuItem mi = super.getMenuItem(invoker);
-					Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
-					if (regionTypeColor != null) {
-						mi.setOpaque(true);
-						mi.setBackground(regionTypeColor);
-					}
-					return mi;
-				}
-			});
 		}
 		
 		//	single region selected
@@ -804,15 +727,26 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			});
 			
 			//	remove regions of some type together
-			if (multiSelectedRegionsByType.size() == 1)
+			if (multiSelectedRegionsByType.size() == 1) {
+				final String removeRegionType = ((String) multiSelectedRegionsByType.firstKey());
 				actions.add(new SelectionAction("removeTypeRegion", ("Remove " + multiSelectedRegionsByType.firstKey() + " Regions"), ("Remove all selected '" + multiSelectedRegionsByType.firstKey() + "' regions.")) {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						LinkedList typeRegs = ((LinkedList) multiSelectedRegionsByType.get(multiSelectedRegionsByType.firstKey()));
+						LinkedList typeRegs = ((LinkedList) multiSelectedRegionsByType.get(removeRegionType));
 						while (typeRegs.size() != 0)
 							page.removeRegion((ImRegion) typeRegs.removeFirst());
 						return true;
 					}
+					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+						JMenuItem mi = super.getMenuItem(invoker);
+						Color regionTypeColor = idmp.getLayoutObjectColor(removeRegionType);
+						if (regionTypeColor != null) {
+							mi.setOpaque(true);
+							mi.setBackground(regionTypeColor);
+						}
+						return mi;
+					}
 				});
+			}
 			else if (multiSelectedRegionsByType.size() > 1)
 				actions.add(new SelectionAction("removeTypeRegion", "Remove Regions ...", "Remove selected regions by type.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
@@ -822,20 +756,20 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						JMenu pm = new JMenu("Remove Regions ...");
 						JMenuItem mi;
 						for (Iterator rtit = multiSelectedRegionsByType.keySet().iterator(); rtit.hasNext();) {
-							final String regType = ((String) rtit.next());
-							final LinkedList typeRegs = ((LinkedList) multiSelectedRegionsByType.get(regType));
-							mi = new JMenuItem("- " + regType + " (" + typeRegs.size() + ")");
+							final String regionType = ((String) rtit.next());
+							final LinkedList typeRegions = ((LinkedList) multiSelectedRegionsByType.get(regionType));
+							mi = new JMenuItem("- " + regionType + " (" + typeRegions.size() + ")");
 							mi.addActionListener(new ActionListener() {
 								public void actionPerformed(ActionEvent ae) {
-									invoker.beginAtomicAction("Remove '" + regType + "' Regions");
-									while (typeRegs.size() != 0)
-										page.removeRegion((ImRegion) typeRegs.removeFirst());
+									invoker.beginAtomicAction("Remove '" + regionType + "' Regions");
+									while (typeRegions.size() != 0)
+										page.removeRegion((ImRegion) typeRegions.removeFirst());
 									invoker.endAtomicAction();
 									invoker.validate();
 									invoker.repaint();
 								}
 							});
-							Color regionTypeColor = idmp.getLayoutObjectColor(regType);
+							Color regionTypeColor = idmp.getLayoutObjectColor(regionType);
 							if (regionTypeColor != null) {
 								mi.setOpaque(true);
 								mi.setBackground(regionTypeColor);
@@ -994,7 +928,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 					block = ((ImRegion) ((LinkedList) selectedRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE)).getFirst());
 				else block = ((ImRegion) ((LinkedList) contextRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE)).getFirst());
 				
-				//	get lines
+				//	get lines, and offer revising block structure if there are multiple
 				final ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
 				if (blockLines.length > 1)
 					actions.add(new SelectionAction("paragraphsInBlock", "Revise Block Paragraphs", "Revise the grouping of the lines in the block into paragraphs.") {
@@ -1009,6 +943,69 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 								mi.setBackground(regionTypeColor);
 							}
 							return mi;
+						}
+					});
+				
+				//	offer adjusting block text direction
+				if (idmp.areTextStreamsPainted())
+					actions.add(new SelectionAction("textDirectionBlock", "Set Block Text Direction", "Adjust the (general, predominant) text direction of the block.") {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return false;
+						}
+						public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+							String blockTextDirection = ((String) block.getAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, ImRegion.TEXT_DIRECTION_LEFT_RIGHT));
+							JMenu pm = new JMenu("Block Text Direction");
+							ButtonGroup bg = new ButtonGroup();
+							final JMenuItem lrmi = new JRadioButtonMenuItem("Left-Right", ImRegion.TEXT_DIRECTION_LEFT_RIGHT.equals(blockTextDirection));
+							lrmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (lrmi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_LEFT_RIGHT, invoker);
+								}
+							});
+							pm.add(lrmi);
+							bg.add(lrmi);
+							final JMenuItem bumi = new JRadioButtonMenuItem("Bottom-Up", ImRegion.TEXT_DIRECTION_BOTTOM_UP.equals(blockTextDirection));
+							bumi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (bumi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_BOTTOM_UP, invoker);
+								}
+							});
+							pm.add(bumi);
+							bg.add(bumi);
+							final JMenuItem tdmi = new JRadioButtonMenuItem("Top-Down", ImRegion.TEXT_DIRECTION_TOP_DOWN.equals(blockTextDirection));
+							tdmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (tdmi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_TOP_DOWN, invoker);
+								}
+							});
+							pm.add(tdmi);
+							bg.add(tdmi);
+							final JMenuItem udmi = new JRadioButtonMenuItem("Right-Left & Upside-Down", ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN.equals(blockTextDirection));
+							udmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (udmi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN, invoker);
+								}
+							});
+							pm.add(udmi);
+							bg.add(udmi);
+							pm.setToolTipText(this.tooltip);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+							if (regionTypeColor != null) {
+								pm.setOpaque(true);
+								pm.setBackground(regionTypeColor);
+							}
+							return pm;
+						}
+						private void setTextDirection(String textDirection, ImDocumentMarkupPanel invoker) {
+							invoker.beginAtomicAction(this.label);
+							RegionActionProvider.this.setTextDirection(block, textDirection);
+							invoker.endAtomicAction();
+							invoker.validate();
+							invoker.repaint();
 						}
 					});
 //				
@@ -1171,7 +1168,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						sortIntoLines(page, blockWords);
 						
 						//	get block style
-						DocumentStyle blockStyle = getBlockStyle(page.getDocument());
+						ImDocumentStyle blockStyle = getBlockStyle(page.getDocument());
 						
 						//	update paragraphs and text stream structure
 						updateBlockStructure(page, block, blockStyle, true);
@@ -1213,40 +1210,30 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 			if (idmp.areRegionsPainted(ImRegion.COLUMN_ANNOTATION_TYPE) && idmp.areRegionsPainted(ImRegion.BLOCK_ANNOTATION_TYPE) && multiSelectedRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE))
 				actions.add(new SelectionAction("blocksInColumn", "Merge Columns", "Merge selected columns, re-detect first blocks, then lines, and group the latter into paragraphs.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						//	TODO implement this
-						return false;
-//						
-//						//	get & merge blocks
-//						LinkedList blockList = ((LinkedList) multiSelectedRegionsByType.get(ImRegion.BLOCK_ANNOTATION_TYPE));
-//						ImRegion[] blocks = ((ImRegion[]) blockList.toArray(new ImRegion[blockList.size()]));
-//						for (int b = 0; b < blocks.length; b++)
-//							page.removeRegion(blocks[b]);
-//						ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(blocks), ImRegion.BLOCK_ANNOTATION_TYPE);
-//						
-//						//	remove old lines and paragraphs
-//						ImRegion[] blockParagraphs = block.getRegions(ImRegion.PARAGRAPH_TYPE);
-//						for (int p = 0; p < blockParagraphs.length; p++)
-//							page.removeRegion(blockParagraphs[p]);
-//						ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
-//						for (int l = 0; l < blockLines.length; l++)
-//							page.removeRegion(blockLines[l]);
-//						
-//						//	get block words
-//						ImWord[] blockWords = block.getWords();
-//						sortIntoLines(page, blockWords);
-//						
-//						//	re-detect paragraphs
-////						PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), null);
-////						BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);
-////						BlockLayout blockLayout = blockMetrics.analyze();
-////						blockLayout.writeParagraphStructure();
-//						PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block);
-//						
-//						//	update text stream structure
-//						updateBlockTextStream(block);
-//						
-//						//	finally ...
-//						return true;
+						
+						//	compute merged column bounds and clean up columns
+						LinkedList columnList = ((LinkedList) multiSelectedRegionsByType.get(ImRegion.COLUMN_ANNOTATION_TYPE));
+						ImRegion[] columns = ((ImRegion[]) columnList.toArray(new ImRegion[columnList.size()]));
+						for (int b = 0; b < columns.length; b++)
+							page.removeRegion(columns[b]);
+						BoundingBox columnBounds = ImLayoutObject.getAggregateBox(columns);
+						
+						//	remove old blocks, paragraphs, and lines
+						ImRegion[] columnBlocks = page.getRegionsInside(ImRegion.BLOCK_ANNOTATION_TYPE, columnBounds, false);
+						for (int b = 0; b < columnBlocks.length; b++)
+							page.removeRegion(columnBlocks[b]);
+						ImRegion[] columnParagraphs = page.getRegionsInside(ImRegion.PARAGRAPH_TYPE, columnBounds, false);
+						for (int p = 0; p < columnParagraphs.length; p++)
+							page.removeRegion(columnParagraphs[p]);
+						ImRegion[] columnLines = page.getRegionsInside(ImRegion.LINE_ANNOTATION_TYPE, columnBounds, false);
+						for (int l = 0; l < columnLines.length; l++)
+							page.removeRegion(columnLines[l]);
+						
+						//	mark merged column
+						ImRegion column = markColumn(page, columnBounds);
+						
+						//	did we change anything?
+						return (column != null);
 					}
 					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
 						JMenuItem mi = super.getMenuItem(invoker);
@@ -1264,13 +1251,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				final ImRegion column = ((ImRegion) ((LinkedList) contextRegionsByType.get(ImRegion.COLUMN_ANNOTATION_TYPE)).getFirst());
 				actions.add(new SelectionAction("blocksInColumn", "Split Column", "Split selected column, re-detect blocks, then lines, and group the latter into paragraphs.") {
 					public boolean performAction(ImDocumentMarkupPanel invoker) {
-						//	TODO implement this
-						return false;
-//						return splitBlock(page, block, selectedBounds);
+						return splitColumn(page, column, selectedBounds);
 					}
 					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
 						JMenuItem mi = super.getMenuItem(invoker);
-						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.COLUMN_ANNOTATION_TYPE);
 						if (regionTypeColor != null) {
 							mi.setOpaque(true);
 							mi.setBackground(regionTypeColor);
@@ -1278,6 +1263,96 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 						return mi;
 					}
 				});
+			}
+			
+			//	if blocks and paragraphs visible and click inside block or block selected, offer re-detecting paragraphs
+			if (idmp.areRegionsPainted(ImRegion.COLUMN_ANNOTATION_TYPE) && (selectedRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE) || contextRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE)) && !multiSelectedRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE)) {
+				
+				//	get block
+				final ImRegion column;
+				if (selectedRegionsByType.containsKey(ImRegion.COLUMN_ANNOTATION_TYPE))
+					column = ((ImRegion) ((LinkedList) selectedRegionsByType.get(ImRegion.COLUMN_ANNOTATION_TYPE)).getFirst());
+				else column = ((ImRegion) ((LinkedList) contextRegionsByType.get(ImRegion.COLUMN_ANNOTATION_TYPE)).getFirst());
+				
+//				//	TODO get lines, offer revising column structure (basically to revise block splits and then paragraphs in each block)
+//				final ImRegion[] blockLines = column.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+//				if (blockLines.length > 1)
+//					actions.add(new SelectionAction("paragraphsInBlock", "Revise Block Paragraphs", "Revise the grouping of the lines in the block into paragraphs.") {
+//						public boolean performAction(ImDocumentMarkupPanel invoker) {
+//							return restructureBlock(page, column, column.getRegions(ImRegion.PARAGRAPH_TYPE), blockLines);
+//						}
+//						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+//							JMenuItem mi = super.getMenuItem(invoker);
+//							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.BLOCK_ANNOTATION_TYPE);
+//							if (regionTypeColor != null) {
+//								mi.setOpaque(true);
+//								mi.setBackground(regionTypeColor);
+//							}
+//							return mi;
+//						}
+//					});
+				
+				//	offer adjusting column text direction
+				if (idmp.areTextStreamsPainted())
+					actions.add(new SelectionAction("textDirectionColumn", "Set Column Text Direction", "Adjust the (general, predominant) text direction of the column.") {
+						public boolean performAction(ImDocumentMarkupPanel invoker) {
+							return false;
+						}
+						public JMenuItem getMenuItem(final ImDocumentMarkupPanel invoker) {
+							String columnTextDirection = ((String) column.getAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, ImRegion.TEXT_DIRECTION_LEFT_RIGHT));
+							JMenu pm = new JMenu("Column Text Direction");
+							ButtonGroup bg = new ButtonGroup();
+							final JMenuItem lrmi = new JRadioButtonMenuItem("Left-Right", ImRegion.TEXT_DIRECTION_LEFT_RIGHT.equals(columnTextDirection));
+							lrmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (lrmi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_LEFT_RIGHT, invoker);
+								}
+							});
+							pm.add(lrmi);
+							bg.add(lrmi);
+							final JMenuItem bumi = new JRadioButtonMenuItem("Bottom-Up", ImRegion.TEXT_DIRECTION_BOTTOM_UP.equals(columnTextDirection));
+							bumi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (bumi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_BOTTOM_UP, invoker);
+								}
+							});
+							pm.add(bumi);
+							bg.add(bumi);
+							final JMenuItem tdmi = new JRadioButtonMenuItem("Top-Down", ImRegion.TEXT_DIRECTION_TOP_DOWN.equals(columnTextDirection));
+							tdmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (tdmi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_TOP_DOWN, invoker);
+								}
+							});
+							pm.add(tdmi);
+							bg.add(tdmi);
+							final JMenuItem udmi = new JRadioButtonMenuItem("Right-Left & Upside-Down", ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN.equals(columnTextDirection));
+							udmi.addActionListener(new ActionListener() {
+								public void actionPerformed(ActionEvent ae) {
+									if (udmi.isSelected())
+										setTextDirection(ImRegion.TEXT_DIRECTION_RIGHT_LEFT_UPSIDE_DOWN, invoker);
+								}
+							});
+							pm.add(udmi);
+							bg.add(udmi);
+							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.COLUMN_ANNOTATION_TYPE);
+							if (regionTypeColor != null) {
+								pm.setOpaque(true);
+								pm.setBackground(regionTypeColor);
+							}
+							return pm;
+						}
+						private void setTextDirection(String textDirection, ImDocumentMarkupPanel invoker) {
+							invoker.beginAtomicAction(this.label);
+							RegionActionProvider.this.setTextDirection(column, textDirection);
+							invoker.endAtomicAction();
+							invoker.validate();
+							invoker.repaint();
+						}
+					});
 			}
 		}
 		
@@ -1291,383 +1366,42 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		 * TODO also consider applying this to generic 'region' regions, or discarding these guys altogether
 		 */
 		
-		//	get supplements if we might need them for images or graphics
-		//	TODO move all the caption and target handling (including exporting) to TextBlockActions (we mark images and captions there after all)
-		final ImSupplement[] supplements = ((idmp.areRegionsPainted(ImRegion.IMAGE_TYPE) || idmp.areRegionsPainted(ImRegion.GRAPHICS_TYPE)) ? page.getSupplements() : null);
-		
-		//	offer copying selected figure to clipboard, as well as assigning caption
-		if (idmp.areRegionsPainted(ImRegion.IMAGE_TYPE)) {
-			LinkedHashSet selectedImages = new LinkedHashSet();
-			for (int r = 0; r < contextRegions.length; r++) {
-				if (ImRegion.IMAGE_TYPE.equals(contextRegions[r].getType()))
-					selectedImages.add(contextRegions[r]);
-			}
-			for (int r = 0; r < selectedRegions.length; r++) {
-				if (ImRegion.IMAGE_TYPE.equals(selectedRegions[r].getType()))
-					selectedImages.add(selectedRegions[r]);
-			}
-			if (selectedImages.size() == 1) {
-				final ImRegion selImage = ((ImRegion) selectedImages.iterator().next());
-				actions.add(new TwoClickSelectionAction("assignCaptionImage", "Assign Caption", "Assign a caption to this image with a second click.") {
-					private ImWord artificialStartWord = null;
-					public boolean performAction(ImWord secondWord) {
-						
-						//	find affected caption
-						ImAnnotation[] wordAnnots = idmp.document.getAnnotationsSpanning(secondWord);
-						ArrayList wordCaptions = new ArrayList(2);
-						for (int a = 0; a < wordAnnots.length; a++) {
-							if (!ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
-								continue;
-							if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
-								wordCaptions.add(wordAnnots[a]);
-							else if (wordAnnots[a].hasAttribute(IN_LINE_OBJECT_MARKER_ATTRIBUTE))
-								wordCaptions.add(wordAnnots[a]);
-						}
-						if (wordCaptions.size() != 1)
-							return false;
-						ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
-						
-						//	does this caption match?
-						String firstWordStr = ImUtils.getStringFrom(wordCaption.getFirstWord());
-						if (firstWordStr.toLowerCase().startsWith("tab")) {
-							int choice = DialogFactory.confirm("This caption appears to belong to a table rather than an image.\r\nAre you sure you want to assign it to the image?", "Assign Table Caption to Image?", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-							if (choice != JOptionPane.YES_OPTION)
-								return false;
-						}
-						
-						//	set attributes
-						wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, selImage.bounds.toString());
-						wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + selImage.pageId));
-						return true;
-					}
-					public ImWord getFirstWord() {
-						if (this.artificialStartWord == null)
-							this.artificialStartWord = new ImWord(selImage.getDocument(), selImage.pageId, selImage.bounds, "IMAGE");
-						return this.artificialStartWord;
-					}
-					public String getActiveLabel() {
-						return ("Click on a caption to assign it to the image at " + selImage.bounds.toString() + " on page " + (selImage.pageId + 1));
-					}
-					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-						JMenuItem mi = super.getMenuItem(invoker);
-						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-						if (regionTypeColor != null) {
-							mi.setOpaque(true);
-							mi.setBackground(regionTypeColor);
-						}
-						return mi;
-					}
-				});
-				final Figure[] clickedFigures = ImSupplement.getFiguresAt(supplements, selectedBox);
-				final Figure[] contextFigures = ImSupplement.getFiguresIn(supplements, selImage.bounds);
-				if (clickedFigures.length < 2) // clicked single figure, or we have a scan and no figures at all
-					actions.add(new SelectionAction("copyImage", "Copy Image", "Copy the selected image to the system clipboard.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							Image image = null;
-							try {
-								if (clickedFigures.length == 1)
-									image = ImageIO.read(clickedFigures[0].getInputStream());
-								else for (int s = 0; s < supplements.length; s++)
-									if (supplements[s] instanceof Scan) {
-										BufferedImage scan = ImageIO.read(((Scan) supplements[s]).getInputStream());
-										image = scan.getSubimage(selImage.bounds.left, selImage.bounds.top, (selImage.bounds.right - selImage.bounds.left), (selImage.bounds.bottom - selImage.bounds.top));
-									}
-							} catch (Exception e) {}
-							if (image == null) {
-								PageImage pageImage = page.getPageImage();
-								if (pageImage != null)
-									image = pageImage.image.getSubimage(selImage.bounds.left, selImage.bounds.top, (selImage.bounds.right - selImage.bounds.left), (selImage.bounds.bottom - selImage.bounds.top));
-							}
-							if (image != null)
-								ImUtils.copy(new ImageSelection(image));
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-				if (clickedFigures.length == 1) // clicked single figure
-					actions.add(new SelectionAction("saveImage", "Save Image", "Save the selected image to disk.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							String imageFileName = getExportFileName(idmp.document, page, selImage);
-							File imageFile = chooseExportFile(imageFileName, null, false);
-							if (imageFile == null)
-								return false;
-							
-							//	write image (we can simply loop through PNG)
-							try {
-								OutputStream out = new BufferedOutputStream(new FileOutputStream(imageFile));
-								if (clickedFigures[0].getMimeType().toLowerCase().endsWith("/png")) {
-									InputStream in = new BufferedInputStream(clickedFigures[0].getInputStream());
-									byte[] buffer = new byte[1024];
-									for (int r; (r = in.read(buffer, 0, buffer.length)) != -1;)
-										out.write(buffer, 0, r);
-									in.close();
-								}
-								else {
-									BufferedImage image = ImageIO.read(clickedFigures[0].getInputStream());
-									ImageIO.write(image, "PNG", out);
-								}
-								out.flush();
-								out.close();
-							}
-							catch (IOException ioe) {
-								ioe.printStackTrace(System.out);
-								DialogFactory.alert(("The selected image could not be saved:\r\n" + ioe.getMessage()), "Error Saving Image", JOptionPane.ERROR_MESSAGE);
-							}
-							
-							//	we did not change anything ...
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-				if (contextFigures.length > 1) {// we have an image group to copy or save
-					actions.add(new SelectionAction("copyImageGroup", "Copy Image Group", "Copy the whole selected image group to the system clipboard.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							copyCompositeImage(contextFigures, -1, null, null, page);
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-					actions.add(new SelectionAction("saveImageGroup", "Save Image Group", "Save the whole selected image group to disk.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							String imageFileName = getExportFileName(idmp.document, page, selImage);
-							File imageFile = chooseExportFile(imageFileName, null, false);
-							if (imageFile != null)
-								saveCompositeImage(imageFile, contextFigures, -1, null, null, page);
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-				}
-				final Graphics[] contextGraphics = ImSupplement.getGraphicsIn(supplements, selImage.bounds);
-				final ImWord[] contextWords = page.getWordsInside(selImage.bounds);
-				if ((clickedFigures.length != 0) && ((selectedWords.length + contextGraphics.length) != 0)) {
-					actions.add(new SelectionAction("copyImageCustom", "Copy Image or Group ...", "Copy the selected image or group to the system clipboard, with custom options.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							ExportParameterPanel exportParamPanel = new ExportParameterPanel(contextFigures, contextGraphics, contextWords, false, false);
-							int choice = DialogFactory.confirm(exportParamPanel, "Image Export Options", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-							if (choice == JOptionPane.OK_OPTION) {
-								int exportDpi = exportParamPanel.getDpi();
-								copyCompositeImage(contextFigures, exportDpi, (exportParamPanel.includeGraphics() ? contextGraphics : null), (exportParamPanel.includeWords() ? contextWords : null), page);
-							}
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-					actions.add(new SelectionAction("saveImageCustom", "Save Image or Group ...", "Save the selected image or group to disk, with custom options.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							ExportParameterPanel exportParamPanel = new ExportParameterPanel(contextFigures, contextGraphics, contextWords, false, true);
-							String imageFileName = getExportFileName(idmp.document, page, selImage);
-							File imageFile = chooseExportFile(imageFileName, exportParamPanel, false);
-							if (imageFile != null)
-								saveCompositeImage(imageFile, contextFigures, exportParamPanel.getDpi(), (exportParamPanel.includeGraphics() ? contextGraphics : null), (exportParamPanel.includeWords() ? contextWords : null), page);
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-				}
-			}
-		}
-		
-		//	offer copying selected graphics to clipboard, as well as assigning caption
-		if (idmp.areRegionsPainted(ImRegion.GRAPHICS_TYPE)) {
-			LinkedHashSet selectedGraphics = new LinkedHashSet();
-			for (int r = 0; r < contextRegions.length; r++) {
-				if (ImRegion.GRAPHICS_TYPE.equals(contextRegions[r].getType()))
-					selectedGraphics.add(contextRegions[r]);
-			}
-			for (int r = 0; r < selectedRegions.length; r++) {
-				if (ImRegion.GRAPHICS_TYPE.equals(selectedRegions[r].getType()))
-					selectedGraphics.add(selectedRegions[r]);
-			}
-			if (selectedGraphics.size() == 1) {
-				final ImRegion selGraphics = ((ImRegion) selectedGraphics.iterator().next());
-				actions.add(new TwoClickSelectionAction("assignCaptionGraphics", "Assign Caption", "Assign a caption to this graphics with a second click.") {
-					private ImWord artificialStartWord = null;
-					public boolean performAction(ImWord secondWord) {
-						
-						//	find affected caption
-						ImAnnotation[] wordAnnots = idmp.document.getAnnotationsSpanning(secondWord);
-						ArrayList wordCaptions = new ArrayList(2);
-						for (int a = 0; a < wordAnnots.length; a++) {
-							if (!ImAnnotation.CAPTION_TYPE.equals(wordAnnots[a].getType()))
-								continue;
-							if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(secondWord.getTextStreamType()))
-								wordCaptions.add(wordAnnots[a]);
-							else if (wordAnnots[a].hasAttribute(IN_LINE_OBJECT_MARKER_ATTRIBUTE))
-								wordCaptions.add(wordAnnots[a]);
-						}
-						if (wordCaptions.size() != 1)
-							return false;
-						ImAnnotation wordCaption = ((ImAnnotation) wordCaptions.get(0));
-						
-						//	does this caption match?
-						String firstWordStr = ImUtils.getStringFrom(wordCaption.getFirstWord());
-						if (firstWordStr.toLowerCase().startsWith("tab")) {
-							int choice = DialogFactory.confirm("This caption appears to belong to a table rather than a graphics.\r\nAre you sure you want to assign it to the graphics?", "Assign Table Caption to Graphics?", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-							if (choice != JOptionPane.YES_OPTION)
-								return false;
-						}
-						
-						//	set attributes
-						wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, selGraphics.bounds.toString());
-						wordCaption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + selGraphics.pageId));
-						return true;
-					}
-					public ImWord getFirstWord() {
-						if (this.artificialStartWord == null)
-							this.artificialStartWord = new ImWord(selGraphics.getDocument(), selGraphics.pageId, selGraphics.bounds, "IMAGE");
-						return this.artificialStartWord;
-					}
-					public String getActiveLabel() {
-						return ("Click on a caption to assign it to the graphics at " + selGraphics.bounds.toString() + " on page " + (selGraphics.pageId + 1));
-					}
-					public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-						JMenuItem mi = super.getMenuItem(invoker);
-						Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
-						if (regionTypeColor != null) {
-							mi.setOpaque(true);
-							mi.setBackground(regionTypeColor);
-						}
-						return mi;
-					}
-				});
-				final Graphics[] clickedGraphics = ImSupplement.getGraphicsAt(supplements, selectedBox);
-				final Graphics[] contextGraphics = ImSupplement.getGraphicsIn(supplements, selGraphics.bounds);
-				if ((clickedGraphics.length + contextGraphics.length) != 0) {
-					actions.add(new SelectionAction("copyGraphics", "Copy Graphics", "Copy the selected graphics to the system clipboard.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							copyGraphics(((clickedGraphics.length == 0) ? contextGraphics : clickedGraphics), null, -1, null, page);
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-					actions.add(new SelectionAction("saveGraphics", "Save Graphics", "Save the selected graphics to disk.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							ExportParameterPanel exportParamPanel = new ExportParameterPanel(null, contextGraphics, null, true, true);
-							String graphicsFileName = getExportFileName(idmp.document, page, selGraphics);
-							File graphicsFile = chooseExportFile(graphicsFileName, exportParamPanel, true);
-							if (graphicsFile != null)
-								saveGraphics(graphicsFile, ((clickedGraphics.length == 0) ? contextGraphics : clickedGraphics), null, exportParamPanel.getDpi(), null, page);
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-				}
-				final Figure[] contextFigures = ImSupplement.getFiguresIn(supplements, selGraphics.bounds);
-				final ImWord[] contextWords = page.getWordsInside(selGraphics.bounds);
-				if (((selectedWords.length + contextFigures.length) != 0) || true) {
-					actions.add(new SelectionAction("copyGraphicsCustom", "Copy Graphics ...", "Copy the selected graphics to the system clipboard, with custom options.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							ExportParameterPanel exportParamPanel = new ExportParameterPanel(contextFigures, contextGraphics, contextWords, true, false);
-							int choice = DialogFactory.confirm(exportParamPanel, "Graphics Export Options", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-							if (choice == JOptionPane.OK_OPTION) {
-								int exportDpi = exportParamPanel.getDpi();
-								copyGraphics(((clickedGraphics.length == 0) ? contextGraphics : clickedGraphics), (exportParamPanel.includeFigures() ? contextFigures : null), exportDpi, (exportParamPanel.includeWords() ? contextWords : null), page);
-							}
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-					actions.add(new SelectionAction("saveGraphicsCustom", "Save Graphics ...", "Save the selected graphics to disk, with custom options.") {
-						public boolean performAction(ImDocumentMarkupPanel invoker) {
-							ExportParameterPanel exportParamPanel = new ExportParameterPanel(contextFigures, contextGraphics, contextWords, true, true);
-							String graphicsFileName = getExportFileName(idmp.document, page, selGraphics);
-							File graphicsFile = chooseExportFile(graphicsFileName, exportParamPanel, true);
-							if (graphicsFile != null)
-								saveGraphics(graphicsFile, ((clickedGraphics.length == 0) ? contextGraphics : clickedGraphics), (exportParamPanel.includeFigures() ? contextFigures : null), exportParamPanel.getDpi(), (exportParamPanel.includeWords() ? contextWords : null), page);
-							return false;
-						}
-						public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-							JMenuItem mi = super.getMenuItem(invoker);
-							Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
-							if (regionTypeColor != null) {
-								mi.setOpaque(true);
-								mi.setBackground(regionTypeColor);
-							}
-							return mi;
-						}
-					});
-				}
-			}
-		}
-		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
 	}
 	
-	private boolean cleanupPageRegions(ImPage page) {
+	void setTextDirection(ImRegion columnOrBlock, String textDirection) {
+		
+		//	prepare effective attribute value (default is omitted)
+		if (ImRegion.TEXT_DIRECTION_LEFT_RIGHT.equals(textDirection))
+			textDirection = null;
+		
+		//	set text direction of column or block proper
+		if (textDirection == null)
+			columnOrBlock.removeAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE);
+		else columnOrBlock.setAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, textDirection);
+		
+		//	on columns, set text direction of blocks
+		if (ImRegion.COLUMN_ANNOTATION_TYPE.equals(columnOrBlock.getType()))
+			setRegionTextDirection(columnOrBlock.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE), textDirection);
+		
+		//	set text direction of paragraphs and lines
+		setRegionTextDirection(columnOrBlock.getRegions(ImRegion.PARAGRAPH_TYPE), textDirection);
+		setRegionTextDirection(columnOrBlock.getRegions(ImRegion.LINE_ANNOTATION_TYPE), textDirection);
+		
+		//	order text stream
+		ImUtils.orderStream(columnOrBlock.getWords(), textDirection);
+	}
+	
+	private static void setRegionTextDirection(ImRegion[] regions, String textDirection) {
+		for (int r = 0; r < regions.length; r++) {
+			if (textDirection == null)
+				regions[r].removeAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE);
+			else regions[r].setAttribute(ImRegion.TEXT_DIRECTION_ATTRIBUTE, textDirection);
+		}
+	}
+	
+	boolean cleanupPageRegions(ImPage page) {
 		
 		//	keep track of any changes
 		boolean pageRegionsChanged = false;
@@ -1676,7 +1410,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		ArrayList pageRegions = new ArrayList(Arrays.asList(page.getRegions()));
 		ImWord[] pageWords = page.getWords();
 		
-		//	shrink any text regions to contained words (TODO really also take on columns?)
+		//	shrink any text regions to contained words
 		for (int r = 0; r < pageRegions.size(); r++) {
 			ImRegion pageRegion = ((ImRegion) pageRegions.get(r));
 			
@@ -1916,515 +1650,320 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		return BoundingBox.aggregate(bbs);
 	}
 	
-	private boolean markImageOrGraphics(ImPage page, BoundingBox selectedBounds, ImRegion[] selectedRegions, String type, ImDocumentMarkupPanel idmp) {
+	/**
+	 * Mark a column region, including blocks, paragraphs, and lines. This
+	 * method also orders the text stream. If the argument bounding box does
+	 * not contain any words, this method returns null.
+	 * @param page the page the column belongs to
+	 * @param columnBounds the bounding box of the column to create
+	 * @return the newly marked column
+	 */
+	public ImRegion markColumn(ImPage page, BoundingBox columnBounds) {
+		return markColumn(page, columnBounds, null);
+	}
+	
+	private static ImRegion markColumn(ImPage page, BoundingBox columnBounds, ImDocumentStyle blockStyle) {
+		ImWord[] words = page.getWordsInside(columnBounds);
+		if (words.length == 0)
+			return null;
 		
-		//	shrink selection
-		PageImage pi = page.getImage();
-		AnalysisImage ai = Imaging.wrapImage(pi.image, null);
-		ImagePartRectangle ipr = Imaging.getContentBox(ai);
-		ImagePartRectangle selectedIpr = ipr.getSubRectangle(selectedBounds.left, selectedBounds.right, selectedBounds.top, selectedBounds.bottom);
-		selectedIpr = Imaging.narrowLeftAndRight(selectedIpr);
-		selectedIpr = Imaging.narrowTopAndBottom(selectedIpr);
+		//	get last external predecessor and first external successor
+		Arrays.sort(words, ImUtils.textStreamOrder);
+		ImWord columnPrevWord = words[0].getPreviousWord();
+		ImWord columnNextWord = words[words.length-1].getNextWord();
 		
-		//	anything selected at all (too much effort to check in advance)
-		if ((selectedIpr.getWidth() == 0) || (selectedIpr.getHeight() == 0) || (Imaging.computeAverageBrightness(selectedIpr) > 125)) {
-			DialogFactory.alert(("The selection appears to be completely empty and thus cannot be marked as " + (ImRegion.IMAGE_TYPE.equals(type) ? "an image" : "a vector based graphics") + "."), ("Cannot Mark " + (ImRegion.IMAGE_TYPE.equals(type) ? "Image" : "Graphics")), JOptionPane.ERROR_MESSAGE);
+		//	cut out column words to avoid conflicts while re-chaining
+		if (columnPrevWord != null)
+			columnPrevWord.setNextWord(null);
+		if (columnNextWord != null)
+			columnNextWord.setPreviousWord(null);
+		
+		//	get block style
+		if (blockStyle == null)
+			blockStyle = getBlockStyle(page.getDocument());
+		
+		//	mark column and structure
+		ImRegion[] returnColumn = {null};
+		words = markColumn(page, words, returnColumn, blockStyle);
+		
+		//	re-wire text stream
+		words[0].setPreviousWord(columnPrevWord);
+		words[words.length - 1].setNextWord(columnNextWord);
+		
+		//	finally
+		return returnColumn[0];
+	}
+	
+	/**
+	 * Split a column region, marking blocks, paragraphs, and lines. The
+	 * argument column region has to be attached to the page it refers to, and
+	 * the argument selection box has to overlap with the argument column.
+	 * @param column the column to split
+	 * @param splitBounds the bounding box to perform the split with
+	 * @return true if the column was split, false otherwise
+	 */
+	public boolean splitColumn(ImRegion column, BoundingBox splitBounds) {
+		if (!column.bounds.overlaps(splitBounds))
 			return false;
+		ImPage page = column.getPage();
+		if (page == null)
+			return false;
+		return this.splitColumn(page, column, splitBounds);
+	}
+	
+	/**
+	 * Split a column region, marking blocks, paragraphs, and lines. The
+	 * argument selection box has to overlap with the argument column. Whether
+	 * or not the argument column is attached to the argument page, the result
+	 * of the split is.
+	 * @param page the page to split split the column in
+	 * @param column the column to split
+	 * @param splitBounds the bounding box to perform the split with
+	 * @return true if the column was split, false otherwise
+	 */
+	public boolean splitColumn(ImPage page, ImRegion column, BoundingBox selectedBounds) {
+		
+		//	TODO leave tables alone
+		
+		//	TODO leave captions alone
+		//	TODO leave labels alone
+		
+		//	sort block words into top, left, right, and bottom of as well as inside selection
+		ImWord[] columnWords = column.getWords();
+		ArrayList aboveWords = new ArrayList();
+		ArrayList belowWords = new ArrayList();
+		ArrayList leftWords = new ArrayList();
+		ArrayList rightWords = new ArrayList();
+		ArrayList selectedWords = new ArrayList();
+		for (int w = 0; w < columnWords.length; w++) {
+			if (columnWords[w].centerY < selectedBounds.top)
+				aboveWords.add(columnWords[w]);
+			else if (selectedBounds.bottom <= columnWords[w].centerY)
+				belowWords.add(columnWords[w]);
+			else if (columnWords[w].centerX < selectedBounds.left)
+				leftWords.add(columnWords[w]);
+			else if (selectedBounds.right <= columnWords[w].centerX)
+				rightWords.add(columnWords[w]);
+			else selectedWords.add(columnWords[w]);
 		}
 		
-		//	determine bounding box
-		BoundingBox iogBounds = new BoundingBox(selectedIpr.getLeftCol(), selectedIpr.getRightCol(), selectedIpr.getTopRow(), selectedIpr.getBottomRow());
+		//	anything selected, everything selected?
+		if (selectedWords.isEmpty() || (selectedWords.size() == columnWords.length))
+			return false;
 		
-		//	clean up nested regions
-		for (int r = 0; r < selectedRegions.length; r++) {
-			if (type.equals(selectedRegions[r].getType()) && !iogBounds.includes(selectedRegions[r].bounds, true))
+		//	remove old blocks, paragraphs, and lines
+		ImRegion[] columnBlocks = column.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+		for (int b = 0; b < columnBlocks.length; b++)
+			page.removeRegion(columnBlocks[b]);
+		ImRegion[] columnParagraphs = column.getRegions(ImRegion.PARAGRAPH_TYPE);
+		for (int p = 0; p < columnParagraphs.length; p++)
+			page.removeRegion(columnParagraphs[p]);
+		ImRegion[] columnLines = column.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
+		for (int l = 0; l < columnLines.length; l++)
+			page.removeRegion(columnLines[l]);
+		
+		//	remove the to-split column (need to do this before marking the blocks so it doesn't interfere with paragraph detection)
+		page.removeRegion(column);
+		
+		//	get last external predecessor and first external successor
+		//	TODO make damn sure to connect text streams to outside predecessors and successors
+		//	TODO also make damn sure to not connect any previously unconnected words (page titles, captions, etc.)
+		Arrays.sort(columnWords, ImUtils.textStreamOrder);
+		ImWord columnPrevWord = columnWords[0].getPreviousWord();
+		ImWord columnNextWord = columnWords[columnWords.length-1].getNextWord();
+		
+		//	cut out column words to avoid conflicts while re-chaining
+		if (columnPrevWord != null)
+			columnPrevWord.setNextWord(null);
+		if (columnNextWord != null)
+			columnNextWord.setPreviousWord(null);
+		
+		//	get block style (no need to do so over and over again when marking blocks)
+		ImDocumentStyle blockStyle = getBlockStyle(page.getDocument());
+		
+		//	collect block words in order of chaining
+		ArrayList columnWordLists = new ArrayList();
+		
+		//	if we have a plain left-right split, chain columns left to right
+		if (aboveWords.isEmpty() && belowWords.isEmpty()) {
+			if (leftWords.size() != 0)
+				columnWordLists.add(markColumn(page, leftWords, blockStyle));
+			if (selectedWords.size() != 0)
+				columnWordLists.add(markColumn(page, selectedWords, blockStyle));
+			if (rightWords.size() != 0)
+				columnWordLists.add(markColumn(page, rightWords, blockStyle));
+		}
+		
+		//	selection cut out on top left corner
+		else if (aboveWords.isEmpty() && leftWords.isEmpty()) {
+			if (selectedWords.size() != 0)
+				columnWordLists.add(markColumn(page, selectedWords, blockStyle));
+			if (rightWords.size() != 0)
+				columnWordLists.add(markColumn(page, rightWords, blockStyle));
+			if (belowWords.size() != 0)
+				columnWordLists.add(markColumn(page, belowWords, blockStyle));
+		}
+		
+		//	selection cut out in some other place
+		else {
+			if (aboveWords.size() != 0)
+				columnWordLists.add(markColumn(page, aboveWords, blockStyle));
+			if (leftWords.size() != 0)
+				columnWordLists.add(markColumn(page, leftWords, blockStyle));
+			if (selectedWords.size() != 0)
+				columnWordLists.add(markColumn(page, selectedWords, blockStyle));
+			if (rightWords.size() != 0)
+				columnWordLists.add(markColumn(page, rightWords, blockStyle));
+			if (belowWords.size() != 0)
+				columnWordLists.add(markColumn(page, belowWords, blockStyle));
+		}
+		
+		//	chain block text streams (only if text stream types match, however)
+		for (int b = 0; b < columnWordLists.size(); b++) {
+			ImWord[] imws = ((ImWord[]) columnWordLists.get(b));
+			if (imws.length == 0)
 				continue;
-			page.removeRegion(selectedRegions[r]);
-		}
-		
-		//	mark image or graphics
-		ImRegion iog = new ImRegion(page, iogBounds, type);
-		idmp.setRegionsPainted(type, true);
-		
-		//	consult document style regarding where captions might be located
-		DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
-		final DocumentStyle docLayout = docStyle.getSubset("layout");
-		boolean captionAbove = docLayout.getBooleanProperty("caption.aboveFigure", false);
-		boolean captionBelow = docLayout.getBooleanProperty("caption.belowFigure", true);
-		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
-		boolean captionInside = docLayout.getBooleanProperty("caption.insideFigure", false);
-		
-		//	get potential captions
-		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside, captionInside, true);
-		
-		//	try setting attributes in unassigned captions first
-		for (int a = 0; a < captionAnnots.length; a++) {
-			if (captionAnnots[a].hasAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE) || captionAnnots[a].hasAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE))
+			if ((columnPrevWord != null) && !columnPrevWord.getTextStreamType().equals(imws[0].getTextStreamType()))
 				continue;
-			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + iog.pageId));
-			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, iog.bounds.toString());
-			return true;
+			if (columnPrevWord != null)
+				columnPrevWord.setNextWord(imws[0]);
+			columnPrevWord = imws[imws.length - 1];
 		}
+		if ((columnPrevWord != null) && (columnNextWord != null))
+			columnPrevWord.setNextWord(columnNextWord);
 		
-		//	set attributes in any caption (happens if user corrects, for instance)
-		if (captionAnnots.length != 0) {
-			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + iog.pageId));
-			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, iog.bounds.toString());
-		}
-		
-		//	finally ...
+		//	indicate we've done something
 		return true;
 	}
 	
-	private static void copyCompositeImage(Figure[] figures, int scaleToDpi, Graphics[] graphics, ImWord[] words, ImPage page) {
-		BufferedImage image = ImSupplement.getCompositeImage(figures, scaleToDpi, graphics, words, page);
-		if (image != null)
-			ImUtils.copy(new ImageSelection(image));
+	private static ImWord[] markColumn(ImPage page, ArrayList wordList, ImDocumentStyle blockStyle) {
+		return markColumn(page, ((ImWord[]) wordList.toArray(new ImWord[wordList.size()])), null, blockStyle);
 	}
 	
-	private static void copyGraphics(Graphics[] graphics, Figure[] figures, int scaleToDpi, ImWord[] words, ImPage page) {
+	private static ImWord[] markColumn(ImPage page, ImWord[] words, ImRegion[] returnColumn, ImDocumentStyle blockStyle) {
+		if (words.length == 0)
+			return words;
 		
-		//	bitmap export
-		if (scaleToDpi > 0)
-			copyCompositeImage(figures, scaleToDpi, graphics, words, page);
+		//	mark column
+		ImRegion column = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.COLUMN_ANNOTATION_TYPE);
+		if (returnColumn != null)
+			returnColumn[0] = column;
 		
-		//	SVG export
-		else {
-			CharSequence svg = ImSupplement.getSvg(graphics, words, page);
-			ImUtils.copy(new StringSelection(svg.toString()));
+		//	cut out column words to avoid conflicts while re-chaining
+		Arrays.sort(words, ImUtils.textStreamOrder);
+		if (words[0].getPreviousWord() != null)
+			words[0].getPreviousWord().setNextWord(null);
+		if ( words[words.length-1].getNextWord() != null)
+			 words[words.length-1].getNextWord().setPreviousWord(null);
+		
+		//	get block boundaries
+		BoundingBox[] columnBlockBounds = getColumnBlockBounds(page, column, words);
+		
+		//	mark blocks (analyzes structure internally)
+		ArrayList columnBlockWordLists = new ArrayList();
+		for (int b = 0; b < columnBlockBounds.length; b++) {
+			ImWord[] blockWords = page.getWordsInside(columnBlockBounds[b]);
+			if (blockWords.length != 0)
+				columnBlockWordLists.add(markBlock(page, blockWords, blockStyle));
 		}
-	}
-	
-	private static class ImageSelection implements Transferable {
-		private Image image;
-		ImageSelection(Image image) {
-			this.image = image;
-		}
-		public DataFlavor[] getTransferDataFlavors() {
-			DataFlavor[] dfs = {DataFlavor.imageFlavor};
-			return dfs;
-		}
-		public boolean isDataFlavorSupported(DataFlavor flavor) {
-			return DataFlavor.imageFlavor.equals(flavor);
-		}
-		public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException, IOException {
-			if (DataFlavor.imageFlavor.equals(flavor))
-				return image;
-			else throw new UnsupportedFlavorException(flavor);
-		}
-	}
-	
-	private String getExportFileName(ImDocument doc, ImPage page, ImRegion exportRegion) {
 		
-		//	start with document name
-		String docName = ((String) doc.getAttribute(DOCUMENT_NAME_ATTRIBUTE, doc.docId));
-		if (docName.toLowerCase().indexOf(".pdf") != -1) // TODO observe more common file name suffixes, if only as we add more decoders ...
-			docName = docName.substring(0, (docName.toLowerCase().indexOf(".pdf") + ".pdf".length()));
-		
-		//	find caption
-		String regionBoundsStr = exportRegion.bounds.toString();
-		ImAnnotation[] captions = doc.getAnnotations(ImAnnotation.CAPTION_TYPE, page.pageId);
-		String captionStart = null;
-		for (int c = 0; c < captions.length; c++)
-			if (regionBoundsStr.equals(captions[c].getAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE))) {
-				captionStart = this.getCaptionStart(captions[c]);
-				break;
-			}
-		
-		//	no caption start to work with, default to generic naming
-		if (captionStart == null)
-			return (docName + "." + exportRegion.getType() + "@" + page.pageId + "." + exportRegion.bounds.toString());
-		
-		//	use (normalized) caption start
-		captionStart = captionStart.replaceAll("\\s+", ""); // eliminate spaces
-		captionStart = captionStart.replaceAll("\\.", ""); // eliminate dots
-		captionStart = captionStart.replaceAll("[\\-\\u00AD\\u2010\\u2011\\u2012\\u2013\\u2014\\u2015\\u2212]+", "-"); // normalize dashes
-		captionStart = captionStart.replaceAll("[^a-zA-Z0-9\\-\\_]+", "_"); // replace anything that might cause trouble
-		return (docName + "." + captionStart);
-	}
-	
-	private String getCaptionStart(ImAnnotation caption) {
-		ImWord captionStartEnd = null;
-		char indexType = ((char) 0);
-		boolean lastWasIndex = false;
-		for (ImWord imw = caption.getFirstWord().getNextWord(); imw != null; imw = imw.getNextWord()) {
-			String imwString = imw.getString();
-			if ((imwString == null) || (imwString.trim().length() == 0))
-				continue;
-			
-			//	Arabic index number
-			if (imwString.matches("[0-9]+(\\s*[a-z])?")) {
-				if (indexType == 0)
-					indexType = 'A';
-				else if (indexType != 'A')
-					break;
-				captionStartEnd = imw;
-				lastWasIndex = true;
-			}
-			
-			//	lower case Roman index number
-			else if (imwString.matches("[ivxl]+")) {
-				if (indexType == 0)
-					indexType = 'r';
-				else if ((indexType == 'l') && (imwString.length() == 1)) { /* need to allow 'a-i', etc. ... */ }
-				else if (indexType != 'r')
-					break;
-				captionStartEnd = imw;
-				lastWasIndex = true;
-			}
-			
-			//	upper case Roman index number
-			else if (imwString.matches("[IVXL]+")) {
-				if (indexType == 0)
-					indexType = 'R';
-				else if ((indexType == 'L') && (imwString.length() == 1)) { /* need to allow 'A-I', etc. ... */ }
-				else if (indexType != 'R')
-					break;
-				captionStartEnd = imw;
-				lastWasIndex = true;
-			}
-			
-			//	lower case index letter
-			else if (imwString.matches("[a-z]")) {
-				if (indexType == 0)
-					indexType = 'l';
-				else if (indexType != 'l')
-					break;
-				captionStartEnd = imw;
-				lastWasIndex = true;
-			}
-			
-			//	upper case index letter
-			else if (imwString.matches("[A-Z]")) {
-				if (indexType == 0)
-					indexType = 'L';
-				else if (indexType != 'L')
-					break;
-				captionStartEnd = imw;
-				lastWasIndex = true;
-			}
-			
-			//	enumeration separator or range marker
-			else if (imwString.equals(",") || imwString.equals("&") || (";and;und;et;y;".indexOf(";" + imwString.toLowerCase() + ";") != -1) || imwString.matches("[\\-\\u00AD\\u2010-\\u2015\\u2212]+")) {
-				if (!lastWasIndex) // no enumeration or range open, we're done here
-					break;
-				lastWasIndex = false;
-			}
-			
-			//	ignore dots
-			else if (!".".equals(imwString))
-				break;
+		//	chain block text streams (only inside column, though, as outside chaining happens in calling code)
+		for (int b = 1; b < columnBlockWordLists.size(); b++) {
+			ImWord[] imws1 = ((ImWord[]) columnBlockWordLists.get(b-1));
+			ImWord[] imws2 = ((ImWord[]) columnBlockWordLists.get(b));
+			if ((imws1.length != 0) && (imws2.length != 0))
+				imws1[imws1.length - 1].setNextWord(imws2[0]);
 		}
 		
 		//	finally ...
-		return ImUtils.getString(caption.getFirstWord(), ((captionStartEnd == null) ? caption.getLastWord() : captionStartEnd), true);
+		Arrays.sort(words, ImUtils.textStreamOrder);
+		return words;
 	}
 	
-	private File chooseExportFile(final String fileName, final ExportParameterPanel paramPanel, boolean forGraphics) {
-		if (this.fileChooser == null) {
-			this.fileChooser = new JFileChooser();
-			this.fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
-			this.fileChooser.setAcceptAllFileFilterUsed(false);
-		}
+	private static BoundingBox[] getColumnBlockBounds(ImPage page, ImRegion column, ImWord[] words) {
 		
-		if (paramPanel == null)
-			this.fileChooser.setAccessory(null);
-		else {
-			paramPanel.setBorder(BorderFactory.createMatteBorder(0, 5, 0, 0, paramPanel.getBackground()));
-			JPanel paramPanelTray = new JPanel(new BorderLayout(), true);
-			paramPanelTray.add(paramPanel, BorderLayout.SOUTH);
-			this.fileChooser.setAccessory(paramPanelTray);
+		//	analyze line gaps
+		boolean[] containsWord = new boolean[column.bounds.getHeight()];
+		Arrays.fill(containsWord, false);
+		for (int w = 0; w < words.length; w++) {
+			for (int r = words[w].bounds.top; r < words[w].bounds.bottom; r++)
+				containsWord[r - column.bounds.top] = true;
 		}
-		
-		this.fileChooser.resetChoosableFileFilters();
-		this.fileChooser.addChoosableFileFilter(pngFileFilter);
-		if (forGraphics) {
-			this.fileChooser.addChoosableFileFilter(svgFileFilter);
-			this.fileChooser.setFileFilter(svgFileFilter);
-			this.fileChooser.setSelectedFile(new File(this.fileChooser.getCurrentDirectory(), fileName + ".svg"));
-		}
-		else {
-			this.fileChooser.setFileFilter(pngFileFilter);
-			this.fileChooser.setSelectedFile(new File(this.fileChooser.getCurrentDirectory(), fileName + ".png"));
-		}
-		
-		if (forGraphics && (paramPanel != null))
-			paramPanel.dpiSelector.addItemListener(new ItemListener() {
-				public void itemStateChanged(ItemEvent ie) {
-					int dpi = paramPanel.getDpi();
-					String selFileName;
-					try {
-						BasicFileChooserUI fileChooserUI = (BasicFileChooserUI) fileChooser.getUI();
-						selFileName = fileChooserUI.getFileName();
-					}
-					catch (Exception e) {
-						File selFile = fileChooser.getSelectedFile();
-						selFileName = ((selFile == null) ? fileName : selFile.getName());
-					}
-//					System.out.println("Selected file is " + selFileName);
-					fileChooser.setFileFilter((dpi < 0) ? svgFileFilter : pngFileFilter);
-					if (selFileName.toLowerCase().endsWith(".png") || selFileName.toLowerCase().endsWith(".svg"))
-						selFileName = selFileName.substring(0, selFileName.lastIndexOf('.'));
-					fileChooser.setSelectedFile(new File(fileChooser.getCurrentDirectory(), (selFileName + ((dpi < 0) ? ".svg" : ".png"))));
-				}
-			});
-		
-		File exportFile = null;
-		if (this.fileChooser.showSaveDialog(DialogFactory.getTopWindow()) == JFileChooser.APPROVE_OPTION)
-			exportFile = this.fileChooser.getSelectedFile();
-		
-		this.fileChooser.setAccessory(null);
-		return exportFile;
-	}
-	
-	private JFileChooser fileChooser = null;
-	
-	private static FileFilter pngFileFilter = new FileFilter() {
-		public String getDescription() {
-			return "Portable Network Graphics (PNG)";
-		}
-		public boolean accept(File file) {
-			return (file.isDirectory() || file.getName().toLowerCase().endsWith(".png"));
-		}
-	};
-	
-	private static FileFilter svgFileFilter = new FileFilter() {
-		public String getDescription() {
-			return "Scalable Vector Graphics (SVG)";
-		}
-		public boolean accept(File file) {
-			return (file.isDirectory() || file.getName().toLowerCase().endsWith(".svg"));
-		}
-	};
-	
-	private static class ExportParameterPanel extends JPanel {
-		final JComboBox dpiSelector;
-		private JCheckBox exportFigures;
-		private JCheckBox exportGraphics;
-		private JCheckBox exportWords;
-		ExportParameterPanel(Figure[] figures, Graphics[] graphics, ImWord[] words, boolean forGraphics, boolean forFileChooser) {
-			super(new GridLayout(0, 1), true);
-			
-			if (forFileChooser)
-				this.add(new JLabel(("<HTML><B>" + (forGraphics ? "Graphics" : "Image") + " Export Options</B></HTML>"), JLabel.CENTER));
-			
-			TreeSet figureDpiSet = new TreeSet();
-			if (figures != null) {
-				for (int f = 0; f < figures.length; f++)
-					figureDpiSet.add(new Integer(figures[f].getDpi()));
+		CountingSet lineGaps = new CountingSet(new TreeMap());
+		for (int r = 0; r < containsWord.length; r++) {
+			if (containsWord[r])
+				continue;
+			int lineGap = 1;
+			while ((r + lineGap) < containsWord.length) {
+				if (containsWord[r + lineGap])
+					break;
+				else lineGap++;
 			}
-			Integer maxFigureDpi = (figureDpiSet.isEmpty() ? null : ((Integer) figureDpiSet.last()));
-			TreeSet dpiSet = new TreeSet();
-			if (forGraphics)
-				dpiSet.add(new SelectableDPI(-1, ("Copy as SVG" + (((figures == null) || (figures.length == 0)) ? "" : " (excludes figures)"))));
-			for (Iterator dpiit = figureDpiSet.iterator(); dpiit.hasNext();) {
-				Integer dpi = ((Integer) dpiit.next());
-				dpiSet.add(new SelectableDPI(dpi, ("render at " + dpi + " DPI")));
-			}
-			if (!figureDpiSet.contains(new Integer(300)))
-				dpiSet.add(new SelectableDPI(300, ("render at 300 DPI")));
-			if (!figureDpiSet.contains(new Integer(200)))
-				dpiSet.add(new SelectableDPI(200, ("render at 200 DPI")));
-			if (!figureDpiSet.contains(new Integer(150)))
-				dpiSet.add(new SelectableDPI(150, ("render at 150 DPI")));
-			SelectableDPI[] dpiOptions = ((SelectableDPI[]) dpiSet.toArray(new SelectableDPI[dpiSet.size()]));
-			this.dpiSelector = new JComboBox(dpiOptions);
-			if (maxFigureDpi == null)
-				this.dpiSelector.setSelectedItem(new SelectableDPI(-1, ""));
-			else if (maxFigureDpi.intValue() <= 600)
-				this.dpiSelector.setSelectedItem(new SelectableDPI(maxFigureDpi.intValue(), ""));
-			else this.dpiSelector.setSelectedItem(new SelectableDPI(300, ""));
-			
-			JPanel dpiPanel = new JPanel(new BorderLayout(), true);
-			dpiPanel.add(new JLabel("Export Resolution ", JLabel.LEFT), BorderLayout.WEST);
-			dpiPanel.add(this.dpiSelector, BorderLayout.CENTER);
-			this.add(dpiPanel);
-			
-			if (forGraphics) {
-				this.exportFigures = new JCheckBox("Include Bitmap Images", false);
-				this.exportGraphics = null;
-				if ((figures != null) && (figures.length != 0)) {
-					this.add(this.exportFigures);
-					this.dpiSelector.addItemListener(new ItemListener() {
-						public void itemStateChanged(ItemEvent ie) {
-							SelectableDPI selDpi = ((SelectableDPI) dpiSelector.getSelectedItem());
-							exportFigures.setEnabled(selDpi.dpi != -1);
-						}
-					});
-				}
-			}
+			lineGaps.add(new Integer(lineGap));
+			r += lineGap; // we've seen all of those, including next occupied row
+		}
+		System.out.println("Got line gaps: " + lineGaps);
+		int lineGapSum = 0;
+		for (Iterator lgit = lineGaps.iterator(); lgit.hasNext();) {
+			Integer lineGap = ((Integer) lgit.next());
+			lineGapSum += (lineGap.intValue() * lineGaps.getCount(lineGap));
+		}
+		int avgLineGap = (lineGaps.isEmpty() ? -1 : ((lineGapSum + (lineGaps.size() / 2)) / lineGaps.size()));
+		System.out.println("Average line gap is " + avgLineGap);
+		
+		//	identify block gaps as ones larger than smallest group
+		int minBlockMargin = Integer.MAX_VALUE;
+		int maxBelowAvgLineGap = 0;
+		int minAboveAvgLineGap = Integer.MAX_VALUE;
+		for (Iterator lgit = lineGaps.iterator(); lgit.hasNext();) {
+			Integer lineGap = ((Integer) lgit.next());
+			if (lineGap.intValue() <= avgLineGap)
+				maxBelowAvgLineGap = lineGap.intValue();
 			else {
-				this.exportFigures = null;
-				this.exportGraphics = new JCheckBox("Include Line Graphics", (graphics.length != 0));
-				if (graphics.length != 0)
-					this.add(this.exportGraphics);
-			}
-			
-			this.exportWords = new JCheckBox("Include Label Text", false);
-			if ((words != null) && (words.length != 0))
-				this.add(this.exportWords);
-		}
-		int getDpi() {
-			return ((SelectableDPI) this.dpiSelector.getSelectedItem()).dpi;
-		}
-		boolean includeFigures() {
-			return ((this.getDpi() > 0) && ((this.exportFigures == null) || this.exportFigures.isSelected()));
-		}
-		boolean includeGraphics() {
-			return ((this.exportGraphics == null) || this.exportGraphics.isSelected());
-		}
-		boolean includeWords() {
-			return ((this.exportWords == null) || this.exportWords.isSelected());
-		}
-	}
-	
-	private static class SelectableDPI implements Comparable {
-		final int dpi;
-		final String label;
-		SelectableDPI(int dpi, String label) {
-			this.dpi = dpi;
-			this.label = label;
-		}
-		public String toString() {
-			return this.label;
-		}
-		public boolean equals(Object obj) {
-			if (obj instanceof SelectableDPI)
-				return (this.compareTo(obj) == 0);
-			else if (obj instanceof Number)
-				return (this.dpi == ((Number) obj).intValue());
-			else return false;
-		}
-		public int compareTo(Object obj) {
-			return (this.dpi - ((SelectableDPI) obj).dpi);
-		}
-	}
-	
-	private static void saveCompositeImage(File file, Figure[] figures, int scaleToDpi, Graphics[] graphics, ImWord[] words, ImPage page) {
-		try {
-			BufferedImage image = ImSupplement.getCompositeImage(figures, scaleToDpi, graphics, words, page);
-			OutputStream out = new BufferedOutputStream(new FileOutputStream(file));
-			ImageIO.write(image, "PNG", out);
-			out.flush();
-			out.close();
-		}
-		catch (IOException ioe) {
-			ioe.printStackTrace(System.out);
-			DialogFactory.alert(("The selected image could not be saved:\r\n" + ioe.getMessage()), "Error Saving Image Group", JOptionPane.ERROR_MESSAGE);
-		}
-	}
-	
-	private static void saveGraphics(File file, Graphics[] graphics, Figure[] figures, int scaleToDpi, ImWord[] words, ImPage page) {
-		try {
-			if (scaleToDpi < 1) {
-				CharSequence svg = ImSupplement.getSvg(graphics, words, page);
-				Reader in = new CharSequenceReader(svg);
-				Writer out = new OutputStreamWriter(new BufferedOutputStream(new FileOutputStream(file)), "UTF-8");
-				char[] buffer = new char[1024];
-				for (int r; (r = in.read(buffer, 0, buffer.length)) != -1;)
-					out.write(buffer, 0, r);
-				in.close();
-				out.flush();
-				out.close();
-			}
-			else {
-				BufferedImage image = ImSupplement.getCompositeImage(figures, scaleToDpi, graphics, words, page);
-				OutputStream out = new BufferedOutputStream(new FileOutputStream(file));
-				ImageIO.write(image, "PNG", out);
-				out.flush();
-				out.close();
+				minAboveAvgLineGap = lineGap.intValue();
+				break;
 			}
 		}
-		catch (IOException ioe) {
-			ioe.printStackTrace(System.out);
-			DialogFactory.alert(("The selected graphics could not be saved:\r\n" + ioe.getMessage()), "Error Saving Graphics", JOptionPane.ERROR_MESSAGE);
+		System.out.println("Split is between " + maxBelowAvgLineGap + " and " + minAboveAvgLineGap);
+		if ((minAboveAvgLineGap - maxBelowAvgLineGap) < (page.getImageDPI() / 25))
+			System.out.println(" ==> too insignificant");
+		else if (minAboveAvgLineGap == Integer.MAX_VALUE)
+			System.out.println(" ==> too uniformly distributed");
+		else minBlockMargin = minAboveAvgLineGap;
+		
+		//	get configured style
+		//	TODO how to go about discrepancy between measurements and template ???
+		ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(page.getDocument());
+		if (docStyle == null)
+			docStyle = new ImDocumentStyle(new PropertiesData(new Properties()));
+		int styleMinBlockMargin = docStyle.getImSubset("layout").getIntProperty("minBlockMargin", Integer.MAX_VALUE, page.getImageDPI());
+		System.out.println("Template split is above " + styleMinBlockMargin);
+		if (styleMinBlockMargin == Integer.MAX_VALUE)
+			System.out.println(" ==> template parameter unavailable");
+		
+		//	mark blocks (analyzes structure internally)
+		ArrayList columnBlockBounds = new ArrayList();
+		int blockTop = column.bounds.top;
+		for (int r = 0; r < containsWord.length; r++) {
+			if (containsWord[r])
+				continue;
+			int lineGap = 1;
+			while ((r + lineGap) < containsWord.length) {
+				if (containsWord[r + lineGap])
+					break;
+				else lineGap++;
+			}
+			if (lineGap >= minBlockMargin) {
+				columnBlockBounds.add(new BoundingBox(column.bounds.left, column.bounds.right, blockTop, (r + column.bounds.top)));
+				blockTop = (r + lineGap + column.bounds.top);
+			}
+			r += lineGap; // we've seen all of those, including next occupied row
 		}
+		columnBlockBounds.add(new BoundingBox(column.bounds.left, column.bounds.right, blockTop, column.bounds.bottom));
+		
+		//	finally ...
+		return ((BoundingBox[]) columnBlockBounds.toArray(new BoundingBox[columnBlockBounds.size()]));
 	}
-	
-////	private static DataFlavor svgDataFlavor = new DataFlavor("image/svg+xml;class=java.io.Reader", "Scalable Vector Graphics");
-//	private static DataFlavor svgDataFlavor = new DataFlavor("text/xml;class=java.io.Reader", "Scalable Vector Graphics");
-//	private static class GraphicsSelection implements Transferable {
-////		private CharSequence data;
-////		GraphicsSelection(CharSequence data) {
-////			this.data = data;
-////		}
-////		private byte[] data;
-////		GraphicsSelection(byte[] data) {
-////			this.data = data;
-////		}
-//		private CharSequence data;
-//		GraphicsSelection(CharSequence data) {
-//			this.data = data;
-//		}
-//		public DataFlavor[] getTransferDataFlavors() {
-//			DataFlavor[] dfs = {svgDataFlavor};
-//			return dfs;
-//		}
-////		public DataFlavor[] getTransferDataFlavors() {
-////			DataFlavor[] dfs = {DataFlavor.stringFlavor};
-////			return dfs;
-////		}
-//		public boolean isDataFlavorSupported(DataFlavor flavor) {
-//			return svgDataFlavor.equals(flavor);
-//		}
-////		public boolean isDataFlavorSupported(DataFlavor flavor) {
-////			return DataFlavor.stringFlavor.equals(flavor);
-////		}
-////		public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException, IOException {
-////			if (svgDataFlavor.equals(flavor))
-////				return new CharSequenceReader(this.data);
-////			else throw new UnsupportedFlavorException(flavor);
-////		}
-////		public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException, IOException {
-////			if (svgDataFlavor.equals(flavor))
-////				return new ByteArrayInputStream(this.data);
-////			else throw new UnsupportedFlavorException(flavor);
-////		}
-//		public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException, IOException {
-//			if (DataFlavor.stringFlavor.equals(flavor))
-//				return new CharSequenceReader(this.data);
-//			else throw new UnsupportedFlavorException(flavor);
-//		}
-//	}
-//	
-//	//	TODOne test this stuff
-//	public static void main(String[] args) throws Exception {
-//		try {
-//			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-//		} catch (Exception e) {}
-//		
-//		RegionActionProvider rap = new RegionActionProvider();
-//		
-//		final String docName;
-////		docName = "C70.1.13-18.pdf.imf"; // nice combo of multi-part figure on page 2, complete with graphics and labels
-//		docName = "Zootaxa/zt04173p201.pdf.imf"; // vector graphics on page 2
-////		docName = "Zootaxa/zt04173p201.pdf.imf"; // mixed image/graphics mix on page 6
-//		
-//		ImDocument doc = ImDocumentIO.loadDocument(new File("E:/Testdaten/PdfExtract", docName));
-//		ImPage page = doc.getPage(2);
-//		ImSupplement[] supplements = page.getSupplements();
-//		
-////		ImRegion[] imageRegs = page.getRegions(ImRegion.IMAGE_TYPE);
-////		ImRegion imageReg = imageRegs[0];
-////		Figure[] figures = ImSupplement.getFiguresIn(supplements, imageReg.bounds);
-////		Graphics[] graphics = ImSupplement.getGraphicsIn(supplements, imageReg.bounds);
-////		ImWord[] words = page.getWordsInside(imageReg.bounds);
-////		copyCompositeImage(figures, figures[0].getDpi(), graphics, words, page);
-////		ExportParameterPanel epp = new ExportParameterPanel(figures, graphics, words, false, true);
-////		File file = rap.chooseExportFile(docName, epp, false);
-////		System.out.println(file);
-//		
-//		
-//		ImRegion[] graphicsRegs = page.getRegions(ImRegion.GRAPHICS_TYPE);
-//		ImRegion graphicsReg = graphicsRegs[0];
-//		Figure[] figures = ImSupplement.getFiguresIn(supplements, graphicsReg.bounds);
-//		Graphics[] graphics = ImSupplement.getGraphicsIn(supplements, graphicsReg.bounds);
-//		ImWord[] words = page.getWordsInside(graphicsReg.bounds);
-//		copyGraphics(graphics, figures, 300, words, page);
-////		ExportParameterPanel epp = new ExportParameterPanel(figures, graphics, words, true, true);
-////		File file = rap.chooseExportFile(docName, epp, true);
-////		System.out.println(file);
-//	}
 	
 	/**
 	 * Split a block region, marking paragraphs and lines. The argument block
@@ -2470,7 +2009,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	 * selection box has to overlap with the argument block. Whether or not the
 	 * argument block is attached to the argument page, the result of the split
 	 * is.
-	 * @param page the page to split split this block in
+	 * @param page the page to split split the block in
 	 * @param block the block to split
 	 * @param splitBounds the bounding box to perform the split with
 	 * @return true if the block was split, false otherwise
@@ -2505,7 +2044,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		ImRegion[] blockLines = block.getRegions(ImRegion.LINE_ANNOTATION_TYPE);
 		
 		//	get block style
-		DocumentStyle blockStyle = getBlockStyle(page.getDocument());
+		ImDocumentStyle blockStyle = getBlockStyle(page.getDocument());
 		
 		//	if we have a plain top-bottom split, we can retain lines and word order, and likely most paragraphs
 		if (leftWords.isEmpty() && rightWords.isEmpty()) {
@@ -2613,8 +2152,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		return true;
 	}
 	
-	private static ImWord[] markBlock(ImPage page, ArrayList wordList, DocumentStyle blockStyle) {
-		ImWord[] words = ((ImWord[]) wordList.toArray(new ImWord[wordList.size()]));
+	private static ImWord[] markBlock(ImPage page, ArrayList wordList, ImDocumentStyle blockStyle) {
+		return markBlock(page, ((ImWord[]) wordList.toArray(new ImWord[wordList.size()])), blockStyle);
+	}
+	
+	private static ImWord[] markBlock(ImPage page, ImWord[] words, ImDocumentStyle blockStyle) {
 		if (words.length == 0)
 			return words;
 		
@@ -2633,7 +2175,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		return words;
 	}
 	
-	private static void sortIntoLines(ImPage page, ImWord[] words) {
+	static void sortIntoLines(ImPage page, ImWord[] words) {
 		
 		//	order text stream
 		ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
@@ -2651,9 +2193,11 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 	 * @param blockBounds the bounding box of the block to create
 	 * @return the newly marked block
 	 */
-	//	TODO make this method accessible from context menu
-	//	TODO figure out conditions for showing menu entry (maybe blocks visible in general, but none selected, and words there)
 	public ImRegion markBlock(ImPage page, BoundingBox blockBounds) {
+		return markBlock(page, blockBounds, null);
+	}
+	
+	private static ImRegion markBlock(ImPage page, BoundingBox blockBounds, ImDocumentStyle blockStyle) {
 		ImWord[] words = page.getWordsInside(blockBounds);
 		if (words.length == 0)
 			return null;
@@ -2667,7 +2211,8 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		ImRegion block = new ImRegion(page, ImLayoutObject.getAggregateBox(words), ImRegion.BLOCK_ANNOTATION_TYPE);
 		
 		//	get block style
-		DocumentStyle blockStyle = getBlockStyle(page.getDocument());
+		if (blockStyle == null)
+			blockStyle = getBlockStyle(page.getDocument());
 		
 		//	re-detect paragraphs
 		PageAnalysis.splitIntoParagraphs(page, page.getImageDPI(), block, blockStyle);
@@ -2699,7 +2244,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				page.removeRegion((ImRegion) existingLines.get(lbit.next()));
 	}
 	
-	private static void updateBlockStructure(ImPage page, ImRegion block, DocumentStyle blockStyle, boolean forceRevisitParagraphs) {
+	static void updateBlockStructure(ImPage page, ImRegion block, ImDocumentStyle blockStyle, boolean forceRevisitParagraphs) {
 		
 		//	update paragraphs if either requested explicitly or sufficient lines present
 		boolean revisitParagraphs;
@@ -2728,7 +2273,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		}
 	}
 	
-	private static boolean sortLinesIntoParagraphs(ImPage page, ImRegion[] lines, BoundingBox selectedBounds) {
+	static boolean sortLinesIntoParagraphs(ImPage page, ImRegion[] lines, BoundingBox selectedBounds) {
 		Arrays.sort(lines, ImUtils.topDownOrder);
 		
 		//	find boundaries between above, inside, and below selection
@@ -2767,7 +2312,56 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		return true;
 	}
 	
-	private void ensureBlockStructure(ImRegion block) {
+	static void ensureColumnStructure(ImRegion column) {
+		
+		//	get words
+		ImWord[] cWords = column.getWords();
+		if (cWords.length == 0)
+			return;
+		
+		//	check if all (non-artifact) words inside lines
+		ImRegion[] cBlocks = column.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+		int bWordCount = 0;
+		for (int b = 0; b < cBlocks.length; b++) {
+			ImWord[] bWords = cBlocks[b].getWords();
+			bWordCount += bWords.length;
+		}
+		
+		//	some words outside blocks
+		if (bWordCount < cWords.length) {
+			
+			//	get page
+			ImPage page = column.getPage();
+			
+			//	index blocks by bounding boxes
+			HashMap exBlocks = new HashMap();
+			for (int b = 0; b < cBlocks.length; b++)
+				exBlocks.put(cBlocks[b].bounds, cBlocks[b]);
+			
+			//	get column block bounds
+			BoundingBox[] cBlockBounds = getColumnBlockBounds(page, column, cWords);
+			
+			//	check for existing blocks
+			for (int b = 0; b < cBlockBounds.length; b++) {
+				ImRegion cBlock = ((ImRegion) exBlocks.remove(cBlockBounds[b]));
+				if (cBlock == null)
+					cBlock = new ImRegion(page, cBlockBounds[b], ImRegion.BLOCK_ANNOTATION_TYPE);
+			}
+			
+			//	remove now-spurious blocks
+			for (Iterator lbit = exBlocks.keySet().iterator(); lbit.hasNext();)
+				page.removeRegion((ImRegion) exBlocks.get(lbit.next()));
+			
+			//	get now-valid blocks
+			cBlocks = column.getRegions(ImRegion.BLOCK_ANNOTATION_TYPE);
+		}
+		
+		//	check individual blocks
+		for (int b = 0; b < cBlocks.length; b++)
+			ensureBlockStructure(cBlocks[b]);
+	}
+	
+	static void ensureBlockStructure(ImRegion block) {
 		
 		//	get words
 		ImWord[] bWords = block.getWords();
@@ -2835,7 +2429,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 				page.removeRegion(bParagraphs[p]);
 			
 			//	get block style
-			DocumentStyle blockStyle = getBlockStyle(page.getDocument());
+			ImDocumentStyle blockStyle = getBlockStyle(page.getDocument());
 			
 			//	re-mark paragraphs
 //			PageAnalysis.splitIntoParagraphs(block, page.getImageDPI(), ProgressMonitor.dummy);
@@ -2846,7 +2440,7 @@ public class RegionActionProvider extends AbstractSelectionActionProvider implem
 		}
 	}
 	
-	private boolean restructureBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines) {
+	static boolean restructureBlock(ImPage page, ImRegion block, ImRegion[] blockParagraphs, ImRegion[] blockLines) {
 		
 		//	compute block metrics
 		BlockMetrics blockMetrics = PageAnalysis.computeBlockMetrics(page, page.getImageDPI(), block);

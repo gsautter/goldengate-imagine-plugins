@@ -40,17 +40,19 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeSet;
 
 import de.uka.ipd.idaho.gamta.Gamta;
 import de.uka.ipd.idaho.gamta.util.CountingSet;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle;
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.PropertiesData;
 import de.uka.ipd.idaho.gamta.util.ParallelJobRunner;
 import de.uka.ipd.idaho.gamta.util.ParallelJobRunner.ParallelFor;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.ProgressMonitor.SynchronizedProgressMonitor;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImDocument;
 import de.uka.ipd.idaho.im.ImLayoutObject;
@@ -143,6 +145,8 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin imple
 			
 			//	get document table style
 			DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
+			if (docStyle == null)
+				docStyle = new DocumentStyle(new PropertiesData(new Properties()));
 			DocumentStyle docLayout = docStyle.getSubset("layout");
 			DocumentStyle tableLayout = docLayout.getSubset("table");
 			
@@ -522,8 +526,26 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin imple
 			BoundingBox tableArea = pageGraphics[g].getBounds();
 			pm.setInfo("   - assessing " + tableArea);
 			TableAreaCandidate tac = getTableAreaCandidate(page, tableArea, docWordDensity1d, docWordDensity2d, docWordSpacing, docNormSpaceWidth, pm);
-			if (tac != null)
-				pageTableAreaCandidates.add(tac);
+//			if (tac != null)
+//				pageTableAreaCandidates.add(tac);
+			if (tac == null)
+				continue;
+//			System.out.println("     - cell density is " + tac.getCellAreaPercent());
+//			System.out.println("     - average cell char count is " + tac.getAverageCellCharCount());
+			if (ImWord.TEXT_STREAM_TYPE_LABEL.equals(tac.getMainTextStreamType())) {
+				int tacCellAreaPercent = tac.getCellAreaPercent();
+				if (tacCellAreaPercent < 10) {
+					pm.setInfo("     ==> removed as likely image labels for over 90% inter-cell space (" + (100 - tacCellAreaPercent) + "%)");
+					continue;
+				}
+				float tacAvgCellCharCount = tac.getAverageCellCharCount();
+				if (tacAvgCellCharCount < 1.1) {
+					pm.setInfo("     ==> removed as likely image labels for less than 1.1 characters per cell (" + tacAvgCellCharCount + ")");
+					continue;
+				}
+			}
+			pm.setInfo("     ==> retained");
+			pageTableAreaCandidates.add(tac);
 		}
 		
 		//	anything to work with?
@@ -759,8 +781,26 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin imple
 			BoundingBox tableArea = ((BoundingBox) pageTableAreas.get(t));
 			pm.setInfo("   - assessing " + tableArea);
 			TableAreaCandidate tac = getTableAreaCandidate(page, tableArea, docWordDensity1d, docWordDensity2d, docWordSpacing, docNormSpaceWidth, pm);
-			if (tac != null)
-				pageTableAreaCandidates.add(tac);
+//			if (tac != null)
+//				pageTableAreaCandidates.add(tac);
+			if (tac == null)
+				continue;
+//			System.out.println("     - cell density is " + tac.getCellAreaPercent());
+//			System.out.println("     - average cell char count is " + tac.getAverageCellCharCount());
+			if (ImWord.TEXT_STREAM_TYPE_LABEL.equals(tac.getMainTextStreamType())) {
+				int tacCellAreaPercent = tac.getCellAreaPercent();
+				if (tacCellAreaPercent < 10) {
+					pm.setInfo("     ==> removed as likely image labels for over 90% inter-cell space (" + (100 - tacCellAreaPercent) + "%)");
+					continue;
+				}
+				float tacAvgCellCharCount = tac.getAverageCellCharCount();
+				if (tacAvgCellCharCount < 1.1) {
+					pm.setInfo("     ==> removed as likely image labels for less than 1.1 characters per cell (" + tacAvgCellCharCount + ")");
+					continue;
+				}
+			}
+			pm.setInfo("     ==> retained");
+			pageTableAreaCandidates.add(tac);
 		}
 		
 		//	anything to work with?
@@ -780,7 +820,43 @@ public class TableDetectorProvider extends AbstractGoldenGateImaginePlugin imple
 			}
 		}
 		
-		//	filter table candidates containing two or more others with more columns than they have themselves (helps sort out stacked tables with partially compatible column gaps marked as one)
+		//	filter table candidates whose graphics elements do not actually separate any words (above/below or inside/outside)
+		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
+			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
+			int tacSeparatingGraphics = 0;
+			for (int g = 0; g < pageGraphics.length; g++) {
+				BoundingBox grBounds = pageGraphics[g].getBounds();
+				if (!tac.bounds.includes(grBounds, true))
+					continue; // outside candidate area
+				if ((grBounds.getWidth() * 10) < (tac.bounds.getWidth() * 9))
+					continue; // too narrow for fully blown row separator
+				int aboveGrWordCount = 0;
+				int insideGrWordCount = 0;
+				int belowGrWordCount = 0;
+				for (int w = 0; w < tac.words.length; w++) {
+					if (tac.words[w].centerY < grBounds.top)
+						aboveGrWordCount++;
+					else if (tac.words[w].centerY < grBounds.bottom)
+						insideGrWordCount++;
+					else belowGrWordCount++;
+				}
+				int grRelWordAreas = 0;
+				if (aboveGrWordCount != 0)
+					grRelWordAreas++;
+				if (insideGrWordCount != 0)
+					grRelWordAreas++;
+				if (belowGrWordCount != 0)
+					grRelWordAreas++;
+				if (grRelWordAreas > 1)
+					tacSeparatingGraphics++;
+			}
+			if (tacSeparatingGraphics == 0) {
+				pageTableAreaCandidates.remove(t--);
+				pm.setInfo("   - removed " + tac.bounds + " as lacking any graphical row separation");
+			}
+		}
+		
+		//	filter table candidates containing two or more others with more columns than they have themselves (helps sort out stacked tables with partially compatible column gaps conflated in single candidate)
 		for (int t = 0; t < pageTableAreaCandidates.size(); t++) {
 			TableAreaCandidate tac = ((TableAreaCandidate) pageTableAreaCandidates.get(t));
 			ArrayList subTableAreaCandidates = new ArrayList();
@@ -1207,6 +1283,30 @@ When marking a table, keep using current approach of optimizing column count and
 			this.bounds = this.stats.wordBounds;
 			this.words = this.stats.words;
 			this.colGapFract = this.stats.getBrgColOccupationLowFractReduced();
+		}
+		String getMainTextStreamType() {
+			CountingSet textStreamTypes = new CountingSet();
+			for (int w = 0; w < this.words.length; w++)
+				textStreamTypes.add(this.words[w].getTextStreamType());
+			return ((String) textStreamTypes.max());
+		}
+		float getAverageCellCharCount() {
+			int cellCharSum = 0;
+			for (int w = 0; w < this.words.length; w++) {
+				String str = this.words[w].getString();
+				if (str != null)
+					cellCharSum += str.length();
+			}
+			return (((float) cellCharSum) / (this.cols.length * this.rows.length));
+		}
+		int getCellAreaPercent() {
+			int colWidthSum = 0;
+			for (int c = 0; c < this.cols.length; c++)
+				colWidthSum += this.cols[c].bounds.getWidth();
+			int rowHeightSum = 0;
+			for (int r = 0; r < this.rows.length; r++)
+				rowHeightSum += this.rows[r].bounds.getHeight();
+			return ((colWidthSum * rowHeightSum * 100) / (this.bounds.getWidth() * this.bounds.getHeight()));
 		}
 	}
 	
@@ -1989,7 +2089,10 @@ When seeking tables split up into multiple blocks:
 		ImDocument doc = ImDocumentIO.loadDocument(new File(testDocPath));
 		TableDetectorProvider tdp = new TableDetectorProvider();
 		tdp.init();
-		tdp.detectTables(doc, DocumentStyle.getStyleFor(doc), null, ProgressMonitor.dummy);
+		DocumentStyle docStyle = DocumentStyle.getStyleFor(doc);
+		if (docStyle == null)
+			docStyle = new DocumentStyle(new PropertiesData(new Properties()));
+		tdp.detectTables(doc, docStyle, null, ProgressMonitor.dummy);
 	}
 	private static int aimAtPage = -1;
 }

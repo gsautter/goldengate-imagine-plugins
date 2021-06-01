@@ -31,15 +31,14 @@ import java.awt.Color;
 import java.awt.Point;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.Properties;
 
 import javax.swing.JMenuItem;
 
+import de.uka.ipd.idaho.gamta.util.DocumentStyle.PropertiesData;
 import de.uka.ipd.idaho.gamta.util.constants.LiteratureConstants;
 import de.uka.ipd.idaho.gamta.util.imaging.BoundingBox;
-import de.uka.ipd.idaho.gamta.util.imaging.DocumentStyle;
 import de.uka.ipd.idaho.gamta.util.imaging.PageImage;
 import de.uka.ipd.idaho.im.ImAnnotation;
 import de.uka.ipd.idaho.im.ImLayoutObject;
@@ -48,12 +47,14 @@ import de.uka.ipd.idaho.im.ImRegion;
 import de.uka.ipd.idaho.im.ImSupplement;
 import de.uka.ipd.idaho.im.ImSupplement.Figure;
 import de.uka.ipd.idaho.im.ImSupplement.Graphics;
+import de.uka.ipd.idaho.im.ImSupplement.Scan;
 import de.uka.ipd.idaho.im.ImWord;
 import de.uka.ipd.idaho.im.analysis.Imaging;
 import de.uka.ipd.idaho.im.analysis.Imaging.AnalysisImage;
 import de.uka.ipd.idaho.im.analysis.Imaging.ImagePartRectangle;
 import de.uka.ipd.idaho.im.imagine.plugins.AbstractSelectionActionProvider;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel;
+import de.uka.ipd.idaho.im.util.ImDocumentStyle;
 import de.uka.ipd.idaho.im.util.ImDocumentMarkupPanel.SelectionAction;
 import de.uka.ipd.idaho.im.util.ImUtils;
 
@@ -339,65 +340,63 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		//	if we're on text stream selection, we're done here
 		if ((page == null) || (selectedBox == null))
 			return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
-		
-		//	check supplements to tell image from graphics if document born-digital
-		boolean isImage;
-		if (idmp.documentBornDigital) {
-			ImSupplement[] pageSupplements = page.getSupplements();
-			Figure[] figures = ImSupplement.getFiguresIn(pageSupplements, selectedBox);
-			int figureArea = 0;
-			for (int f = 0; f < figures.length; f++)
-				figureArea += figures[f].getBounds().getArea();
-			Graphics[] graphics = ImSupplement.getGraphicsIn(pageSupplements, selectedBox);
-			int graphicsArea = 0;
-			for (int g = 0; g < graphics.length; g++)
-				graphicsArea += graphics[g].getBounds().getArea();
-			
-			//	area mostly (>= 80%) covered by figures, any graphics are likely decoration
-			if ((figureArea * 5) >= (selectedBox.getArea() * 4))
-				isImage = true;
-			//	area contains more figures than graphics
-			else if (figureArea > graphicsArea)
-				isImage = true;
-			//	less figures than graphics
-			else isImage = false;
-		}
-		else isImage = true;
-		
-		//	mark selected non-white area as image (case without words comes from region actions)
-		if (isImage)
-			actions.add(new SelectionAction("markRegionImage", "Mark Image", "Mark selected region as an image.") {
-				public boolean performAction(ImDocumentMarkupPanel invoker) {
-					markImageOrGraphics(words, page, selectedBox, ImRegion.IMAGE_TYPE, idmp);
-					return true;
-				}
-				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-					JMenuItem mi = super.getMenuItem(invoker);
-					Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
-					if (regionTypeColor != null) {
-						mi.setOpaque(true);
-						mi.setBackground(regionTypeColor);
-					}
-					return mi;
-				}
-			});
-		
-		//	mark selected non-white area as graphics (case without words comes from region actions)
-		else actions.add(new SelectionAction("markRegionGraphics", "Mark Graphics", "Mark selected region as a vector based graphics.") {
-			public boolean performAction(ImDocumentMarkupPanel invoker) {
-				markImageOrGraphics(words, page, selectedBox, ImRegion.GRAPHICS_TYPE, idmp);
-				return true;
-			}
-			public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
-				JMenuItem mi = super.getMenuItem(invoker);
-				Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
-				if (regionTypeColor != null) {
-					mi.setOpaque(true);
-					mi.setBackground(regionTypeColor);
-				}
-				return mi;
-			}
-		});
+//		
+//		//	check supplements to tell image from graphics if document born-digital
+//		boolean canBeImage;
+//		boolean canBeGraphics;
+//		if (idmp.documentBornDigital) {
+//			ImSupplement[] pageSupplements = page.getSupplements();
+//			Figure[] figures = ImSupplement.getFiguresIn(pageSupplements, selectedBox);
+//			int figureArea = 0;
+//			for (int f = 0; f < figures.length; f++)
+//				figureArea += figures[f].getBounds().getArea();
+//			canBeImage = (figureArea != 0);
+//			Graphics[] graphics = ImSupplement.getGraphicsIn(pageSupplements, selectedBox);
+//			int graphicsArea = 0;
+//			for (int g = 0; g < graphics.length; g++)
+//				graphicsArea += graphics[g].getBounds().getArea();
+//			canBeGraphics = (graphicsArea != 0);
+//		}
+//		else {
+//			canBeImage = true;
+//			canBeGraphics = false;
+//		}
+//		
+//		//	mark selected non-white area as image (case without words comes from region actions)
+//		if (canBeImage)
+//			actions.add(new SelectionAction("markRegionImage", "Mark Image", "Mark selected region as an image.") {
+//				public boolean performAction(ImDocumentMarkupPanel invoker) {
+//					markImageOrGraphics(words, page, selectedBox, ImRegion.IMAGE_TYPE, idmp);
+//					return true;
+//				}
+//				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+//					JMenuItem mi = super.getMenuItem(invoker);
+//					Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.IMAGE_TYPE);
+//					if (regionTypeColor != null) {
+//						mi.setOpaque(true);
+//						mi.setBackground(regionTypeColor);
+//					}
+//					return mi;
+//				}
+//			});
+//		
+//		//	mark selected non-white area as graphics (case without words comes from region actions)
+//		if (canBeGraphics)
+//			actions.add(new SelectionAction("markRegionGraphics", "Mark Graphics", "Mark selected region as a vector based graphics.") {
+//				public boolean performAction(ImDocumentMarkupPanel invoker) {
+//					markImageOrGraphics(words, page, selectedBox, ImRegion.GRAPHICS_TYPE, idmp);
+//					return true;
+//				}
+//				public JMenuItem getMenuItem(ImDocumentMarkupPanel invoker) {
+//					JMenuItem mi = super.getMenuItem(invoker);
+//					Color regionTypeColor = idmp.getLayoutObjectColor(ImRegion.GRAPHICS_TYPE);
+//					if (regionTypeColor != null) {
+//						mi.setOpaque(true);
+//						mi.setBackground(regionTypeColor);
+//					}
+//					return mi;
+//				}
+//			});
 		
 		//	finally ...
 		return ((SelectionAction[]) actions.toArray(new SelectionAction[actions.size()]));
@@ -410,6 +409,9 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 			
 			//	split any partially selected blocks
 			this.splitOverlappingBlocks(page, wordBox);
+			
+			//	split caption off image if applicable
+			this.splitCaptionBlockOffIllustration(page, words, wordBox, invoker);
 			
 			//	cut out caption
 			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_CAPTION, null);
@@ -425,31 +427,31 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		
 		//	annotate caption
 		ImAnnotation caption = words[0].getDocument().addAnnotation(words[0], words[words.length-1], CAPTION_TYPE);
-		if (isBlockCaption)
+		if (isBlockCaption) {
 			caption.getLastWord().setNextRelation(ImWord.NEXT_RELATION_PARAGRAPH_END);
+			caption.setAttribute("startId", caption.getFirstWord().getLocalID());
+		}
 		else caption.setAttribute(IN_LINE_OBJECT_MARKER_ATTRIBUTE);
 		invoker.setAnnotationsPainted(CAPTION_TYPE, true);
 		
 		//	do we have a table caption or a figure caption?
-		boolean isTableCaption = words[0].getString().toLowerCase().startsWith("tab"); // covers most Latin based languages
+		boolean isTableCaption = ((words[0].getString() != null) && words[0].getString().toLowerCase().startsWith("tab")); // covers most Latin based languages
 		
 		//	find possible targets
 		ImRegion[] targets = this.getCaptionTargets(page, isTableCaption, isBlockCaption);
 		if (targets.length == 0)
 			return true;
 		
-		//	assign target TODO factor in style template specified caption positioning
+		//	assign target
 		Arrays.sort(targets, ImUtils.topDownOrder);
-		ImRegion target = this.findCaptionTarget(page.getImageDPI(), wordBox, targets, isTableCaption, isBlockCaption);
+		ImRegion target = this.findCaptionTarget(page, wordBox, targets, isTableCaption, isBlockCaption);
 		
 		//	link caption to target
 		if (target != null) {
 			caption.setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + target.pageId));
 			caption.setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, target.bounds.toString());
-			if (isBlockCaption)
-				caption.setAttribute("startId", caption.getFirstWord().getLocalID());
 			if (isTableCaption)
-				caption.setAttribute("targetIsTable");
+				caption.setAttribute(ImAnnotation.CAPTION_TARGET_IS_TABLE_ATTRIBUTE);
 		}
 		
 		//	finally ...
@@ -481,15 +483,29 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		return ((ImRegion[]) targets.toArray(new ImRegion[targets.size()]));
 	}
 	
-	private ImRegion findCaptionTarget(int pageImageDpi, BoundingBox captionBox, ImRegion[] targets, boolean isTableCaption, boolean isBlockCaption) {
+	private ImRegion findCaptionTarget(ImPage page, BoundingBox captionBox, ImRegion[] targets, boolean isTableCaption, boolean isBlockCaption) {
+		int pageImageDpi = page.getImageDPI();
+		
+		//	consult document style regarding where captions might be located
+		ImDocumentStyle docStyle = ImDocumentStyle.getStyleFor(page.getDocument());
+		if (docStyle == null)
+			docStyle = new ImDocumentStyle(new PropertiesData(new Properties()));
+		final ImDocumentStyle docLayout = docStyle.getImSubset("layout");
+		boolean captionAbove = docLayout.getBooleanProperty(("caption.above" + (isTableCaption ? "Table" : "Figure")), isTableCaption);
+		boolean captionBelow = docLayout.getBooleanProperty(("caption.below" + (isTableCaption ? "Table" : "Figure")), !isTableCaption);
+		boolean captionBeside = docLayout.getBooleanProperty(("caption.beside" + (isTableCaption ? "Table" : "Figure")), !isTableCaption);
+		boolean captionInside = docLayout.getBooleanProperty(("caption.inside" + (isTableCaption ? "Table" : "Figure")), false);
 		
 		//	for block caption, prefer caption above table and caption below figure
 		if (isBlockCaption) {
 			
 			//	run with preferred assignment direction first
 			for (int t = 0; t < targets.length; t++) {
-				if (!isTableCaption && ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
-				else if (isTableCaption && ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+//				if (!isTableCaption && ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				if (captionBelow && ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+//				else if (isTableCaption && ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else if (captionAbove && ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else if (captionBeside && ImUtils.isCaptionBesideTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
 				else continue;
 				if (this.isValidCaptionTarget(targets[t], pageImageDpi))
 					return targets[t];
@@ -499,7 +515,8 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 			for (int t = 0; t < targets.length; t++) {
 				if (ImUtils.isCaptionBelowTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
 				else if (ImUtils.isCaptionAboveTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
-				else if (!isTableCaption && ImUtils.isCaptionBesideTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+//				else if (!isTableCaption && ImUtils.isCaptionBesideTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
+				else if (captionBeside && ImUtils.isCaptionBesideTargetMatch(captionBox, targets[t].bounds, pageImageDpi)) {}
 				else continue;
 				if (this.isValidCaptionTarget(targets[t], pageImageDpi))
 					return targets[t];
@@ -580,110 +597,251 @@ public class TextBlockActionProvider extends AbstractSelectionActionProvider imp
 		}
 	}
 	
-	private void markImageOrGraphics(ImWord[] words, ImPage page, BoundingBox selectedBox, String type, ImDocumentMarkupPanel idmp) {
+	private void splitCaptionBlockOffIllustration(ImPage page, ImWord[] words, BoundingBox bounds, ImDocumentMarkupPanel idmp) {
+		if (this.regionActions == null)
+			return;
+//		
+//		//	check if we have a label caption TODO does this make sense ???
+//		boolean isNonLabelCaption = true;
+//		for (int w = 0; w < words.length; w++)
+//			if (ImWord.TEXT_STREAM_TYPE_LABEL.equals(words[w].getTextStreamType())) {
+//				isNonLabelCaption = false;
+//				break;
+//			}
+//		if (isNonLabelCaption)
+//			return;
+//		
+//		//	check if we have a caption with multiple lines
+//		boolean isMultiLineCaption = false;
+//		for (int w = 1; w < words.length; w++)
+//			if (ImUtils.areTextFlowBreak(words[w-1], words[w])) {
+//				isMultiLineCaption = true;
+//				break;
+//			}
 		
-		//	shrink selection to what is actually painted
+		//	truncate any overlapping image or graphics if possible
+		ImRegion[] pageImages = page.getRegions(ImRegion.IMAGE_TYPE);
+		for (int i = 0; i < pageImages.length; i++) {
+			if (bounds.overlaps(pageImages[i].bounds))
+				this.splitCaptionBlockOffIllustration(page, pageImages[i], bounds, idmp);
+		}
+		ImRegion[] pageGraphics = page.getRegions(ImRegion.GRAPHICS_TYPE);
+		for (int g = 0; g < pageGraphics.length; g++) {
+			if (bounds.overlaps(pageGraphics[g].bounds))
+				this.splitCaptionBlockOffIllustration(page, pageGraphics[g], bounds, idmp);
+		}
+	}
+	
+	private void splitCaptionBlockOffIllustration(ImPage page, ImRegion imageOrGraphics, BoundingBox captionBounds, ImDocumentMarkupPanel idmp) {
+		
+		//	test if to-split box proper overlaps with supplements
+		ImSupplement[] pageSupplements = page.getSupplements();
+		if (!this.isEmpty(page, pageSupplements, captionBounds, false))
+			return;
+		
+		//	try and find sensible remainder of image or graphics
+		BoundingBox cutIogBounds = null;
+		
+		//	try splitting caption off top or bottom of image or graphics
+		if (cutIogBounds == null) {
+			BoundingBox topIogRemainder = ((imageOrGraphics.bounds.top < captionBounds.top) ? new BoundingBox(imageOrGraphics.bounds.left, imageOrGraphics.bounds.right, imageOrGraphics.bounds.top, captionBounds.top) : null);
+			if (this.isEmpty(page, pageSupplements, topIogRemainder, true))
+				topIogRemainder = null;
+			BoundingBox bottomIogRemainder = ((captionBounds.bottom < imageOrGraphics.bounds.bottom) ? new BoundingBox(imageOrGraphics.bounds.left, imageOrGraphics.bounds.right, captionBounds.bottom, imageOrGraphics.bounds.bottom) : null);
+			if (this.isEmpty(page, pageSupplements, bottomIogRemainder, true))
+				bottomIogRemainder = null;
+			BoundingBox leftIogRemainder = ((imageOrGraphics.bounds.left < captionBounds.left) ? new BoundingBox(imageOrGraphics.bounds.left, captionBounds.left, captionBounds.top, captionBounds.bottom) : null);
+			if (this.isEmpty(page, pageSupplements, leftIogRemainder, true))
+				leftIogRemainder = null;
+			BoundingBox rightIogRemainder = ((captionBounds.right < imageOrGraphics.bounds.right) ? new BoundingBox(captionBounds.right, imageOrGraphics.bounds.right, captionBounds.top, captionBounds.bottom) : null);
+			if (this.isEmpty(page, pageSupplements, rightIogRemainder, true))
+				rightIogRemainder = null;
+			if ((leftIogRemainder != null) || (rightIogRemainder != null)) { /* cannot split off top or bottom if left or right not empty */ }
+			else if ((topIogRemainder != null) && (bottomIogRemainder != null)) { /* cannot split off top or bottom if neither bottom nor top empty */ }
+			else if (topIogRemainder != null)
+				cutIogBounds = topIogRemainder; // split off bottom TODO maybe create a bit of distance to caption
+			else if (bottomIogRemainder != null)
+				cutIogBounds = bottomIogRemainder; // split off top TODO maybe create a bit of distance to caption
+		}
+		
+		//	try splitting caption off left or right of image or graphics
+		if (cutIogBounds == null) {
+			BoundingBox leftIogRemainder = ((imageOrGraphics.bounds.left < captionBounds.left) ? new BoundingBox(imageOrGraphics.bounds.left, captionBounds.left, imageOrGraphics.bounds.top, imageOrGraphics.bounds.bottom) : null);
+			if (this.isEmpty(page, pageSupplements, leftIogRemainder, true))
+				leftIogRemainder = null;
+			BoundingBox rightIogRemainder = ((captionBounds.right < imageOrGraphics.bounds.right) ? new BoundingBox(captionBounds.right, imageOrGraphics.bounds.right, imageOrGraphics.bounds.top, imageOrGraphics.bounds.bottom) : null);
+			if (this.isEmpty(page, pageSupplements, rightIogRemainder, true))
+				rightIogRemainder = null;
+			BoundingBox topIogRemainder = ((imageOrGraphics.bounds.top < captionBounds.top) ? new BoundingBox(captionBounds.left, captionBounds.right, imageOrGraphics.bounds.top, captionBounds.top) : null);
+			if (this.isEmpty(page, pageSupplements, topIogRemainder, true))
+				topIogRemainder = null;
+			BoundingBox bottomIogRemainder = ((captionBounds.bottom < imageOrGraphics.bounds.bottom) ? new BoundingBox(captionBounds.left, captionBounds.right, captionBounds.bottom, imageOrGraphics.bounds.bottom) : null);
+			if (this.isEmpty(page, pageSupplements, bottomIogRemainder, true))
+				bottomIogRemainder = null;
+			if ((topIogRemainder != null) || (bottomIogRemainder != null)) { /* cannot split off left or right if top or bottom not empty */ }
+			else if ((leftIogRemainder != null) && (rightIogRemainder != null)) { /* cannot split off left or right if neither right nor left empty */ }
+			else if (leftIogRemainder != null)
+				cutIogBounds = leftIogRemainder; // split off right TODO maybe create a bit of distance to caption
+			else if (rightIogRemainder == null)
+				cutIogBounds = rightIogRemainder; // split off left TODO maybe create a bit of distance to caption
+		}
+		
+		//	anything to work with?
+		if (cutIogBounds == null)
+			return;
+		
+		//	if shrink cut image or graphics to actual content
+		cutIogBounds = this.shrinkIllustrationBounds(page, cutIogBounds);
+		if (cutIogBounds == null)
+			return;
+		
+		//	replace image or graphics
+		page.removeRegion(imageOrGraphics);
+		ImRegion cutIog = new ImRegion(page, cutIogBounds, imageOrGraphics.getType());
+		idmp.setRegionsPainted(cutIog.getType(), true);
+		
+		//	mark block around caption
+		this.regionActions.markBlock(page, captionBounds);
+		idmp.setRegionsPainted(ImRegion.BLOCK_ANNOTATION_TYPE, true);
+	}
+	
+	boolean isEmpty(ImPage page, ImSupplement[] pageSupplements, BoundingBox bounds, boolean checkScanContent) {
+		if (bounds == null)
+			return true;
+		for (int s = 0; s < pageSupplements.length; s++) {
+			if (pageSupplements[s] instanceof Figure) {
+				if (bounds.overlaps(((Figure) pageSupplements[s]).getBounds()))
+					return false;
+			}
+			else if (pageSupplements[s] instanceof Graphics) {
+				if (bounds.overlaps(((Graphics) pageSupplements[s]).getBounds()))
+					return false;
+			}
+			else if (checkScanContent && (pageSupplements[s] instanceof Scan)) {
+				BoundingBox sBounds = this.shrinkIllustrationBounds(page, bounds);
+				if (sBounds != null)
+					return false;
+			}
+		}
+		return true;
+	}
+	
+	private BoundingBox shrinkIllustrationBounds(ImPage page, BoundingBox iogBounds) {
 		PageImage pi = page.getImage();
 		AnalysisImage ai = Imaging.wrapImage(pi.image, null);
 		ImagePartRectangle ipr = Imaging.getContentBox(ai);
-		ImagePartRectangle selectedIpr = ipr.getSubRectangle(Math.max(selectedBox.left, page.bounds.left), Math.min(selectedBox.right, page.bounds.right), Math.max(selectedBox.top, page.bounds.top), Math.min(selectedBox.bottom, page.bounds.bottom));
+		ImagePartRectangle selectedIpr = ipr.getSubRectangle(Math.max(iogBounds.left, page.bounds.left), Math.min(iogBounds.right, page.bounds.right), Math.max(iogBounds.top, page.bounds.top), Math.min(iogBounds.bottom, page.bounds.bottom));
 		selectedIpr = Imaging.narrowLeftAndRight(selectedIpr);
+		if (selectedIpr.isEmpty())
+			return null;
 		selectedIpr = Imaging.narrowTopAndBottom(selectedIpr);
-		BoundingBox iogBounds = new BoundingBox(selectedIpr.getLeftCol(), selectedIpr.getRightCol(), selectedIpr.getTopRow(), selectedIpr.getBottomRow());
-		HashMap colWordsByStreamId = null;
-		
-		//	make words into 'label' text stream if document is born-digital
-		if (idmp.documentBornDigital) {
-			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_LABEL, null);
-			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-			words = new ImWord[0];
-		}
-		
-		//	remove words if document is scanned (odds are most of them are artifacts)
-		else {
-			
-			//	spare any words of type 'caption' or 'label', though
-			ArrayList removeWordList = new ArrayList();
-			colWordsByStreamId = new HashMap();
-			for (int w = 0; w < words.length; w++) {
-				if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(words[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(words[w].getTextStreamType())) {
-					ArrayList colWordList = ((ArrayList) colWordsByStreamId.get(words[w].getTextStreamId()));
-					if (colWordList == null) {
-						colWordList = new ArrayList();
-						colWordsByStreamId.put(words[w].getTextStreamId(), colWordList);
-					}
-					colWordList.add(words[w]);
-				}
-				else removeWordList.add(words[w]);
-			}
-			words = ((ImWord[]) removeWordList.toArray(new ImWord[removeWordList.size()]));
-			
-			//	dissolve remaining words out of text streams (helps prevent cycles on block splitting)
-			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
-			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-			for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes of text stream ID
-				imw.setNextWord(null);
-		}
-		
-		//	split any overlapping block
-		if (this.regionActions != null) {
-			this.splitOverlappingBlocks(page, iogBounds);
-			
-			//	restore text streams preserved above
-			if (colWordsByStreamId != null)
-				for (Iterator tsit = colWordsByStreamId.keySet().iterator(); tsit.hasNext();) {
-					ArrayList colWordList = ((ArrayList) colWordsByStreamId.get(tsit.next()));
-					ImUtils.makeStream(((ImWord[]) colWordList.toArray(new ImWord[colWordList.size()])), ((ImWord) colWordList.get(0)).getTextStreamType(), null);
-				}
-			
-			//	cut to-remove words out of text streams again (in case block splitting merged them back in some way)
-			if ((words != null) && (words.length != 0)) {
-				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
-				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
-				for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes of text stream ID
-					imw.setNextWord(null);
-			}
-		}
-		
-		//	remove remaining words (only now that we're done with block splitting)
-		for (int w = 0; w < words.length; w++)
-			page.removeWord(words[w], true);
-		
-		//	clean up nested regions (repetitively, as some removals trigger adding new regions via reactions)
-		ImRegion[] selectedRegions = page.getRegionsInside(iogBounds, true);
-		for (int r = 0; r < selectedRegions.length; r++) {
-			if (!iogBounds.liesIn(selectedRegions[r].bounds, false) || iogBounds.equals(selectedRegions[r].bounds))
-				page.removeRegion(selectedRegions[r]);
-		}
-		
-		//	mark image or graphics
-		ImRegion iog = new ImRegion(page, iogBounds, type);
-		idmp.setRegionsPainted(type, true);
-		
-		//	consult document style regarding where captions might be located
-		DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
-		final DocumentStyle docLayout = docStyle.getSubset("layout");
-		boolean captionAbove = docLayout.getBooleanProperty("caption.aboveFigure", false);
-		boolean captionBelow = docLayout.getBooleanProperty("caption.belowFigure", true);
-		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
-		boolean captionInside = docLayout.getBooleanProperty("caption.insideFigure", true);
-		
-		//	get potential captions
-		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside, captionInside, true);
-		
-		//	try setting attributes in unassigned captions first
-		for (int a = 0; a < captionAnnots.length; a++) {
-			if (captionAnnots[a].hasAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE) || captionAnnots[a].hasAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE))
-				continue;
-			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + iog.pageId));
-			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, iog.bounds.toString());
-			return;
-		}
-		
-		//	set attributes in any caption (happens if user corrects, for instance)
-		if (captionAnnots.length != 0) {
-			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + iog.pageId));
-			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, iog.bounds.toString());
-		}
+		if (selectedIpr.isEmpty())
+			return null;
+		return new BoundingBox(selectedIpr.getLeftCol(), selectedIpr.getRightCol(), selectedIpr.getTopRow(), selectedIpr.getBottomRow());
 	}
+	
+//	private void markImageOrGraphics(ImWord[] words, ImPage page, BoundingBox selectedBox, String type, ImDocumentMarkupPanel idmp) {
+//		
+//		//	shrink selection to what is actually painted
+//		BoundingBox iogBounds = this.shrinkImageOrGraphicsBounds(page, selectedBox);
+//		if (iogBounds == null)
+//			return;
+//		HashMap colWordsByStreamId = null;
+//		
+//		//	make words into 'label' text stream if document is born-digital
+//		if (idmp.documentBornDigital) {
+//			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_LABEL, null);
+//			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+//			words = new ImWord[0];
+//		}
+//		
+//		//	remove words if document is scanned (odds are most of them are artifacts)
+//		else {
+//			
+//			//	spare any words of type 'caption' or 'label', though
+//			ArrayList removeWordList = new ArrayList();
+//			colWordsByStreamId = new HashMap();
+//			for (int w = 0; w < words.length; w++) {
+//				if (ImWord.TEXT_STREAM_TYPE_CAPTION.equals(words[w].getTextStreamType()) || ImWord.TEXT_STREAM_TYPE_LABEL.equals(words[w].getTextStreamType())) {
+//					ArrayList colWordList = ((ArrayList) colWordsByStreamId.get(words[w].getTextStreamId()));
+//					if (colWordList == null) {
+//						colWordList = new ArrayList();
+//						colWordsByStreamId.put(words[w].getTextStreamId(), colWordList);
+//					}
+//					colWordList.add(words[w]);
+//				}
+//				else removeWordList.add(words[w]);
+//			}
+//			words = ((ImWord[]) removeWordList.toArray(new ImWord[removeWordList.size()]));
+//			
+//			//	dissolve remaining words out of text streams (helps prevent cycles on block splitting)
+//			ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
+//			ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+//			for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes of text stream ID
+//				imw.setNextWord(null);
+//		}
+//		
+//		//	split any overlapping block
+//		if (this.regionActions != null) {
+//			this.splitOverlappingBlocks(page, iogBounds);
+//			
+//			//	restore text streams preserved above
+//			if (colWordsByStreamId != null)
+//				for (Iterator tsit = colWordsByStreamId.keySet().iterator(); tsit.hasNext();) {
+//					ArrayList colWordList = ((ArrayList) colWordsByStreamId.get(tsit.next()));
+//					ImUtils.makeStream(((ImWord[]) colWordList.toArray(new ImWord[colWordList.size()])), ((ImWord) colWordList.get(0)).getTextStreamType(), null);
+//				}
+//			
+//			//	cut to-remove words out of text streams again (in case block splitting merged them back in some way)
+//			if ((words != null) && (words.length != 0)) {
+//				ImUtils.makeStream(words, ImWord.TEXT_STREAM_TYPE_ARTIFACT, null);
+//				ImUtils.orderStream(words, ImUtils.leftRightTopDownOrder);
+//				for (ImWord imw = words[words.length-1]; imw != null; imw = imw.getPreviousWord()) // going backwards saves us propagating changes of text stream ID
+//					imw.setNextWord(null);
+//			}
+//		}
+//		
+//		//	remove remaining words (only now that we're done with block splitting)
+//		for (int w = 0; w < words.length; w++)
+//			page.removeWord(words[w], true);
+//		
+//		//	clean up nested regions (repetitively, as some removals trigger adding new regions via reactions)
+//		ImRegion[] selectedRegions = page.getRegionsInside(iogBounds, true);
+//		for (int r = 0; r < selectedRegions.length; r++) {
+//			if (!iogBounds.liesIn(selectedRegions[r].bounds, false) || iogBounds.equals(selectedRegions[r].bounds))
+//				page.removeRegion(selectedRegions[r]);
+//		}
+//		
+//		//	mark image or graphics
+//		ImRegion iog = new ImRegion(page, iogBounds, type);
+//		idmp.setRegionsPainted(type, true);
+//		
+//		//	consult document style regarding where captions might be located
+//		DocumentStyle docStyle = DocumentStyle.getStyleFor(idmp.document);
+//		if (docStyle == null)
+//			docStyle = new DocumentStyle(new PropertiesData(new Properties()));
+//		final DocumentStyle docLayout = docStyle.getSubset("layout");
+//		boolean captionAbove = docLayout.getBooleanProperty("caption.aboveFigure", false);
+//		boolean captionBelow = docLayout.getBooleanProperty("caption.belowFigure", true);
+//		boolean captionBeside = docLayout.getBooleanProperty("caption.besideFigure", true);
+//		boolean captionInside = docLayout.getBooleanProperty("caption.insideFigure", true);
+//		
+//		//	get potential captions
+//		ImAnnotation[] captionAnnots = ImUtils.findCaptions(iog, captionAbove, captionBelow, captionBeside, captionInside, true);
+//		
+//		//	try setting attributes in unassigned captions first
+//		for (int a = 0; a < captionAnnots.length; a++) {
+//			if (captionAnnots[a].hasAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE) || captionAnnots[a].hasAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE))
+//				continue;
+//			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + iog.pageId));
+//			captionAnnots[a].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, iog.bounds.toString());
+//			return;
+//		}
+//		
+//		//	set attributes in any caption (happens if user corrects, for instance)
+//		if (captionAnnots.length != 0) {
+//			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_PAGE_ID_ATTRIBUTE, ("" + iog.pageId));
+//			captionAnnots[0].setAttribute(ImAnnotation.CAPTION_TARGET_BOX_ATTRIBUTE, iog.bounds.toString());
+//		}
+//	}
 }
