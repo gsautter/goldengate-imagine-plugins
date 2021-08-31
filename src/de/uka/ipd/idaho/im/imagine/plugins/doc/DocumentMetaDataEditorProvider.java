@@ -2188,7 +2188,7 @@ public class DocumentMetaDataEditorProvider extends AbstractImageMarkupToolProvi
 		
 		//	try extraction from document end only second
 		maxFromEndPageId = attributeStyle.getIntProperty("maxFromEndPageId", maxFromEndPageId);
-		for (int p = (pages.length - maxFromEndPageId); p < pages.length; p++) {
+		for (int p = Math.max(0, (pages.length - maxFromEndPageId)); p < pages.length; p++) {
 			int dpi = pages[p].getImageDPI();
 			if (extractAttribute(name, isIdentifier, pages[p], dpi, attributeStyle, isMultiValue, ref, attributeValues, System.out)) {
 				attributesToValues.put(name, attributeValues);
